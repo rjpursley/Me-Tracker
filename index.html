@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Me-Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{
+  --bg:#0a0a0f;--surface:#12121a;--surface2:#1a1a26;--surface3:#22223a;--border:#2a2a42;
+  --text:#e8e8f0;--muted:#6b6b8a;--accent:#7c6af7;--accent2:#4fd8c4;--accent3:#f7a46a;
+  --accent4:#f76a8a;--accent5:#6af77c;--danger:#f76a6a;--warn:#f7c46a;
+  --font-head:'Syne',sans-serif;--font-mono:'DM Mono',monospace;--top-h:58px;
+}
+body{background:var(--bg);color:var(--text);font-family:var(--font-head);min-height:100vh;overflow-x:hidden}
+.topbar{position:fixed;top:0;left:0;right:0;height:var(--top-h);background:var(--surface);border-bottom:1px solid var(--border);z-index:200;display:flex;align-items:center;padding:0 16px;gap:14px}
+.hamburger{background:none;border:none;cursor:pointer;display:flex;flex-direction:column;gap:5px;padding:4px;flex-shrink:0}
+.hamburger span{display:block;width:22px;height:2px;background:var(--text);border-radius:2px;transition:all .3s}
+.hamburger.open span:nth-child(1){transform:translateY(7px) rotate(45deg)}
+.hamburger.open span:nth-child(2){opacity:0}
+.hamburger.open span:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
+.topbar-title{font-size:16px;font-weight:700;flex:1}
+.topbar-score-wrap{display:flex;flex-direction:column;align-items:flex-end}
+.topbar-score-label{font-size:8px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-family:var(--font-mono)}
+.topbar-score-val{font-size:22px;font-weight:700;color:var(--accent);line-height:1}
+.drawer-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300}
+.drawer-overlay.open{display:block}
+.drawer{position:fixed;top:0;left:-280px;bottom:0;width:260px;background:var(--surface);border-right:1px solid var(--border);z-index:400;transition:left .3s ease;padding-top:var(--top-h);overflow-y:auto}
+.drawer.open{left:0}
+.drawer-nav{padding:16px 0}
+.drawer-item{display:flex;align-items:center;gap:14px;padding:14px 20px;cursor:pointer;font-size:14px;font-weight:600;color:var(--muted);transition:all .2s;border-left:3px solid transparent}
+.drawer-item:hover{color:var(--text);background:var(--surface2)}
+.drawer-item.active{color:var(--accent);border-left-color:var(--accent);background:rgba(124,106,247,.08)}
+.drawer-item svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.drawer-section{font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);padding:16px 20px 6px;font-family:var(--font-mono)}
+.page{display:none;padding:calc(var(--top-h) + 14px) 14px 30px}
+.page.active{display:block}
+.section-title{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin:18px 0 8px;font-family:var(--font-mono)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px}
+.card+.card{margin-top:10px}
+.card-title{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:10px;font-family:var(--font-mono)}
+.row{display:flex;gap:10px}
+.row .card{flex:1}
+.stat-big{font-size:32px;font-weight:700;line-height:1;color:var(--text)}
+.stat-sub{font-size:12px;color:var(--muted);margin-top:4px;font-family:var(--font-mono)}
+.progress-bar{height:6px;background:var(--surface3);border-radius:3px;overflow:hidden;margin:8px 0}
+.progress-fill{height:100%;border-radius:3px;transition:width .5s ease}
+.status-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.status-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:4px}
+.status-card-label{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-family:var(--font-mono)}
+.status-card-icon{font-size:20px;margin-bottom:2px}
+.status-card-val{font-size:17px;font-weight:700;line-height:1.2}
+.status-card-sub{font-size:10px;color:var(--muted);font-family:var(--font-mono)}
+.status-card.good{border-color:rgba(106,247,124,.3);background:rgba(106,247,124,.05)}
+.status-card.warn{border-color:rgba(247,196,106,.3);background:rgba(247,196,106,.05)}
+.status-card.bad{border-color:rgba(247,106,106,.3);background:rgba(247,106,106,.05)}
+.status-card.neutral{border-color:rgba(79,216,196,.3);background:rgba(79,216,196,.05)}
+.tag{display:inline-block;font-size:10px;padding:3px 8px;border-radius:6px;font-family:var(--font-mono);font-weight:500}
+.tag.green{background:rgba(106,247,124,.15);color:var(--accent5);border:1px solid rgba(106,247,124,.3)}
+.tag.teal{background:rgba(79,216,196,.15);color:var(--accent2);border:1px solid rgba(79,216,196,.3)}
+.tag.red{background:rgba(247,106,106,.15);color:var(--danger);border:1px solid rgba(247,106,106,.3)}
+input[type=text],input[type=number],input[type=time],select,textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:9px 12px;font-family:var(--font-mono);font-size:13px;outline:none;-webkit-appearance:none}
+input:focus,select:focus{border-color:var(--accent)}
+select option{background:var(--surface2)}
+.btn{display:block;width:100%;padding:12px;border-radius:10px;border:none;font-family:var(--font-head);font-size:14px;font-weight:600;cursor:pointer;transition:transform .1s}
+.btn:active{transform:scale(.98)}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-secondary{background:var(--surface2);color:var(--text);border:1px solid var(--border)}
+.form-row{margin-bottom:10px}
+.form-label{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:4px;font-family:var(--font-mono)}
+.alert{border-radius:10px;padding:10px 12px;font-size:12px;margin:8px 0;font-family:var(--font-mono)}
+.alert.err{background:rgba(247,106,106,.1);border:1px solid rgba(247,106,106,.3);color:var(--danger)}
+.alert.warn{background:rgba(247,196,106,.1);border:1px solid rgba(247,196,106,.3);color:var(--warn)}
+.alert.info{background:rgba(124,106,247,.1);border:1px solid rgba(124,106,247,.3);color:var(--accent)}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-top:8px}
+.cal-day-name{text-align:center;font-size:9px;color:var(--muted);font-family:var(--font-mono);padding:4px 0}
+.cal-day{min-height:46px;background:var(--surface2);border-radius:8px;padding:3px;display:flex;flex-direction:column;align-items:center;cursor:pointer;border:1px solid transparent}
+.cal-day.today{border-color:var(--accent)}
+.cal-day.empty{background:none;border:none;cursor:default}
+.cal-day-num{font-size:11px;font-weight:600;line-height:1.4}
+.cal-dot{width:5px;height:5px;border-radius:50%}
+.cal-dots{display:flex;flex-wrap:wrap;justify-content:center;gap:1px;margin-top:2px}
+.cal-abbr{font-size:7px;font-family:var(--font-mono);color:var(--accent);text-align:center;line-height:1.2;margin-top:1px}
+.toggle-row{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.toggle-btn{flex:1;padding:7px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-family:var(--font-mono);font-size:11px;cursor:pointer;text-align:center;transition:all .2s;min-width:60px}
+.toggle-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.history-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:12px}
+.history-item:last-child{border-bottom:none}
+.history-date{color:var(--muted);min-width:72px;font-size:11px}
+.chart-wrap{position:relative;width:100%;height:200px;margin-top:8px}
+.fasting-timer{font-size:44px;font-weight:700;text-align:center;font-family:var(--font-mono);color:var(--accent);letter-spacing:.05em;margin:10px 0}
+.phase-bar{display:flex;height:8px;border-radius:4px;overflow:hidden;gap:2px}
+.phase-seg{flex:1;background:var(--surface3);border-radius:2px;transition:background .5s}
+.phase-seg.active{background:var(--accent)}
+.phase-label{font-size:9px;font-family:var(--font-mono);color:var(--muted);text-align:center;margin-top:4px}
+.hgh-bar{height:10px;border-radius:5px;background:var(--surface3);overflow:hidden;margin:6px 0}
+.hgh-fill{height:100%;border-radius:5px;background:linear-gradient(90deg,var(--accent2),var(--accent))}
+.factor-row{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:12px;font-family:var(--font-mono)}
+.factor-icon{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.factor-icon.good{background:var(--accent5)}
+.factor-icon.bad{background:var(--danger)}
+.factor-name{flex:1;color:var(--muted)}
+.target-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;font-size:12px;font-family:var(--font-mono);border-bottom:1px solid var(--border)}
+.target-row:last-child{border-bottom:none}
+.target-label{color:var(--muted)}
+.target-val{color:var(--text);font-weight:500}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="hamburger" id="hamburger-btn" onclick="toggleDrawer()" aria-label="Menu">
+    <span></span><span></span><span></span>
+  </button>
+  <div class="topbar-title" id="topbar-title">Me-Tracker</div>
+  <div class="topbar-score-wrap">
+    <span class="topbar-score-label">Score</span>
+    <span class="topbar-score-val" id="top-score">—</span>
+  </div>
+</div>
+
+<div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <div class="drawer-nav">
+    <div class="drawer-section">Main</div>
+    <div class="drawer-item active" id="nav-home" onclick="showPage('home','Me-Tracker')">
+      <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>Home
+    </div>
+    <div class="drawer-item" id="nav-calendar" onclick="showPage('calendar','Calendar')">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Calendar
+    </div>
+    <div class="drawer-section">Health</div>
+    <div class="drawer-item" id="nav-health" onclick="showPage('health','Health Status')">
+      <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Health Status
+    </div>
+    <div class="drawer-item" id="nav-body" onclick="showPage('body','Body')">
+      <svg viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>Body
+    </div>
+    <div class="drawer-section">Log</div>
+    <div class="drawer-item" id="nav-diet" onclick="showPage('diet','Dietary')">
+      <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Dietary
+    </div>
+    <div class="drawer-item" id="nav-log" onclick="showPage('log','Log Entry')">
+      <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Log Entry
+    </div>
+  </div>
+</div>
+
+<!-- HOME -->
+<div class="page active" id="page-home">
+  <div class="section-title">Consistency Score</div>
+  <div class="card" style="background:rgba(124,106,247,.06);border-color:rgba(124,106,247,.25)">
+    <div style="display:flex;align-items:flex-end;gap:12px">
+      <div class="stat-big" id="home-score" style="font-size:52px;color:var(--accent)">—</div>
+      <div style="padding-bottom:8px">
+        <div style="font-size:11px;color:var(--muted);font-family:var(--font-mono)">out of 100</div>
+        <div style="font-size:11px;color:var(--muted);font-family:var(--font-mono)" id="home-score-sub">Log data to calculate</div>
+      </div>
+    </div>
+    <div class="progress-bar"><div class="progress-fill" id="home-score-bar" style="width:0%;background:var(--accent)"></div></div>
+    <div id="score-breakdown" style="margin-top:8px;display:flex;gap:10px;flex-wrap:wrap"></div>
+  </div>
+
+  <div class="section-title">Today's Status</div>
+  <div class="status-grid" id="status-grid"></div>
+
+  <div class="section-title">Fasting Targets</div>
+  <div class="card">
+    <div class="target-row"><span class="target-label">Daily goal</span><span class="target-val" id="t-daily">—</span></div>
+    <div class="target-row"><span class="target-label">Weekly avg</span><span class="target-val" id="t-weekly">—</span></div>
+    <div class="target-row"><span class="target-label">Monthly avg</span><span class="target-val" id="t-monthly">—</span></div>
+    <div class="target-row"><span class="target-label">Quarterly</span><span class="target-val" id="t-quarterly">—</span></div>
+  </div>
+</div>
+
+<!-- CALENDAR -->
+<div class="page" id="page-calendar">
+  <div class="toggle-row" style="margin-top:4px">
+    <button class="toggle-btn active" id="cal-week-btn" onclick="setCalView('week')">Week</button>
+    <button class="toggle-btn" id="cal-month-btn" onclick="setCalView('month')">Month</button>
+  </div>
+  <div style="font-size:11px;color:var(--muted);font-family:var(--font-mono);margin-bottom:8px" id="cal-range-label"></div>
+  <div id="cal-container"></div>
+  <div class="section-title">Legend</div>
+  <div class="card">
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      <span style="display:flex;align-items:center;gap:5px;font-size:11px;font-family:var(--font-mono)"><span style="width:10px;height:10px;border-radius:50%;background:#7c6af7;display:inline-block"></span>Resistance</span>
+      <span style="display:flex;align-items:center;gap:5px;font-size:11px;font-family:var(--font-mono)"><span style="width:10px;height:10px;border-radius:50%;background:#4fd8c4;display:inline-block"></span>Zone 2</span>
+      <span style="display:flex;align-items:center;gap:5px;font-size:11px;font-family:var(--font-mono)"><span style="width:10px;height:10px;border-radius:50%;background:#f7a46a;display:inline-block"></span>Bodyweight</span>
+      <span style="display:flex;align-items:center;gap:5px;font-size:11px;font-family:var(--font-mono)"><span style="width:10px;height:10px;border-radius:50%;background:#f76a8a;display:inline-block"></span>Wtd Walk</span>
+      <span style="display:flex;align-items:center;gap:5px;font-size:11px;font-family:var(--font-mono)"><span style="width:10px;height:10px;border-radius:50%;background:#f7c46a;display:inline-block"></span>Other</span>
+      <span style="display:flex;align-items:center;gap:5px;font-size:11px;font-family:var(--font-mono)"><span style="width:10px;height:10px;border-radius:50%;background:#4fd8c4;display:inline-block;opacity:.4"></span>Sleep</span>
+    </div>
+    <div style="margin-top:8px;font-size:11px;font-family:var(--font-mono);color:var(--muted)">Fast labels appear below each day dot</div>
+  </div>
+</div>
+
+<!-- HEALTH STATUS -->
+<div class="page" id="page-health">
+  <div class="alert info" style="margin-top:4px">Estimates from behavioral data only — not a medical measurement.</div>
+  <div class="section-title">HGH Index</div>
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <span style="font-size:13px">Human Growth Hormone</span>
+      <span style="font-family:var(--font-mono);font-size:13px;color:var(--accent)" id="hgh-val">—/100</span>
+    </div>
+    <div class="hgh-bar"><div class="hgh-fill" id="hgh-bar" style="width:0%"></div></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;margin-bottom:4px">
+      <span style="font-size:13px">Testosterone</span>
+      <span style="font-family:var(--font-mono);font-size:13px;color:var(--accent3)" id="test-val">—/100</span>
+    </div>
+    <div class="hgh-bar"><div class="hgh-fill" id="test-bar" style="width:0%;background:linear-gradient(90deg,var(--accent3),var(--accent4))"></div></div>
+  </div>
+  <div class="section-title">Driving Factors</div>
+  <div class="card" id="hgh-factors"><div style="text-align:center;color:var(--muted);font-size:12px;padding:10px 0;font-family:var(--font-mono)">Log sleep, fasting, and workouts to see factors</div></div>
+  <div class="section-title">Autophagy Phase</div>
+  <div class="card">
+    <div id="autophagy-phase" style="font-size:15px;font-weight:700;margin-bottom:10px;color:var(--accent2)">—</div>
+    <div class="phase-bar">
+      <div class="phase-seg" id="ps1"></div><div class="phase-seg" id="ps2"></div>
+      <div class="phase-seg" id="ps3"></div><div class="phase-seg" id="ps4"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:4px">
+      <span class="phase-label">Glycogen</span><span class="phase-label">Ketosis</span>
+      <span class="phase-label">Autophagy</span><span class="phase-label">Peak</span>
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted);font-family:var(--font-mono)" id="autophagy-hrs">Start a fast to track phase</div>
+  </div>
+</div>
+
+<!-- BODY -->
+<div class="page" id="page-body">
+  <div class="section-title">15-Day Averages</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+    <div class="card" style="text-align:center;padding:10px">
+      <div class="card-title" style="margin-bottom:4px">Resting HR</div>
+      <div class="stat-big" id="avg-rhr" style="font-size:24px">—</div>
+      <div class="stat-sub">bpm</div>
+    </div>
+    <div class="card" style="text-align:center;padding:10px">
+      <div class="card-title" style="margin-bottom:4px">Workout HR</div>
+      <div class="stat-big" id="avg-whr" style="font-size:24px">—</div>
+      <div class="stat-sub">bpm</div>
+    </div>
+    <div class="card" style="text-align:center;padding:10px">
+      <div class="card-title" style="margin-bottom:4px">Steps</div>
+      <div class="stat-big" id="avg-steps" style="font-size:16px;padding-top:6px">—</div>
+      <div class="stat-sub">Fitbit soon</div>
+    </div>
+  </div>
+  <div class="section-title">Sleep + Resting HR (15 days)</div>
+  <div class="card">
+    <div style="display:flex;gap:16px;margin-bottom:8px;font-size:11px;font-family:var(--font-mono);color:var(--muted)">
+      <span><span style="display:inline-block;width:10px;height:3px;background:#4fd8c4;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Sleep (h)</span>
+      <span><span style="display:inline-block;width:10px;height:0;border-top:2px dashed #f76a8a;vertical-align:middle;margin-right:4px"></span>HR (bpm)</span>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="body-chart" role="img" aria-label="15-day sleep and heart rate chart">Sleep and HR data over 15 days.</canvas>
+    </div>
+  </div>
+  <div class="section-title">Sleep History</div>
+  <div class="card" id="sleep-history"><div style="text-align:center;color:var(--muted);font-size:12px;padding:10px 0;font-family:var(--font-mono)">No sleep data yet</div></div>
+  <div class="section-title">Heart Rate History</div>
+  <div class="card" id="hr-history"><div style="text-align:center;color:var(--muted);font-size:12px;padding:10px 0;font-family:var(--font-mono)">No HR data yet</div></div>
+</div>
+
+<!-- DIET -->
+<div class="page" id="page-diet">
+  <div class="section-title">Today's Macros</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+    <div class="card" style="text-align:center;padding:10px">
+      <div class="card-title" style="margin-bottom:4px">Protein</div>
+      <div class="stat-big" id="today-protein" style="font-size:24px;color:var(--accent)">0</div>
+      <div class="stat-sub">g</div>
+      <div class="progress-bar"><div class="progress-fill" id="protein-bar" style="width:0%;background:var(--accent)"></div></div>
+    </div>
+    <div class="card" style="text-align:center;padding:10px">
+      <div class="card-title" style="margin-bottom:4px">Fat</div>
+      <div class="stat-big" id="today-fat" style="font-size:24px;color:var(--accent3)">0</div>
+      <div class="stat-sub">g</div>
+      <div class="progress-bar"><div class="progress-fill" id="fat-bar" style="width:0%;background:var(--accent3)"></div></div>
+    </div>
+    <div class="card" style="text-align:center;padding:10px">
+      <div class="card-title" style="margin-bottom:4px">Sugar</div>
+      <div class="stat-big" id="today-sugar" style="font-size:24px;color:var(--danger)">0</div>
+      <div class="stat-sub">g</div>
+      <div class="progress-bar"><div class="progress-fill" id="sugar-bar" style="width:0%;background:var(--danger)"></div></div>
+    </div>
+  </div>
+  <div id="sugar-alert-zone" style="margin-top:8px"></div>
+  <div class="section-title">Macro Targets</div>
+  <div class="card">
+    <div class="form-row"><div class="form-label">Daily protein target (g)</div><input type="number" id="target-protein" placeholder="e.g. 180" onchange="saveTargets()"></div>
+    <div class="form-row"><div class="form-label">Daily fat target (g)</div><input type="number" id="target-fat" placeholder="e.g. 80" onchange="saveTargets()"></div>
+    <div class="form-row"><div class="form-label">Max sugar per day (g)</div><input type="number" id="target-sugar" placeholder="e.g. 10" onchange="saveTargets()"></div>
+  </div>
+  <div class="section-title">Meal History</div>
+  <div class="card" id="meal-history"><div style="text-align:center;color:var(--muted);font-size:12px;padding:10px 0;font-family:var(--font-mono)">No meals logged</div></div>
+</div>
+
+<!-- LOG ENTRY -->
+<div class="page" id="page-log">
+  <div class="section-title">What are you logging?</div>
+  <div class="toggle-row">
+    <button class="toggle-btn active" onclick="setLogType('fast',this)">Fast</button>
+    <button class="toggle-btn" onclick="setLogType('workout',this)">Workout</button>
+    <button class="toggle-btn" onclick="setLogType('sleep',this)">Sleep</button>
+    <button class="toggle-btn" onclick="setLogType('meal',this)">Meal</button>
+    <button class="toggle-btn" onclick="setLogType('hr',this)">HR</button>
+  </div>
+
+  <div id="form-fast" class="card">
+    <div class="card-title">Log Fast</div>
+    <div class="form-row"><div class="form-label">Fast type</div>
+      <select id="fast-type"><option value="16:8">16:8</option><option value="OMAD">OMAD (23:1)</option><option value="24h">24 Hour</option><option value="36h">36 Hour</option><option value="48h">48 Hour</option></select>
+    </div>
+    <div class="form-row"><div class="form-label">Start time</div><input type="time" id="fast-start"></div>
+    <div class="form-row"><div class="form-label">End time (blank if active)</div><input type="time" id="fast-end"></div>
+    <div class="form-row"><div class="form-label">Date</div><input type="text" id="fast-date" placeholder="YYYY-MM-DD"></div>
+    <div id="fast-active-display" style="display:none">
+      <div class="fasting-timer" id="fast-timer">00:00:00</div>
+      <div class="phase-bar"><div class="phase-seg" id="lps1"></div><div class="phase-seg" id="lps2"></div><div class="phase-seg" id="lps3"></div><div class="phase-seg" id="lps4"></div></div>
+      <div style="display:flex;justify-content:space-between;margin-top:2px"><span class="phase-label">Glycogen</span><span class="phase-label">Ketosis</span><span class="phase-label">Autophagy</span><span class="phase-label">Peak</span></div>
+      <div style="text-align:center;margin-top:6px;font-size:12px;font-family:var(--font-mono);color:var(--accent)" id="fast-phase-label">—</div>
+    </div>
+    <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
+      <button class="btn btn-primary" onclick="logFast()">Save Fast</button>
+      <div id="fast-start-btn-wrap"><button class="btn btn-secondary" onclick="startActiveFast()">Start Fast Now</button></div>
+      <div id="fast-stop-btn-wrap" style="display:none"><button class="btn" style="background:var(--danger);color:#fff" onclick="stopActiveFast()">End Fast Now</button></div>
+    </div>
+  </div>
+
+  <div id="form-workout" class="card" style="display:none">
+    <div class="card-title">Log Workout</div>
+    <div class="form-row"><div class="form-label">Type</div>
+      <select id="workout-type">
+        <option value="Resistance">Resistance Training</option><option value="Zone 2">Zone 2 Cardio</option>
+        <option value="Bodyweight">Bodyweight Regiment</option><option value="Wtd Walk">Weighted Walk</option>
+        <option value="HIIT">HIIT</option><option value="Mobility">Mobility / Stretching</option><option value="Other">Other</option>
+      </select>
+    </div>
+    <div class="form-row"><div class="form-label">Duration (minutes)</div><input type="number" id="workout-duration" placeholder="e.g. 60"></div>
+    <div class="form-row"><div class="form-label">Notes (optional)</div><input type="text" id="workout-notes" placeholder="e.g. chest + back, PR on deadlift"></div>
+    <div class="form-row"><div class="form-label">Date</div><input type="text" id="workout-date" placeholder="YYYY-MM-DD"></div>
+    <button class="btn btn-primary" onclick="logWorkout()">Save Workout</button>
+  </div>
+
+  <div id="form-sleep" class="card" style="display:none">
+    <div class="card-title">Log Sleep</div>
+    <div class="form-row"><div class="form-label">Total hours slept</div><input type="number" id="sleep-hours" placeholder="e.g. 7.5" step="0.25"></div>
+    <div class="form-row"><div class="form-label">Deep sleep (hours, estimate)</div><input type="number" id="sleep-deep" placeholder="e.g. 1.5" step="0.25"></div>
+    <div class="form-row"><div class="form-label">Sleep quality (1–5)</div>
+      <select id="sleep-quality"><option value="5">5 – Excellent</option><option value="4">4 – Good</option><option value="3" selected>3 – Average</option><option value="2">2 – Poor</option><option value="1">1 – Terrible</option></select>
+    </div>
+    <div class="form-row"><div class="form-label">Date</div><input type="text" id="sleep-date" placeholder="YYYY-MM-DD"></div>
+    <button class="btn btn-primary" onclick="logSleep()">Save Sleep</button>
+  </div>
+
+  <div id="form-meal" class="card" style="display:none">
+    <div class="card-title">Log Meal</div>
+    <div class="form-row"><div class="form-label">Meal name</div><input type="text" id="meal-name" placeholder="e.g. Eggs + steak"></div>
+    <div class="row">
+      <div class="form-row" style="flex:1"><div class="form-label">Protein (g)</div><input type="number" id="meal-protein" placeholder="0"></div>
+      <div class="form-row" style="flex:1"><div class="form-label">Fat (g)</div><input type="number" id="meal-fat" placeholder="0"></div>
+    </div>
+    <div class="row">
+      <div class="form-row" style="flex:1"><div class="form-label">Carbs (g)</div><input type="number" id="meal-carbs" placeholder="0"></div>
+      <div class="form-row" style="flex:1"><div class="form-label">Sugar (g)</div><input type="number" id="meal-sugar" placeholder="0"></div>
+    </div>
+    <div class="form-row"><div class="form-label">Date</div><input type="text" id="meal-date" placeholder="YYYY-MM-DD"></div>
+    <button class="btn btn-primary" onclick="logMeal()">Save Meal</button>
+  </div>
+
+  <div id="form-hr" class="card" style="display:none">
+    <div class="card-title">Log Heart Rate</div>
+    <div class="form-row"><div class="form-label">Resting HR (bpm)</div><input type="number" id="hr-resting" placeholder="e.g. 58"></div>
+    <div class="form-row"><div class="form-label">Workout HR (bpm)</div><input type="number" id="hr-workout" placeholder="e.g. 145"></div>
+    <div class="form-row"><div class="form-label">Date</div><input type="text" id="hr-date" placeholder="YYYY-MM-DD"></div>
+    <button class="btn btn-primary" onclick="logHR()">Save Heart Rate</button>
+  </div>
+
+  <div class="section-title">Fasting & Sleep Targets</div>
+  <div class="card">
+    <div class="form-row"><div class="form-label">Daily fast goal (hours)</div><input type="number" id="ft-daily" placeholder="e.g. 16" onchange="saveTargets()"></div>
+    <div class="form-row"><div class="form-label">Weekly avg goal (hours)</div><input type="number" id="ft-weekly" placeholder="e.g. 16" onchange="saveTargets()"></div>
+    <div class="form-row"><div class="form-label">Monthly avg goal (hours)</div><input type="number" id="ft-monthly" placeholder="e.g. 14" onchange="saveTargets()"></div>
+    <div class="form-row"><div class="form-label">Quarterly goal (hours)</div><input type="number" id="ft-quarterly" placeholder="e.g. 12" onchange="saveTargets()"></div>
+    <div class="form-row"><div class="form-label">Sleep goal (hours/night)</div><input type="number" id="ft-sleep" placeholder="e.g. 8" step="0.5" onchange="saveTargets()"></div>
+  </div>
+</div>
+
+<script>
+const DB_KEY='metracker_v2';
+function db(){try{return JSON.parse(localStorage.getItem(DB_KEY))||init();}catch(e){return init();}}
+function init(){return{fasts:[],workouts:[],sleeps:[],meals:[],hrs:[],targets:{},activeFast:null};}
+function save(d){localStorage.setItem(DB_KEY,JSON.stringify(d));}
+function today(){return new Date().toISOString().slice(0,10);}
+function pad(n){return String(n).padStart(2,'0');}
+const WCOLORS={Resistance:'#7c6af7','Zone 2':'#4fd8c4',Bodyweight:'#f7a46a','Wtd Walk':'#f76a8a',HIIT:'#f76a6a',Mobility:'#6af77c',Other:'#f7c46a'};
+let activeFastInterval=null,bodyChartInstance=null,currentCalView='week';
+
+function toggleDrawer(){
+  const d=document.getElementById('drawer'),o=document.getElementById('drawer-overlay'),b=document.getElementById('hamburger-btn');
+  const open=d.classList.toggle('open');o.classList.toggle('open',open);b.classList.toggle('open',open);
+}
+function closeDrawer(){
+  document.getElementById('drawer').classList.remove('open');
+  document.getElementById('drawer-overlay').classList.remove('open');
+  document.getElementById('hamburger-btn').classList.remove('open');
+}
+function showPage(id,title){
+  closeDrawer();
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.drawer-item').forEach(b=>b.classList.remove('active'));
+  document.getElementById('page-'+id).classList.add('active');
+  document.getElementById('nav-'+id).classList.add('active');
+  document.getElementById('topbar-title').textContent=title;
+  if(id==='home')renderHome();
+  if(id==='calendar')renderCalendar(currentCalView);
+  if(id==='health')renderHealth();
+  if(id==='body')renderBody();
+  if(id==='diet')renderDiet();
+  if(id==='log')initLogForms();
+}
+function setLogType(t,btn){
+  document.querySelectorAll('[id^=form-]').forEach(f=>f.style.display='none');
+  document.querySelectorAll('.toggle-row .toggle-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('form-'+t).style.display='block';
+  if(btn)btn.classList.add('active');
+}
+function setCalView(v){
+  currentCalView=v;
+  document.getElementById('cal-week-btn').classList.toggle('active',v==='week');
+  document.getElementById('cal-month-btn').classList.toggle('active',v==='month');
+  renderCalendar(v);
+}
+function getPhase(hrs){
+  if(hrs<12)return{name:'Glycogen Depletion',idx:0};
+  if(hrs<16)return{name:'Ketosis Initiating',idx:1};
+  if(hrs<24)return{name:'Autophagy Elevated',idx:2};
+  return{name:'Peak Autophagy',idx:3};
+}
+function calcFastHrs(fast){
+  if(!fast||!fast.start)return 0;
+  const s=new Date((fast.date||today())+'T'+fast.start);
+  if(isNaN(s))return 0;
+  return Math.max(0,(( fast.end?new Date((fast.date||today())+'T'+fast.end):new Date())-s)/3600000);
+}
+function calcScore(){
+  const d=db(),t=today();
+  const todayFasts=d.fasts.filter(f=>f.date===t);
+  const sl=d.sleeps.find(s=>s.date===t);
+  const w=d.workouts.find(x=>x.date===t);
+  const meals=d.meals.filter(m=>m.date===t);
+  const ts=meals.reduce((a,m)=>a+(+m.sugar||0),0);
+  const tgts=d.targets||{};
+  const fastHrs=d.activeFast?calcFastHrs({start:d.activeFast.start,date:d.activeFast.date}):(todayFasts.length?Math.max(...todayFasts.map(calcFastHrs)):0);
+  const fastGoal=+(tgts.daily)||16;
+  const fastScore=Math.min(100,Math.round((fastHrs/fastGoal)*100));
+  const sleepHrs=sl?+(sl.hours):0;
+  const sleepScore=Math.min(100,Math.round((sleepHrs/(+(tgts.sleep)||8))*100));
+  const workoutScore=w?100:0;
+  const sugarGoal=+(tgts.sugar)||10;
+  const sugarScore=ts===0?100:Math.max(0,Math.round((1-(ts/sugarGoal))*100));
+  return{total:Math.round(fastScore*.3+sleepScore*.3+workoutScore*.2+sugarScore*.2),fast:fastScore,sleep:sleepScore,workout:workoutScore,sugar:sugarScore};
+}
+function sc(n){return n>=80?'var(--accent5)':n>=50?'var(--warn)':'var(--danger)';}
+
+function renderHome(){
+  const d=db(),t=today();
+  const score=calcScore();
+  document.getElementById('top-score').textContent=score.total||'—';
+  document.getElementById('home-score').textContent=score.total;
+  document.getElementById('home-score-bar').style.width=score.total+'%';
+  document.getElementById('home-score-sub').textContent=score.total>=80?'On track ✓':score.total>=50?'Room to improve':'Log more data';
+  document.getElementById('score-breakdown').innerHTML=[
+    {l:'Fasting 30%',v:score.fast},{l:'Sleep 30%',v:score.sleep},{l:'Workout 20%',v:score.workout},{l:'Sugar 20%',v:score.sugar}
+  ].map(p=>`<span style="font-size:10px;font-family:var(--font-mono);color:${sc(p.v)}">${p.l}: ${p.v}</span>`).join('');
+
+  const todayFasts=d.fasts.filter(f=>f.date===t);
+  let fVal='—',fSub='No fast today',fStatus='bad',fType='Fasting';
+  if(d.activeFast){const hrs=calcFastHrs({start:d.activeFast.start,date:d.activeFast.date});fVal=hrs.toFixed(1)+'h';fSub=d.activeFast.type+' · Active';fStatus='neutral';fType='Fasting';}
+  else if(todayFasts.length){const l=todayFasts[todayFasts.length-1];fVal=calcFastHrs(l).toFixed(1)+'h';fSub=l.type+' · Done';fStatus='good';}
+
+  const w=d.workouts.find(x=>x.date===t);
+  const sl=d.sleeps.find(s=>s.date===t);
+  const meals=d.meals.filter(m=>m.date===t);
+  const tp=Math.round(meals.reduce((a,m)=>a+(+m.protein||0),0));
+  const tf=Math.round(meals.reduce((a,m)=>a+(+m.fat||0),0));
+  const ts=Math.round(meals.reduce((a,m)=>a+(+m.sugar||0),0));
+  const sleepGoal=+(d.targets?.sleep)||8;
+  const sugarGoal=+(d.targets?.sugar)||10;
+  const protGoal=+(d.targets?.protein)||180;
+
+  document.getElementById('status-grid').innerHTML=[
+    {label:'Fasting',icon:'⏱',val:fVal,sub:fSub,status:fStatus},
+    {label:'Exercise',icon:'🏋️',val:w?w.type:'Rest day',sub:w?(w.duration||'?')+'min':'Not logged',status:w?'good':'warn'},
+    {label:'Sleep',icon:'😴',val:sl?(+sl.hours).toFixed(1)+'h':'—',sub:sl?'Quality '+sl.quality+'/5':'Not logged',status:sl?(+sl.hours>=sleepGoal?'good':'warn'):'bad'},
+    {label:'Protein',icon:'🥩',val:tp+'g',sub:'Fat: '+tf+'g',status:tp>=protGoal?'good':tp>protGoal*.5?'warn':'bad'},
+    {label:'Sugar',icon:'🚫',val:ts+'g',sub:ts===0?'None — great!':ts<=sugarGoal?'Under limit':'Over limit!',status:ts===0?'good':ts<=sugarGoal?'warn':'bad'},
+  ].map(c=>`<div class="status-card ${c.status}"><div class="status-card-label">${c.label}</div><div class="status-card-icon">${c.icon}</div><div class="status-card-val">${c.val}</div><div class="status-card-sub">${c.sub}</div></div>`).join('');
+
+  const fasts=d.fasts;
+  const avg=arr=>arr.length?arr.reduce((a,f)=>a+calcFastHrs(f),0)/arr.length:null;
+  const ms=(ms)=>f=>new Date()-new Date(f.date)<ms;
+  const wk=fasts.filter(ms(7*864e5)),mo=fasts.filter(ms(30*864e5)),qt=fasts.filter(ms(90*864e5));
+  const tgts=d.targets||{};
+  document.getElementById('t-daily').textContent=tgts.daily?tgts.daily+'h goal':'Set in Log Entry →';
+  document.getElementById('t-weekly').textContent=avg(wk)?avg(wk).toFixed(1)+'h avg ('+wk.length+' fasts)':'No data';
+  document.getElementById('t-monthly').textContent=avg(mo)?avg(mo).toFixed(1)+'h avg ('+mo.length+' fasts)':'No data';
+  document.getElementById('t-quarterly').textContent=avg(qt)?avg(qt).toFixed(1)+'h avg ('+qt.length+' fasts)':'No data';
+}
+
+function renderCalendar(view){
+  const d=db(),now=new Date();
+  const dayNames=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  let days=[];
+  if(view==='week'){
+    for(let i=0;i<7;i++){const dt=new Date(now);dt.setDate(now.getDate()+i);days.push(dt);}
+    document.getElementById('cal-range-label').textContent='Next 7 days';
+  } else {
+    const yr=now.getFullYear(),mo=now.getMonth();
+    const first=new Date(yr,mo,1),last=new Date(yr,mo+1,0);
+    for(let i=0;i<first.getDay();i++)days.push(null);
+    for(let i=1;i<=last.getDate();i++)days.push(new Date(yr,mo,i));
+    document.getElementById('cal-range-label').textContent=first.toLocaleDateString('en-US',{month:'long',year:'numeric'});
+  }
+  let html='<div class="cal-grid">';
+  dayNames.forEach(n=>html+=`<div class="cal-day-name">${n}</div>`);
+  days.forEach(dt=>{
+    if(!dt){html+='<div class="cal-day empty"></div>';return;}
+    const ds=dt.toISOString().slice(0,10),isToday=ds===today();
+    const wkt=d.workouts.find(w=>w.date===ds),fast=d.fasts.find(f=>f.date===ds),sl=d.sleeps.find(s=>s.date===ds);
+    html+=`<div class="cal-day${isToday?' today':''}"><span class="cal-day-num" style="color:${isToday?'var(--accent)':'var(--text)'}">${dt.getDate()}</span>`;
+    html+='<div class="cal-dots">';
+    if(wkt)html+=`<div class="cal-dot" style="background:${WCOLORS[wkt.type]||'#f7c46a'}"></div>`;
+    if(sl)html+=`<div class="cal-dot" style="background:#4fd8c4;opacity:.5"></div>`;
+    html+='</div>';
+    if(fast)html+=`<div class="cal-abbr">${fast.type}</div>`;
+    html+='</div>';
+  });
+  html+='</div>';
+  document.getElementById('cal-container').innerHTML=html;
+}
+
+function renderHealth(){
+  const d=db(),t=today();
+  const sl=d.sleeps.find(s=>s.date===t)||d.sleeps[d.sleeps.length-1];
+  const fasts=d.fasts.filter(f=>f.date===t);
+  const w=d.workouts.find(x=>x.date===t);
+  let hgh=0,test=0;const factors=[];
+  if(sl){
+    const deep=+(sl.deep)||0,total=+(sl.hours)||0;
+    hgh+=Math.min(40,deep*20);test+=Math.min(30,deep*15);
+    hgh+=Math.min(20,total>=8?20:total*2.5);test+=Math.min(20,total>=8?20:total*2.5);
+    factors.push({name:'Deep sleep',val:deep.toFixed(1)+'h',good:deep>=1.5});
+    factors.push({name:'Total sleep',val:total.toFixed(1)+'h',good:total>=7.5});
+  } else factors.push({name:'Sleep',val:'Not logged',good:false});
+  if(fasts.length){
+    const hrs=Math.max(...fasts.map(calcFastHrs)),fs=Math.min(25,hrs>=16?25:hrs*1.5);
+    hgh+=fs;test+=Math.min(20,fs);
+    factors.push({name:'Fasting',val:hrs.toFixed(1)+'h',good:hrs>=16});
+  } else factors.push({name:'Fasting',val:'None today',good:false});
+  if(w){hgh+=15;test+=30;factors.push({name:'Workout',val:w.type,good:true});}
+  else factors.push({name:'Workout',val:'None logged',good:false});
+  hgh=Math.min(100,Math.round(hgh));test=Math.min(100,Math.round(test));
+  document.getElementById('hgh-val').textContent=hgh+'/100';
+  document.getElementById('hgh-bar').style.width=hgh+'%';
+  document.getElementById('test-val').textContent=test+'/100';
+  document.getElementById('test-bar').style.width=test+'%';
+  document.getElementById('hgh-factors').innerHTML=factors.map(f=>`<div class="factor-row"><div class="factor-icon ${f.good?'good':'bad'}"></div><div class="factor-name">${f.name}</div><div class="factor-val">${f.val}</div></div>`).join('');
+  const activeFastHrs=d.activeFast?calcFastHrs({start:d.activeFast.start,date:d.activeFast.date}):(fasts.length?Math.max(...fasts.map(calcFastHrs)):0);
+  const phase=getPhase(activeFastHrs);
+  document.getElementById('autophagy-phase').textContent=phase.name;
+  document.getElementById('autophagy-hrs').textContent=activeFastHrs>0?activeFastHrs.toFixed(1)+' hours fasted':'Start a fast to track phase';
+  for(let i=1;i<=4;i++)document.getElementById('ps'+i).className='phase-seg'+(i<=phase.idx+1?' active':'');
+}
+
+function renderBody(){
+  const d=db(),now=new Date();
+  const labels=[],sleepData=[],hrData=[];
+  for(let i=14;i>=0;i--){
+    const dt=new Date(now);dt.setDate(now.getDate()-i);
+    const ds=dt.toISOString().slice(0,10);
+    labels.push((dt.getMonth()+1)+'/'+dt.getDate());
+    const sl=d.sleeps.find(s=>s.date===ds),hr=d.hrs.find(h=>h.date===ds);
+    sleepData.push(sl?+(sl.hours):null);hrData.push(hr?+(hr.resting):null);
+  }
+  const rhrVals=hrData.filter(v=>v!==null);
+  const whrArr=d.hrs.filter(h=>h.workout).map(h=>+h.workout);
+  document.getElementById('avg-rhr').textContent=rhrVals.length?Math.round(rhrVals.reduce((a,b)=>a+b,0)/rhrVals.length):'—';
+  document.getElementById('avg-whr').textContent=whrArr.length?Math.round(whrArr.reduce((a,b)=>a+b,0)/whrArr.length):'—';
+  const ctx=document.getElementById('body-chart').getContext('2d');
+  if(bodyChartInstance)bodyChartInstance.destroy();
+  bodyChartInstance=new Chart(ctx,{
+    data:{labels,datasets:[
+      {type:'bar',label:'Sleep (h)',data:sleepData,backgroundColor:'rgba(79,216,196,.35)',borderColor:'#4fd8c4',borderWidth:1,yAxisID:'y'},
+      {type:'line',label:'Resting HR',data:hrData,borderColor:'#f76a8a',backgroundColor:'transparent',tension:.35,pointRadius:3,pointBackgroundColor:'#f76a8a',yAxisID:'y2',borderDash:[4,3]}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+      scales:{y:{position:'left',ticks:{color:'#6b6b8a',font:{size:9}},grid:{color:'rgba(255,255,255,.04)'},title:{display:true,text:'Sleep h',color:'#6b6b8a',font:{size:9}}},
+        y2:{position:'right',ticks:{color:'#6b6b8a',font:{size:9}},grid:{display:false},title:{display:true,text:'HR bpm',color:'#6b6b8a',font:{size:9}}},
+        x:{ticks:{color:'#6b6b8a',font:{size:8},maxRotation:45,autoSkip:false},grid:{color:'rgba(255,255,255,.02)'}}}}
+  });
+  const slEl=document.getElementById('sleep-history');
+  const sleeps=[...d.sleeps].reverse().slice(0,10);
+  slEl.innerHTML=sleeps.length?sleeps.map(s=>`<div class="history-item"><span class="history-date">${s.date}</span><span style="flex:1">${(+s.hours).toFixed(1)}h · ${s.deep?(+s.deep).toFixed(1)+'h deep':'? deep'}</span><span class="tag ${+s.quality>=4?'green':+s.quality>=3?'teal':'red'}">${s.quality}/5</span></div>`).join(''):'<div style="text-align:center;color:var(--muted);font-size:12px;padding:10px 0;font-family:var(--font-mono)">No sleep data yet</div>';
+  const hrEl=document.getElementById('hr-history');
+  const hrs=[...d.hrs].reverse().slice(0,10);
+  hrEl.innerHTML=hrs.length?hrs.map(h=>`<div class="history-item"><span class="history-date">${h.date}</span><span>Rest: <strong>${h.resting||'—'}</strong> bpm${h.workout?' · WO: '+h.workout+' bpm':''}</span></div>`).join(''):'<div style="text-align:center;color:var(--muted);font-size:12px;padding:10px 0;font-family:var(--font-mono)">No HR data yet</div>';
+}
+
+function renderDiet(){
+  const d=db(),t=today();
+  const meals=d.meals.filter(m=>m.date===t);
+  const tp=meals.reduce((a,m)=>a+(+m.protein||0),0),tf=meals.reduce((a,m)=>a+(+m.fat||0),0),ts=meals.reduce((a,m)=>a+(+m.sugar||0),0);
+  const tgts=d.targets||{},pG=+(tgts.protein)||180,fG=+(tgts.fat)||80,sG=+(tgts.sugar)||10;
+  document.getElementById('today-protein').textContent=Math.round(tp);
+  document.getElementById('today-fat').textContent=Math.round(tf);
+  document.getElementById('today-sugar').textContent=Math.round(ts);
+  document.getElementById('protein-bar').style.width=Math.min(100,(tp/pG)*100)+'%';
+  document.getElementById('fat-bar').style.width=Math.min(100,(tf/fG)*100)+'%';
+  document.getElementById('sugar-bar').style.width=Math.min(100,(ts/sG)*100)+'%';
+  const sa=document.getElementById('sugar-alert-zone');
+  if(ts>sG)sa.innerHTML=`<div class="alert err">Sugar over goal: ${Math.round(ts)}g of ${sG}g limit — hurts Consistency Score.</div>`;
+  else if(ts>0)sa.innerHTML=`<div class="alert warn">Sugar: ${Math.round(ts)}g — under limit (${sG}g). Stay on track.</div>`;
+  else sa.innerHTML='<div style="text-align:center;color:var(--accent5);font-size:12px;padding:8px;font-family:var(--font-mono)">No sugar logged today ✓</div>';
+  if(tgts.protein)document.getElementById('target-protein').value=tgts.protein;
+  if(tgts.fat)document.getElementById('target-fat').value=tgts.fat;
+  if(tgts.sugar)document.getElementById('target-sugar').value=tgts.sugar;
+  const mhEl=document.getElementById('meal-history');
+  const allMeals=[...d.meals].reverse().slice(0,15);
+  mhEl.innerHTML=allMeals.length?allMeals.map(m=>`<div class="history-item"><span class="history-date">${m.date}</span><div style="flex:1"><div style="font-size:12px;font-weight:600">${m.name||'Meal'}</div><div style="font-size:10px;color:var(--muted);font-family:var(--font-mono)">P:${m.protein||0}g F:${m.fat||0}g S:${m.sugar||0}g</div></div>${+m.sugar>0?`<span class="tag red">${m.sugar}g</span>`:''}</div>`).join(''):'<div style="text-align:center;color:var(--muted);font-size:12px;padding:10px 0;font-family:var(--font-mono)">No meals logged</div>';
+}
+
+function initLogForms(){
+  const d=db(),tgts=d.targets||{},ts=today();
+  ['fast-date','workout-date','sleep-date','meal-date','hr-date'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=ts;});
+  if(tgts.daily)document.getElementById('ft-daily').value=tgts.daily;
+  if(tgts.weekly)document.getElementById('ft-weekly').value=tgts.weekly;
+  if(tgts.monthly)document.getElementById('ft-monthly').value=tgts.monthly;
+  if(tgts.quarterly)document.getElementById('ft-quarterly').value=tgts.quarterly;
+  if(tgts.sleep)document.getElementById('ft-sleep').value=tgts.sleep;
+  if(d.activeFast){
+    document.getElementById('fast-active-display').style.display='block';
+    document.getElementById('fast-start-btn-wrap').style.display='none';
+    document.getElementById('fast-stop-btn-wrap').style.display='block';
+    startFastTimer();
+  }
+}
+
+function logFast(){
+  const d=db(),start=document.getElementById('fast-start').value;
+  if(!start){alert('Please enter a start time');return;}
+  d.fasts.push({type:document.getElementById('fast-type').value,start,end:document.getElementById('fast-end').value,date:document.getElementById('fast-date').value||today()});
+  save(d);alert('Fast logged!');renderHome();
+}
+function startActiveFast(){
+  const d=db(),now=new Date();
+  d.activeFast={type:document.getElementById('fast-type').value,start:pad(now.getHours())+':'+pad(now.getMinutes()),date:today()};
+  save(d);
+  document.getElementById('fast-active-display').style.display='block';
+  document.getElementById('fast-start-btn-wrap').style.display='none';
+  document.getElementById('fast-stop-btn-wrap').style.display='block';
+  startFastTimer();renderHome();
+}
+function stopActiveFast(){
+  const d=db();if(!d.activeFast)return;
+  const now=new Date();
+  d.fasts.push({...d.activeFast,end:pad(now.getHours())+':'+pad(now.getMinutes())});
+  d.activeFast=null;save(d);
+  if(activeFastInterval){clearInterval(activeFastInterval);activeFastInterval=null;}
+  document.getElementById('fast-active-display').style.display='none';
+  document.getElementById('fast-start-btn-wrap').style.display='block';
+  document.getElementById('fast-stop-btn-wrap').style.display='none';
+  alert('Fast ended and saved!');renderHome();
+}
+function startFastTimer(){
+  if(activeFastInterval)clearInterval(activeFastInterval);
+  function tick(){
+    const d=db();if(!d.activeFast)return;
+    const hrs=calcFastHrs({start:d.activeFast.start,date:d.activeFast.date});
+    const s=Math.floor(hrs*3600);
+    const el=document.getElementById('fast-timer');
+    if(el)el.textContent=pad(Math.floor(s/3600))+':'+pad(Math.floor((s%3600)/60))+':'+pad(s%60);
+    const phase=getPhase(hrs);
+    const lbl=document.getElementById('fast-phase-label');if(lbl)lbl.textContent=phase.name;
+    for(let i=1;i<=4;i++){const ps=document.getElementById('lps'+i);if(ps)ps.className='phase-seg'+(i<=phase.idx+1?' active':'');}
+  }
+  tick();activeFastInterval=setInterval(tick,1000);
+}
+function logWorkout(){
+  const d=db();
+  d.workouts.push({type:document.getElementById('workout-type').value,duration:document.getElementById('workout-duration').value,notes:document.getElementById('workout-notes').value,date:document.getElementById('workout-date').value||today()});
+  save(d);alert('Workout logged!');renderHome();
+}
+function logSleep(){
+  const d=db(),hours=document.getElementById('sleep-hours').value;
+  if(!hours){alert('Please enter hours slept');return;}
+  d.sleeps.push({hours,deep:document.getElementById('sleep-deep').value,quality:document.getElementById('sleep-quality').value,date:document.getElementById('sleep-date').value||today()});
+  save(d);alert('Sleep logged!');renderHome();
+}
+function logMeal(){
+  const d=db();
+  d.meals.push({name:document.getElementById('meal-name').value,protein:document.getElementById('meal-protein').value||0,fat:document.getElementById('meal-fat').value||0,carbs:document.getElementById('meal-carbs').value||0,sugar:document.getElementById('meal-sugar').value||0,date:document.getElementById('meal-date').value||today()});
+  save(d);alert('Meal logged!');renderHome();renderDiet();
+}
+function logHR(){
+  const d=db(),resting=document.getElementById('hr-resting').value,workout=document.getElementById('hr-workout').value;
+  if(!resting&&!workout){alert('Enter at least one HR value');return;}
+  d.hrs.push({resting,workout,date:document.getElementById('hr-date').value||today()});
+  save(d);alert('Heart rate logged!');renderHome();
+}
+function saveTargets(){
+  const d=db();d.targets=d.targets||{};
+  const fields={daily:'ft-daily',weekly:'ft-weekly',monthly:'ft-monthly',quarterly:'ft-quarterly',sleep:'ft-sleep',protein:'target-protein',fat:'target-fat',sugar:'target-sugar'};
+  Object.entries(fields).forEach(([k,id])=>{const el=document.getElementById(id);if(el&&el.value)d.targets[k]=el.value;});
+  save(d);renderHome();
+}
+
+renderHome();
+</script>
+</body>
+</html>
