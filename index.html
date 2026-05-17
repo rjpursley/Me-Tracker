@@ -7,6 +7,21 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+  (function(){
+    var attempts = 0;
+    function checkPin() {
+      var pin = prompt("Me-Tracker — Enter PIN:");
+      if (pin === null) { window.location.href = "https://google.com"; return; }
+      if (pin !== "7277255521") {
+        attempts++;
+        if (attempts >= 3) { alert("Access denied."); window.location.href = "https://google.com"; }
+        else { alert("Incorrect PIN. " + (3 - attempts) + " attempt(s) remaining."); checkPin(); }
+      }
+    }
+    checkPin();
+  })();
+</script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 :root{
