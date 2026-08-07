@@ -143,8 +143,16 @@ select option{background:var(--surface2)}
 .rx-exercises{padding:0 16px 16px}
 .rx-exercise-item{display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-top:1px solid var(--border)}
 .rx-ex-num{font-size:11px;font-family:var(--font-mono);color:var(--accent);font-weight:500;min-width:20px;padding-top:2px}
-.rx-ex-name{font-size:15px;font-weight:600;color:var(--text);line-height:1.3}
-.rx-ex-equip{font-size:12px;color:var(--muted);font-family:var(--font-mono);margin-top:2px}
+.rx-ex-name{font-size:16px;font-weight:600;color:var(--text);line-height:1.3}
+.rx-ex-equip{font-size:13px;color:var(--muted);font-family:var(--font-mono);margin-top:3px}
+.rx-ex-detail{font-size:13px;color:var(--text);font-family:var(--font-mono);margin-top:3px;line-height:1.45;opacity:.8}
+.rx-block-head{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--accent);font-family:var(--font-mono);font-weight:500;padding:16px 0 2px;border-top:1px solid var(--border);margin-top:4px}
+.rx-block-head:first-child{border-top:none;margin-top:0;padding-top:4px}
+.rx-week-tag{font-size:11px;font-family:var(--font-mono);color:var(--muted);letter-spacing:.06em;margin-top:3px}
+.rx-main-line{margin-top:8px;padding:10px 12px;border-radius:10px;background:var(--surface2);border:1px solid var(--border)}
+.rx-main-rx{font-size:15px;font-weight:600;color:var(--accent);font-family:var(--font-mono);line-height:1.45}
+.rx-main-meta{font-size:12px;color:var(--muted);font-family:var(--font-mono);margin-top:4px}
+.rx-main-line.rx-no-tm .rx-main-rx{color:var(--warn)}
 .rx-rest-day{padding:20px 16px;text-align:center}
 .rx-rest-icon{font-size:36px;margin-bottom:8px}
 .rx-rest-text{font-size:16px;font-weight:600;color:var(--muted)}
@@ -438,6 +446,11 @@ select option{background:var(--surface2)}
     <div class="form-row"><div class="form-label">Daily fast goal (hours)</div><input type="number" id="ft-daily" placeholder="e.g. 18" onchange="saveTargets()"></div>
     <div class="form-row"><div class="form-label">Sleep goal (hours/night)</div><input type="number" id="ft-sleep" placeholder="e.g. 8" step="0.5" onchange="saveTargets()"></div>
     <div class="form-row"><div class="form-label">Protein target (g)</div><input type="number" id="ft-protein" placeholder="e.g. 180" onchange="saveTargets()"></div>
+    <div class="form-label" style="margin-top:18px;color:var(--accent)">Training Maxes — 85% of current 1RM</div>
+    <div class="form-row" style="margin-top:8px"><div class="form-label">Back Squat TM (lbs)</div><input type="number" id="ft-tm-squat" placeholder="e.g. 315" onchange="saveTargets()"></div>
+    <div class="form-row"><div class="form-label">Overhead Press TM (lbs)</div><input type="number" id="ft-tm-ohp" placeholder="e.g. 135" onchange="saveTargets()"></div>
+    <div class="form-row"><div class="form-label">Deadlift TM (lbs)</div><input type="number" id="ft-tm-dl" placeholder="e.g. 405" onchange="saveTargets()"></div>
+    <div class="form-row"><div class="form-label">Bench Press TM (lbs)</div><input type="number" id="ft-tm-bench" placeholder="e.g. 225" onchange="saveTargets()"></div>
   </div>
 </div>
 
@@ -452,15 +465,118 @@ function dateStr(dt){return dt.toISOString().slice(0,10);}
 function addDays(dt,n){const d=new Date(dt);d.setDate(d.getDate()+n);return d;}
 const WCOLORS={Resistance:'#7c6af7','Zone 2':'#4fd8c4',Bodyweight:'#f7a46a','Wtd Walk':'#f76a8a',HIIT:'#f76a6a',Mobility:'#6af77c',Other:'#f7c46a','Active Rest':'#6b6b8a'};
 let activeFastInterval=null,bodyChartInstance=null,currentCalView='week',selectedDate=today();
+// ── Brian Alsruhe 12-Week Strength & Conditioning Program ──────────────
+// PROGRAM_START is a code constant, not stored data. Edit this one line to
+// re-baseline the 12-week cycle. Must be the Monday the program begins.
+const PROGRAM_START='2026-08-03';
+const PROGRESSION=[
+  {week:1, phase:'Wave 1: Hypertrophy',  setsReps:'4 sets x 8 reps',              pct:65, rest:'90 sec',  objective:'Work capacity & volume'},
+  {week:2, phase:'Wave 1: Hypertrophy',  setsReps:'4 sets x 8 reps',              pct:70, rest:'90 sec',  objective:'Work capacity & volume'},
+  {week:3, phase:'Wave 1: Hypertrophy',  setsReps:'4 sets x 6 reps',              pct:75, rest:'90 sec',  objective:'Peak volume load'},
+  {week:4, phase:'Deload',               setsReps:'3 sets x 6 reps',              pct:50, rest:'120 sec', objective:'Deload / Technique focus'},
+  {week:5, phase:'Wave 2: Strength',     setsReps:'4 sets x 5 reps',              pct:75, rest:'120 sec', objective:'Strength base building'},
+  {week:6, phase:'Wave 2: Strength',     setsReps:'4 sets x 5 reps',              pct:80, rest:'120 sec', objective:'Strength intensification'},
+  {week:7, phase:'Wave 2: Strength',     setsReps:'4 sets x 3 reps',              pct:85, rest:'120 sec', objective:'Heavy strength density'},
+  {week:8, phase:'Deload',               setsReps:'3 sets x 5 reps',              pct:55, rest:'120 sec', objective:'Deload / Joint recovery'},
+  {week:9, phase:'Wave 3: Realization',  setsReps:'3x3 @ 80%, 1x3+ (AMRAP)',      pct:85, rest:'150 sec', objective:'High intensity effort'},
+  {week:10,phase:'Wave 3: Realization',  setsReps:'3x2 @ 85%, 1x2+ (AMRAP)',      pct:90, rest:'150 sec', objective:'High intensity effort'},
+  {week:11,phase:'Wave 3: Realization',  setsReps:'2x1 @ 90%, 1x1+ (AMRAP)',      pct:95, rest:'180 sec', objective:'Peak strength output'},
+  {week:12,phase:'Test / Reset',         setsReps:'Work to safe 1RM or 3x3',      pct:60, rest:'Flexible',objective:'Re-test baselines or deload'}
+];
+// Days 4 & 5 are dynamic/speed days: flat 60–70% TM across all 12 weeks.
+const SPEED_PCT=[60,70];
 const SCHEDULE={
-  1:{session:'Upper Focus',category:'Resistance',fastLabel:'18:6 window',exercises:[{name:'Deadlift',equip:'Barbell'},{name:'Bent Over Row',equip:'Barbell'},{name:'Bench Press',equip:'Barbell'},{name:'Overhead Press',equip:'Barbell'},{name:'Landmine Rotation',equip:'Barbell anchored'},{name:'Dumbbell Curl + Press',equip:'Dumbbells'}]},
-  2:{session:'Zone 2 / Active Cardio',category:'Zone 2',fastLabel:'18:6 window',exercises:null,note:'Heart rate target 120–145 bpm · 30–50 min · Modality your choice (weighted walk, gada, rucking, bike)'},
-  3:{session:'Lower Focus',category:'Resistance',fastLabel:'18:6 window',exercises:[{name:'Squat',equip:'Barbell'},{name:'Romanian Deadlift',equip:'Barbell'},{name:'Barbell Hip Thrust',equip:'Barbell + bench'},{name:'Bent Over Row',equip:'Barbell'},{name:'Overhead Press',equip:'Barbell (lighter)'},{name:'Dumbbell Lateral Raise',equip:'Dumbbells'}]},
-  4:{session:'Active Rest',category:'Active Rest',fastLabel:'18:6 window',exercises:null,rest:true},
-  5:{session:'Upper Focus',category:'Resistance',fastLabel:'18:6 / fast begins after dinner',exercises:[{name:'Deadlift',equip:'Barbell'},{name:'Bent Over Row',equip:'Barbell'},{name:'Bench Press',equip:'Barbell'},{name:'Overhead Press',equip:'Barbell'},{name:'Landmine Rotation',equip:'Barbell anchored'},{name:'Dumbbell Curl + Press',equip:'Dumbbells'}]},
-  6:{session:'Bodyweight + Sandbag',category:'Bodyweight',fastLabel:'Fast active (hrs 12–18)',exercises:[{name:'Sandbag Clean & Press',equip:'65 lb sandbag'},{name:'Push-up Variations',equip:'Bodyweight — wide / close / archer'},{name:'Sandbag Bear Hug Squat',equip:'65 lb sandbag'},{name:'Pull-ups',equip:'Bodyweight'},{name:'Sandbag Carry',equip:'65 lb sandbag · 40–60 yards'},{name:'Plank + Dead Bug',equip:'Bodyweight'},{name:'Sandbag Ground-to-Shoulder',equip:'65 lb sandbag'}]},
-  0:{session:'Active Rest',category:'Active Rest',fastLabel:'Fast breaks this morning',exercises:null,rest:true}
+  1:{session:'Max Effort Lower (Squat)',category:'Resistance',fastLabel:'18:6 window',tmKey:'tm_squat',mainLift:'Barbell Back Squat',exercises:[
+    {name:'Goblet Squat',equip:'Kettlebell / dumbbell',detail:'x 10 reps · 3-second pause at bottom',block:'Warm-Up — 2 Rounds'},
+    {name:'Hanging Leg Raise',equip:'Pull-up bar',detail:'x 10 reps',block:'Warm-Up — 2 Rounds'},
+    {name:'Kettlebell / Steel Mace Swing',equip:'Kettlebell or mace',detail:'x 15 reps',block:'Warm-Up — 2 Rounds'},
+    {name:'Broad Jump',equip:'Bodyweight — explosive',detail:'x 3 reps (or Box Jump x 3)',block:'Main Strength Giant Set — 4 Sets'},
+    {name:'Barbell Back Squat',equip:'Barbell — main lift',detail:'Refer to progression matrix',block:'Main Strength Giant Set — 4 Sets',main:true},
+    {name:'Ab Wheel Rollout',equip:'Ab wheel — core',detail:'x 8–10 reps (or Hanging Toes-to-Bar)',block:'Main Strength Giant Set — 4 Sets'},
+    {name:'Jump Rope',equip:'Active rest',detail:'x 45 seconds (or light kettlebell swings)',block:'Main Strength Giant Set — 4 Sets'},
+    {name:'Barbell Romanian Deadlift',equip:'Barbell',detail:'x 8–10 reps (or Zercher Good Mornings)',block:'Assistance Block — 3 Rounds'},
+    {name:'Bulgarian Split Squat',equip:'Dumbbells + bench',detail:'x 10 reps per leg (or Walking Lunges)',block:'Assistance Block — 3 Rounds'},
+    {name:'Heavy Plank Hold',equip:'Weight plate optional',detail:'x 45 seconds · rest 90 sec between rounds',block:'Assistance Block — 3 Rounds'},
+    {name:'Clean & Press',equip:'Kettlebell / dumbbell',detail:'5 reps every minute',block:'Conditioning Finisher — 10-Min EMOM'},
+    {name:'Burpees',equip:'Bodyweight',detail:'8–10 reps every minute · rest remainder of minute',block:'Conditioning Finisher — 10-Min EMOM'}
+  ]},
+  2:{session:'Max Effort Upper (OHP)',category:'Resistance',fastLabel:'18:6 window',tmKey:'tm_ohp',mainLift:'Overhead Barbell Press',exercises:[
+    {name:'Band Pull-Apart',equip:'Resistance band',detail:'x 20 reps',block:'Warm-Up — 2 Rounds'},
+    {name:'Scapular Pull-up',equip:'Pull-up bar',detail:'x 10 reps',block:'Warm-Up — 2 Rounds'},
+    {name:'Bear Crawl',equip:'Bodyweight',detail:'x 50 feet',block:'Warm-Up — 2 Rounds'},
+    {name:'Weighted Pull-Up',equip:'Antagonist',detail:'x 5–8 reps (or heavy lat pulldown)',block:'Main Strength Giant Set — 4 Sets'},
+    {name:'Overhead Barbell Press',equip:'Barbell — main lift',detail:'Refer to progression matrix',block:'Main Strength Giant Set — 4 Sets',main:true},
+    {name:'Dragon Flag',equip:'Bench — core',detail:'x 8–10 reps (or heavy hanging knee raises)',block:'Main Strength Giant Set — 4 Sets'},
+    {name:'Battle Ropes',equip:'Active rest',detail:'x 45 seconds (or shadow boxing)',block:'Main Strength Giant Set — 4 Sets'},
+    {name:'Incline Dumbbell Bench Press',equip:'Dumbbells + incline bench',detail:'x 10–12 reps',block:'Assistance Giant Set — 3 Rounds'},
+    {name:'Bent-Over Barbell Row',equip:'Barbell',detail:'x 10–12 reps (or T-Bar Row)',block:'Assistance Giant Set — 3 Rounds'},
+    {name:'Half-Kneeling Bottoms-Up Press',equip:'Kettlebell',detail:'x 8 reps per side',block:'Assistance Giant Set — 3 Rounds'},
+    {name:'Face Pull',equip:'Cable / band',detail:'x 15–20 reps · rest 90 sec between rounds',block:'Assistance Giant Set — 3 Rounds'},
+    {name:'Dumbbell Thruster',equip:'Dumbbells',detail:'x 10 reps',block:'Conditioning Finisher — 8-Min AMRAP'},
+    {name:'Push-up',equip:'Bodyweight',detail:'x 10 reps',block:'Conditioning Finisher — 8-Min AMRAP'},
+    {name:'Ring Row',equip:'Rings / bar',detail:'x 10 reps (or inverted rows)',block:'Conditioning Finisher — 8-Min AMRAP'}
+  ]},
+  3:{session:'Active Recovery / Zone 2',category:'Zone 2',fastLabel:'18:6 window',exercises:[
+    {name:'Steady-State Zone 2',equip:'Ruck / row / bike / incline walk',detail:'30–45 min · conversational pace, no gasping',block:'Aerobic Base'},
+    {name:"World's Greatest Stretch",equip:'Bodyweight',detail:'x 5 reps per side',block:'Mobility & Thoracic Flow — 15 Min'},
+    {name:'Couch Stretch',equip:'Wall / bench',detail:'x 60 seconds per side',block:'Mobility & Thoracic Flow — 15 Min'},
+    {name:'Deep Squat Pry',equip:'Bodyweight',detail:'x 2 minutes',block:'Mobility & Thoracic Flow — 15 Min'},
+    {name:'Dead Hang',equip:'Pull-up bar',detail:'x max time',block:'Core & Grip — 3 Sets'},
+    {name:'Suitcase Hold',equip:'Heavy dumbbell / kettlebell',detail:'x 45 seconds per side',block:'Core & Grip — 3 Sets'}
+  ]},
+  4:{session:'Dynamic Speed Lower (Deadlift)',category:'Resistance',fastLabel:'18:6 window',tmKey:'tm_dl',mainLift:'Deadlift',speed:true,speedSetsReps:'5 sets x 3 reps',exercises:[
+    {name:'Single-Leg Glute Bridge',equip:'Bodyweight',detail:'x 10 reps per side',block:'Warm-Up — 2 Rounds'},
+    {name:'Band Good Morning',equip:'Resistance band',detail:'x 15 reps',block:'Warm-Up — 2 Rounds'},
+    {name:'Birddog',equip:'Bodyweight',detail:'x 8 reps per side',block:'Warm-Up — 2 Rounds'},
+    {name:'Kettlebell Snatch',equip:'Kettlebell — explosive',detail:'x 5 reps (or kettlebell swings)',block:'Speed Giant Set — 5 Sets'},
+    {name:'Deadlift',equip:'Barbell — main lift',detail:'Focus on maximal bar speed',block:'Speed Giant Set — 5 Sets',main:true},
+    {name:'Landmine Twist',equip:'Barbell anchored — core',detail:'x 8 reps per side (or heavy Pallof press)',block:'Speed Giant Set — 5 Sets'},
+    {name:'Jumping Jacks',equip:'Active rest',detail:'x 45 seconds (or A-skips) · rest 90 sec after',block:'Speed Giant Set — 5 Sets'},
+    {name:'Safety Squat Bar Squat',equip:'SSB or goblet front squat',detail:'x 10–12 reps',block:'Volume Triplet — 3 Rounds'},
+    {name:'Hamstring Curl',equip:'Band or machine',detail:'x 15 reps',block:'Volume Triplet — 3 Rounds'},
+    {name:'Heavy Farmers Carry',equip:'Dumbbells / handles',detail:'x 100 feet · rest 90 sec between rounds',block:'Volume Triplet — 3 Rounds'},
+    {name:'Death by Kettlebell Swings',equip:'Kettlebell',detail:'Min 1: 10 swings, +2 reps every minute until failure',block:'Conditioning Finisher'}
+  ]},
+  5:{session:'Dynamic Speed Upper (Bench)',category:'Resistance',fastLabel:'18:6 / fast begins after dinner',tmKey:'tm_bench',mainLift:'Barbell Bench Press',speed:true,speedSetsReps:'5 sets x 3–5 reps',exercises:[
+    {name:'Push-up to Downward Dog',equip:'Bodyweight',detail:'x 8 reps',block:'Warm-Up — 2 Rounds'},
+    {name:'Cuban Rotation',equip:'Light dumbbells',detail:'x 12 reps',block:'Warm-Up — 2 Rounds'},
+    {name:'Band Dislocate',equip:'Resistance band',detail:'x 15 reps',block:'Warm-Up — 2 Rounds'},
+    {name:'Chest-Supported Dumbbell Row',equip:'Antagonist',detail:'x 8 reps',block:'Speed Giant Set — 5 Sets'},
+    {name:'Barbell Bench Press',equip:'Barbell — main lift',detail:'Focus on maximal bar speed',block:'Speed Giant Set — 5 Sets',main:true},
+    {name:'Ab Mat Sit-up w/ Plate',equip:'Weight plate overhead — core',detail:'x 12 reps',block:'Speed Giant Set — 5 Sets'},
+    {name:'Row / SkiErg',equip:'Active rest',detail:'x 10 reps (or medicine ball slams) · rest 90 sec after',block:'Speed Giant Set — 5 Sets'},
+    {name:'Standing Dumbbell Overhead Press',equip:'Dumbbells',detail:'x 10–12 reps',block:'Volume Triplet — 3 Rounds'},
+    {name:'Chin-up',equip:'Pull-up bar',detail:'x max reps (or band-assisted to 10)',block:'Volume Triplet — 3 Rounds'},
+    {name:'Dips',equip:'Parallel bars',detail:'x 10–12 reps · rest 90 sec between rounds',block:'Volume Triplet — 3 Rounds'},
+    {name:'Alternating Dumbbell Snatch',equip:'Dumbbell',detail:'50 reps',block:'Conditioning Finisher — 10-Min Chipper'},
+    {name:'Hand-Release Push-up',equip:'Bodyweight',detail:'40 reps',block:'Conditioning Finisher — 10-Min Chipper'},
+    {name:'Dumbbell Goblet Squat',equip:'Dumbbell',detail:'30 reps',block:'Conditioning Finisher — 10-Min Chipper'},
+    {name:'Burpee Over Dumbbell',equip:'Bodyweight + dumbbell',detail:'20 reps · for time',block:'Conditioning Finisher — 10-Min Chipper'}
+  ]},
+  6:{session:'Strongman / GPP Carries',category:'Bodyweight',fastLabel:'Fast active (hrs 12–18)',exercises:[
+    {name:'Heavy Farmers Walk',equip:'Dumbbells / handles',detail:'x 100 feet',block:'Loaded Carry Circuit — 4 Rounds'},
+    {name:'Bear-Hug Carry',equip:'Sandbag / keg / med-ball',detail:'x 100 feet',block:'Loaded Carry Circuit — 4 Rounds'},
+    {name:"Overhead Waiter's Walk",equip:'Kettlebell / dumbbell',detail:'x 50 feet right / 50 feet left',block:'Loaded Carry Circuit — 4 Rounds'},
+    {name:'Sled Push',equip:'Sled or heavy tire',detail:'x 100 feet · rest 2 min after each round',block:'Loaded Carry Circuit — 4 Rounds'},
+    {name:'Side Plank',equip:'Bodyweight',detail:'x 45 seconds per side',block:'Trunk & GPP Finisher — 3 Sets'},
+    {name:'Sledgehammer Tire Strikes',equip:'Sledgehammer or steel mace',detail:'x 20 reps per side',block:'Trunk & GPP Finisher — 3 Sets'},
+    {name:'Light Sled Drag / Walk',equip:'Sled or bodyweight',detail:'x 5 minutes continuous',block:'Trunk & GPP Finisher — 3 Sets'}
+  ]},
+  0:{session:'Full Rest',category:'Active Rest',fastLabel:'Fast breaks this morning',exercises:null,rest:true}
 };
+function programWeek(ds){
+  const start=new Date(PROGRAM_START+'T12:00:00');const cur=new Date((ds||today())+'T12:00:00');
+  if(isNaN(start)||isNaN(cur))return 1;
+  return Math.max(1,Math.min(12,Math.floor(Math.floor((cur-start)/86400000)/7)+1));
+}
+function round5(v){return Math.round(v/5)*5;}
+function mainLiftRx(sched,ds){
+  if(!sched||!sched.tmKey)return null;
+  const wk=programWeek(ds),p=PROGRESSION[wk-1];const tm=+((db().targets||{})[sched.tmKey])||0;
+  if(sched.speed)return{week:wk,phase:p.phase,setsReps:sched.speedSetsReps,pctLabel:SPEED_PCT[0]+'–'+SPEED_PCT[1]+'%',
+    weight:tm?round5(tm*SPEED_PCT[0]/100)+'–'+round5(tm*SPEED_PCT[1]/100)+' lbs':'set TM',rest:'90 sec',objective:'Speed & acceleration — flat % all 12 weeks'};
+  return{week:wk,phase:p.phase,setsReps:p.setsReps,pctLabel:p.pct+'%',weight:tm?round5(tm*p.pct/100)+' lbs':'set TM',rest:p.rest,objective:p.objective};
+}
 const CATEGORY_COLORS={'Resistance':'rgba(124,106,247,.15)','Zone 2':'rgba(79,216,196,.15)','Bodyweight':'rgba(247,164,106,.15)','Active Rest':'rgba(107,107,138,.1)'};
 const CATEGORY_BORDER={'Resistance':'rgba(124,106,247,.4)','Zone 2':'rgba(79,216,196,.4)','Bodyweight':'rgba(247,164,106,.4)','Active Rest':'rgba(107,107,138,.3)'};
 const CATEGORY_COLOR_TEXT={'Resistance':'var(--accent)','Zone 2':'var(--accent2)','Bodyweight':'var(--accent3)','Active Rest':'var(--muted)'};
@@ -469,7 +585,7 @@ function calcFastHrs(fast){if(!fast||!fast.start)return 0;const s=new Date((fast
 function getSleepForDate(ds){const d=db();const logged=d.sleeps.find(s=>s.date===ds);if(logged)return logged;return{hours:7,deep:1.2,quality:3,_default:true};}
 function getWorkoutForDate(ds){const d=db();const dev=d.deviations&&d.deviations[ds];if(dev&&dev.type==='swapped'&&dev.swap)return{type:dev.swap,date:ds,_swapped:true};if(dev&&dev.type==='missed')return null;const logged=d.workouts.find(w=>w.date===ds);if(logged)return logged;const sched=getScheduleForDate(ds);if(sched.rest)return{type:'Active Rest',date:ds,_assumed:true};return{type:sched.category,date:ds,_assumed:true};}
 function calcScore(ds){
-  ds=ds||today();const d=db();const dow=new Date(ds+'T12:00:00').getDay();const isRestDay=(dow===0||dow===4);const tgts=d.targets||{};const fastGoal=+(tgts.daily)||18;
+  ds=ds||today();const d=db();const dow=new Date(ds+'T12:00:00').getDay();const isRestDay=(dow===0);const tgts=d.targets||{};const fastGoal=+(tgts.daily)||18;
   const todayFasts=d.fasts.filter(f=>f.date===ds);const fastHrs=d.activeFast&&ds===today()?calcFastHrs({start:d.activeFast.start,date:d.activeFast.date}):(todayFasts.length?Math.max(...todayFasts.map(calcFastHrs)):0);const fastScore=Math.min(100,Math.round((fastHrs/fastGoal)*100));
   const sl=getSleepForDate(ds);const sleepGoal=+(tgts.sleep)||8;const sleepScore=Math.min(100,Math.round((Math.min(100,(+(sl.hours)/sleepGoal)*100))*.7+((+(sl.quality)/5)*100)*.3));
   const w=getWorkoutForDate(ds);let trainingScore=0;if(w){const t=w.type;if(t==='Resistance'||t==='HIIT')trainingScore=100;else if(t==='Zone 2'||t==='Bodyweight')trainingScore=85;else if(t==='Wtd Walk')trainingScore=70;else if(t==='Mobility')trainingScore=60;else if(t==='Active Rest')trainingScore=isRestDay?80:60;else trainingScore=60;}else{trainingScore=isRestDay?80:0;}
@@ -504,15 +620,30 @@ function renderHomeDayContent(){
 }
 function renderPrescription(ds){
   const sched=getScheduleForDate(ds);const d=db();const dev=d.deviations&&d.deviations[ds];const catColor=CATEGORY_COLOR_TEXT[sched.category]||'var(--text)';const catBg=CATEGORY_COLORS[sched.category]||'transparent';const catBorder=CATEGORY_BORDER[sched.category]||'var(--border)';const dayName=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date(ds+'T12:00:00').getDay()];
-  let html=`<div class="rx-card" style="border-color:${catBorder};background:${catBg}"><div class="rx-header"><div><div class="rx-day-label">${dayName}</div><div class="rx-session-name">${sched.session}</div></div><div class="rx-category-tag" style="color:${catColor};background:rgba(0,0,0,.2);border:1px solid ${catBorder}">${sched.category}</div></div>`;
+  const wk=programWeek(ds);const phase=PROGRESSION[wk-1].phase;
+  let html=`<div class="rx-card" style="border-color:${catBorder};background:${catBg}"><div class="rx-header"><div><div class="rx-day-label">${dayName}</div><div class="rx-session-name">${sched.session}</div><div class="rx-week-tag">Week ${wk} of 12 · ${phase}</div></div><div class="rx-category-tag" style="color:${catColor};background:rgba(0,0,0,.2);border:1px solid ${catBorder}">${sched.category}</div></div>`;
   if(dev&&dev.type==='missed')html+=`<div style="padding:0 16px 16px"><div class="alert err" style="margin:0">✗ Missed</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${dev.note}</div>`:''}</div>`;
   else if(dev&&dev.type==='swapped')html+=`<div style="padding:0 16px 16px"><div class="alert warn" style="margin:0">↔ Swapped to: ${dev.swap||'other'}</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${dev.note}</div>`:''}</div>`;
   else if(dev&&dev.type==='completed')html+=`<div style="padding:0 16px 16px"><div class="alert success" style="margin:0">✓ Marked Completed</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${dev.note}</div>`:''}</div>`;
   else if(dev&&dev.type==='skipped')html+=`<div style="padding:0 16px 16px"><div class="alert" style="margin:0;background:rgba(107,107,138,.1);border-color:var(--muted);color:var(--muted)">⏭ Planned skip</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${dev.note}</div>`:''}</div>`;
   else if(dev&&dev.type==='makeup')html+=`<div style="padding:0 16px 16px"><div class="alert info" style="margin:0">⟳ Make-up session</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${dev.note}</div>`:''}</div>`;
-  if(sched.rest)html+=`<div class="rx-rest-day"><div class="rx-rest-icon">🌿</div><div class="rx-rest-text">Active Rest — your call</div><div class="rx-rest-sub">Light movement, walk, stretch, recovery work</div></div>`;
-  else if(!sched.exercises)html+=`<div class="rx-exercises"><div class="rx-exercise-item" style="border-top:none;padding-top:0"><div><div class="rx-ex-name" style="color:var(--accent2)">Zone 2 Cardio Session</div><div class="rx-ex-equip">${sched.note}</div></div></div></div>`;
-  else{html+=`<div class="rx-exercises">`;sched.exercises.forEach((ex,i)=>{html+=`<div class="rx-exercise-item"><span class="rx-ex-num">${i+1}</span><div><div class="rx-ex-name">${ex.name}</div><div class="rx-ex-equip">${ex.equip}</div></div></div>`;});html+=`</div>`;}
+  if(sched.rest)html+=`<div class="rx-rest-day"><div class="rx-rest-icon">🌿</div><div class="rx-rest-text">Full Rest — total recovery</div><div class="rx-rest-sub">Zero structured lifting or high-intensity cardio · hydration, protein, sleep</div></div>`;
+  else if(sched.exercises&&sched.exercises.length){
+    const rx=mainLiftRx(sched,ds);
+    const blocks=[];sched.exercises.forEach(ex=>{let b=blocks[blocks.length-1];if(!b||b.name!==ex.block){b={name:ex.block,items:[]};blocks.push(b);}b.items.push(ex);});
+    html+=`<div class="rx-exercises">`;
+    blocks.forEach(b=>{
+      const isGiant=/Giant Set/i.test(b.name);
+      html+=`<div class="rx-block-head">${b.name}</div>`;
+      b.items.forEach((ex,i)=>{
+        const marker=isGiant?String.fromCharCode(65+i):(i+1);
+        let line='';
+        if(ex.main&&rx)line=`<div class="rx-main-line${rx.weight==='set TM'?' rx-no-tm':''}"><div class="rx-main-rx">Week ${rx.week} — ${rx.phase} — ${rx.setsReps} @ ${rx.pctLabel} — ${rx.weight}</div><div class="rx-main-meta">Rest ${rx.rest} · ${rx.objective}</div></div>`;
+        html+=`<div class="rx-exercise-item"><span class="rx-ex-num">${marker}</span><div style="flex:1"><div class="rx-ex-name">${ex.name}</div><div class="rx-ex-equip">${ex.equip}</div>${ex.detail?`<div class="rx-ex-detail">${ex.detail}</div>`:''}${line}</div></div>`;
+      });
+    });
+    html+=`</div>`;
+  }
   html+=`</div>`;document.getElementById('rx-container').innerHTML=html;
 }
 function renderFastingStatus(ds){
@@ -587,7 +718,8 @@ function renderDiet(){
   document.getElementById('sugar-damage-display').innerHTML=`<div class="sugar-damage ${sdClass}"><span class="sd-icon">${sdIcon}</span><span>${sdMsg}</span></div>`;
   const allMeals=[...d.meals].reverse().slice(0,15);document.getElementById('meal-history').innerHTML=allMeals.length?allMeals.map(m=>`<div class="history-item"><span class="history-date">${m.date}</span><div style="flex:1"><div style="font-size:13px;font-weight:600">${m.name||'Meal'}</div><div style="font-size:11px;color:var(--muted);font-family:var(--font-mono)">P:${m.protein||0}g F:${m.fat||0}g S:${m.sugar||0}g</div></div>${+m.sugar>0?`<span class="tag red">${m.sugar}g</span>`:''}</div>`).join(''):'<div style="text-align:center;color:var(--muted);font-size:13px;padding:10px 0;font-family:var(--font-mono)">No meals logged</div>';
 }
-function initLogForms(){const d=db(),tgts=d.targets||{},ts=today();['fast-date','workout-date','sleep-date','meal-date','hr-date'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=ts;});if(tgts.daily)document.getElementById('ft-daily').value=tgts.daily;if(tgts.sleep)document.getElementById('ft-sleep').value=tgts.sleep;if(tgts.protein)document.getElementById('ft-protein').value=tgts.protein;if(d.activeFast){document.getElementById('fast-active-display').style.display='block';document.getElementById('fast-start-btn-wrap').style.display='none';document.getElementById('fast-stop-btn-wrap').style.display='block';startFastTimer();}}
+function initLogForms(){const d=db(),tgts=d.targets||{},ts=today();['fast-date','workout-date','sleep-date','meal-date','hr-date'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=ts;});if(tgts.daily)document.getElementById('ft-daily').value=tgts.daily;if(tgts.sleep)document.getElementById('ft-sleep').value=tgts.sleep;if(tgts.protein)document.getElementById('ft-protein').value=tgts.protein;
+  Object.entries({tm_squat:'ft-tm-squat',tm_ohp:'ft-tm-ohp',tm_dl:'ft-tm-dl',tm_bench:'ft-tm-bench'}).forEach(([k,id])=>{const el=document.getElementById(id);if(el&&tgts[k])el.value=tgts[k];});if(d.activeFast){document.getElementById('fast-active-display').style.display='block';document.getElementById('fast-start-btn-wrap').style.display='none';document.getElementById('fast-stop-btn-wrap').style.display='block';startFastTimer();}}
 function setLogType(t,btn){document.querySelectorAll('[id^=form-]').forEach(f=>f.style.display='none');document.querySelectorAll('.toggle-row .toggle-btn').forEach(b=>b.classList.remove('active'));document.getElementById('form-'+t).style.display='block';if(btn)btn.classList.add('active');}
 function logFast(){const d=db(),start=document.getElementById('fast-start').value;if(!start){alert('Please enter a start time');return;}d.fasts.push({type:document.getElementById('fast-type').value,start,end:document.getElementById('fast-end').value,date:document.getElementById('fast-date').value||today()});save(d);alert('Fast logged!');renderHome();}
 function startActiveFast(){const d=db(),now=new Date();d.activeFast={type:document.getElementById('fast-type').value,start:pad(now.getHours())+':'+pad(now.getMinutes()),date:today()};save(d);document.getElementById('fast-active-display').style.display='block';document.getElementById('fast-start-btn-wrap').style.display='none';document.getElementById('fast-stop-btn-wrap').style.display='block';startFastTimer();renderHome();}
@@ -597,7 +729,7 @@ function logWorkout(){const d=db();d.workouts.push({type:document.getElementById
 function logSleep(){const d=db(),hours=document.getElementById('sleep-hours').value;if(!hours){alert('Please enter hours slept');return;}d.sleeps.push({hours,deep:document.getElementById('sleep-deep').value,quality:document.getElementById('sleep-quality').value,date:document.getElementById('sleep-date').value||today()});save(d);alert('Sleep logged!');renderHome();}
 function logMeal(){const d=db();d.meals.push({name:document.getElementById('meal-name').value,protein:document.getElementById('meal-protein').value||0,fat:document.getElementById('meal-fat').value||0,carbs:document.getElementById('meal-carbs').value||0,sugar:document.getElementById('meal-sugar').value||0,date:document.getElementById('meal-date').value||today()});save(d);alert('Meal logged!');renderHome();renderDiet();}
 function logHR(){const d=db(),resting=document.getElementById('hr-resting').value,workout=document.getElementById('hr-workout').value;if(!resting&&!workout){alert('Enter at least one HR value');return;}d.hrs.push({resting,workout,date:document.getElementById('hr-date').value||today()});save(d);alert('Heart rate logged!');renderHome();}
-function saveTargets(){const d=db();d.targets=d.targets||{};const allFields={daily:'ft-daily',sleep:'ft-sleep',protein:'ft-protein',fat:'target-fat',sugar:'target-sugar'};Object.entries(allFields).forEach(([k,id])=>{const el=document.getElementById(id);if(el&&el.value)d.targets[k]=el.value;});['target-protein','target-fat','target-sugar'].forEach(id=>{const el=document.getElementById(id);if(el&&el.value){if(id==='target-protein')d.targets.protein=el.value;if(id==='target-fat')d.targets.fat=el.value;if(id==='target-sugar')d.targets.sugar=el.value;}});save(d);renderHome();}
+function saveTargets(){const d=db();d.targets=d.targets||{};const allFields={daily:'ft-daily',sleep:'ft-sleep',protein:'ft-protein',fat:'target-fat',sugar:'target-sugar',tm_squat:'ft-tm-squat',tm_ohp:'ft-tm-ohp',tm_dl:'ft-tm-dl',tm_bench:'ft-tm-bench'};Object.entries(allFields).forEach(([k,id])=>{const el=document.getElementById(id);if(el&&el.value)d.targets[k]=el.value;});['target-protein','target-fat','target-sugar'].forEach(id=>{const el=document.getElementById(id);if(el&&el.value){if(id==='target-protein')d.targets.protein=el.value;if(id==='target-fat')d.targets.fat=el.value;if(id==='target-sugar')d.targets.sugar=el.value;}});save(d);renderHome();}
 function toggleDrawer(){const d=document.getElementById('drawer'),o=document.getElementById('drawer-overlay'),b=document.getElementById('hamburger-btn');const open=d.classList.toggle('open');o.classList.toggle('open',open);b.classList.toggle('open',open);}
 function closeDrawer(){document.getElementById('drawer').classList.remove('open');document.getElementById('drawer-overlay').classList.remove('open');document.getElementById('hamburger-btn').classList.remove('open');}
 function setCalView(v){currentCalView=v;document.getElementById('cal-week-btn').classList.toggle('active',v==='week');document.getElementById('cal-month-btn').classList.toggle('active',v==='month');renderCalendar(v);}
@@ -607,3 +739,4 @@ renderHome();
 </script>
 </body>
 </html>
+
