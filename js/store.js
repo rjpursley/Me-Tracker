@@ -13,7 +13,9 @@ import { today } from './util.js';
 
 const DB_KEY = 'metracker_v2';
 
-export function init(){return{fasts:[],workouts:[],sleeps:[],meals:[],hrs:[],targets:{},activeFast:null,deviations:{}};}
+// Additive only (§1.4). fastDeviations (§7.1) and body (§10) were appended;
+// no existing key was renamed, retyped or removed.
+export function init(){return{fasts:[],workouts:[],sleeps:[],meals:[],hrs:[],targets:{},activeFast:null,deviations:{},fastDeviations:{},body:{}};}
 export function db(){try{return JSON.parse(localStorage.getItem(DB_KEY))||init();}catch(e){return init();}}
 export function save(d){localStorage.setItem(DB_KEY,JSON.stringify(d));}
 

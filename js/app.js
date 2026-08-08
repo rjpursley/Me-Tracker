@@ -25,7 +25,7 @@ import { renderHealth, saveBodyHeight, logBodyMeasurement } from './pages/health
 import { renderBody, logSleep, logHR } from './pages/vitals.js';
 import { renderDiet, logMeal } from './pages/dietary.js';
 import { initLogForms, setLogType, logWorkout, saveTargets } from './pages/log.js';
-import { logFast, startActiveFast, stopActiveFast, renderFastingPage } from './pages/fasting.js';
+import { logFast, startActiveFast, stopActiveFast, renderFastingPage, toggleFastFail, saveFastFailNote } from './pages/fasting.js';
 import { renderTrainingPage } from './pages/training.js';
 
 // --- Drawer + navigation (moved verbatim from index.html) ------------------
@@ -98,6 +98,9 @@ window.saveTargets=saveTargets;
 window.saveBodyHeight=saveBodyHeight;
 window.logBodyMeasurement=logBodyMeasurement;
 
+window.toggleFastFail=toggleFastFail;
+window.saveFastFailNote=saveFastFailNote;
+
 window.logFast=logFast;
 window.startActiveFast=startActiveFast;
 window.stopActiveFast=stopActiveFast;
@@ -112,7 +115,14 @@ document.getElementById('btn-export-data').addEventListener('click', handleExpor
 document.getElementById('btn-import-data').addEventListener('click', handleImportPick);
 document.getElementById('import-file-input').addEventListener('change', handleImportFile);
 
-// Additive schema guard, moved verbatim from index.html.
-(function(){const d=db();if(!d.deviations){d.deviations={};save(d);}})();
+// Additive schema guard. Backfills new top-level keys onto stores written by an
+// older version. Never rewrites or migrates an existing key (§1.4).
+(function(){
+  const d=db();let changed=false;
+  if(!d.deviations){d.deviations={};changed=true;}
+  if(!d.fastDeviations){d.fastDeviations={};changed=true;}
+  if(!d.body){d.body={};changed=true;}
+  if(changed)save(d);
+})();
 
 renderHome();

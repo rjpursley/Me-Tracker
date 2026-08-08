@@ -60,9 +60,20 @@ export function getSleepForDate(ds){const d=db();const logged=d.sleeps.find(s=>s
 
 export function getWorkoutForDate(ds){const d=db();const dev=d.deviations&&d.deviations[ds];if(dev&&dev.type==='swapped'&&dev.swap)return{type:dev.swap,date:ds,_swapped:true};if(dev&&dev.type==='missed')return null;const logged=d.workouts.find(w=>w.date===ds);if(logged)return logged;const sched=getScheduleForDate(ds);if(sched.rest)return{type:'Active Rest',date:ds,_assumed:true};return{type:sched.category,date:ds,_assumed:true};}
 
+// §7.1 — did the fast break on this date? Stored additively under
+// d.fastDeviations{date} as {broke:true, note:''}. Absence means it held.
+export function fastBroken(ds){
+  const d=db();
+  return !!(d.fastDeviations&&d.fastDeviations[ds]&&d.fastDeviations[ds].broke);
+}
+
 export function calcScore(ds){
   ds=ds||today();const d=db();const dow=new Date(ds+'T12:00:00').getDay();const isRestDay=(dow===0);const tgts=d.targets||{};const fastGoal=+(tgts.daily)||18;
-  const todayFasts=d.fasts.filter(f=>f.date===ds);const fastHrs=d.activeFast&&ds===today()?calcFastHrs({start:d.activeFast.start,date:d.activeFast.date}):(todayFasts.length?Math.max(...todayFasts.map(calcFastHrs)):0);const fastScore=Math.min(100,Math.round((fastHrs/fastGoal)*100));
+  const todayFasts=d.fasts.filter(f=>f.date===ds);const fastHrs=d.activeFast&&ds===today()?calcFastHrs({start:d.activeFast.start,date:d.activeFast.date}):(todayFasts.length?Math.max(...todayFasts.map(calcFastHrs)):0);
+  // §7.1 — a broken fast is binary. No partial credit, no hours-completed
+  // grading: the day scores 0 for fasting regardless of hours logged. An
+  // untouched day is unaffected, because silence is compliance (§1.1).
+  const fastScore=fastBroken(ds)?0:Math.min(100,Math.round((fastHrs/fastGoal)*100));
   const sl=getSleepForDate(ds);const sleepGoal=+(tgts.sleep)||8;const sleepScore=Math.min(100,Math.round((Math.min(100,(+(sl.hours)/sleepGoal)*100))*.7+((+(sl.quality)/5)*100)*.3));
   const w=getWorkoutForDate(ds);let trainingScore=0;if(w){const t=w.type;if(t==='Resistance'||t==='HIIT')trainingScore=100;else if(t==='Zone 2'||t==='Bodyweight')trainingScore=85;else if(t==='Wtd Walk')trainingScore=70;else if(t==='Mobility')trainingScore=60;else if(t==='Active Rest')trainingScore=isRestDay?80:60;else trainingScore=60;}else{trainingScore=isRestDay?80:0;}
   const meals=d.meals.filter(m=>m.date===ds);const ts=meals.reduce((a,m)=>a+(+m.sugar||0),0);const tp=meals.reduce((a,m)=>a+(+m.protein||0),0);const protGoal=+(tgts.protein)||180;let dietScore=100;if(ts>0&&ts<=10)dietScore=Math.max(70,100-(ts/10)*30);else if(ts>10&&ts<=25)dietScore=Math.max(40,70-((ts-10)/15)*30);else if(ts>25)dietScore=10;if(tp>=protGoal)dietScore=Math.min(100,dietScore+10);dietScore=Math.round(dietScore);

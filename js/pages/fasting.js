@@ -10,7 +10,7 @@
 
 import { db, save } from '../store.js';
 import { today, pad } from '../util.js';
-import { calcFastHrs, getPhase } from '../derive.js';
+import { calcFastHrs, getPhase, fastBroken } from '../derive.js';
 import { getScheduleForDate } from '../schedule.js';
 import { renderHome } from './home.js';
 
@@ -19,12 +19,77 @@ let activeFastInterval=null;
 // The Fasting page reached from the score box (§4).
 export function renderFastingPage(){
   renderFastingStatus(today(),'fasting-page-status');
+  renderFastFail();
+}
+
+// ---------------------------------------------------------------------------
+// Fasting Fail — ARCHITECTURE.md §7.1.
+//
+// A deviation control matching the missed-workout pattern: silence means the
+// fast held, one tap means it did not.
+//
+// BINARY. No hours, no partial credit, no "planned exception" escape hatch —
+// an exemption path would drift toward exempting everything, and then the
+// number measures nothing. Intentional breaks count as fails.
+//
+// NO CONFIRMATION DIALOG and NO SOFTENED WORDING. The log is meant to be
+// frictionless and unemotional. Do not add "Are you sure?" to this.
+//
+// Tapping again clears the day, because a mis-tap has to be reversible.
+// Acts on today only; the page has no day picker.
+// ---------------------------------------------------------------------------
+
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+export function renderFastFail(){
+  const el=document.getElementById('fasting-fail-container');
+  if(!el)return;
+  const ds=today();
+  const rec=(db().fastDeviations||{})[ds];
+  const broke=!!(rec&&rec.broke);
+  let html='<div class="fast-fail">';
+  html+=`<button class="fast-fail-btn${broke?' is-broken':''}" onclick="toggleFastFail()">`+
+        `<span class="fast-fail-icon">${broke?'✕':'○'}</span>`+
+        `<span>${broke?'Fast broken':'Mark fast broken'}</span></button>`;
+  if(broke){
+    // Appears with the same tap that marks the day — no extra tap to reveal it,
+    // and no second screen.
+    html+=`<div class="fast-fail-note"><input type="text" id="fast-fail-note" placeholder="Note (optional)" value="${esc(rec.note)}" onchange="saveFastFailNote()"></div>`;
+  }
+  html+=`<div class="fast-fail-hint">${broke?'Fasting scores 0 today. Tap again to undo.':'No log means the fast held.'}</div>`;
+  html+='</div>';
+  el.innerHTML=html;
+}
+
+export function toggleFastFail(){
+  const d=db();
+  d.fastDeviations=d.fastDeviations||{};
+  const ds=today();
+  const cur=d.fastDeviations[ds];
+  if(cur&&cur.broke)delete d.fastDeviations[ds];
+  else d.fastDeviations[ds]={broke:true,note:(cur&&cur.note)||''};
+  save(d);
+  renderFastingPage();
+  renderHome();
+}
+
+export function saveFastFailNote(){
+  const input=document.getElementById('fast-fail-note');
+  if(!input)return;
+  const d=db();
+  const ds=today();
+  if(!(d.fastDeviations&&d.fastDeviations[ds]))return; // a note only exists on a broken day
+  d.fastDeviations[ds].note=input.value;
+  save(d);
 }
 
 // containerId lets the same status bar mount on Home and on the Fasting page.
 export function renderFastingStatus(ds,containerId){
   const d=db();const isToday=ds===today();const todayFasts=d.fasts.filter(f=>f.date===ds);let icon='⏱',val='18:6 Window',sub='No fast logged — silence = on track',color='var(--accent2)';const dow=new Date(ds+'T12:00:00').getDay();const is36=(dow===5||dow===6||dow===0);
-  if(isToday&&d.activeFast){const hrs=calcFastHrs({start:d.activeFast.start,date:d.activeFast.date});icon='🔥';val=hrs.toFixed(1)+'h active';sub=d.activeFast.type+' · running now';color='var(--accent)';}
+  // A broken fast (§7.1) outranks everything else on the bar, so the status
+  // never reads "on track" directly above a day marked broken.
+  if(fastBroken(ds)){icon='✕';val='Fast broken';sub='Scored 0 for fasting';color='var(--danger)';}
+  else if(isToday&&d.activeFast){const hrs=calcFastHrs({start:d.activeFast.start,date:d.activeFast.date});icon='🔥';val=hrs.toFixed(1)+'h active';sub=d.activeFast.type+' · running now';color='var(--accent)';}
   else if(todayFasts.length){const hrs=Math.max(...todayFasts.map(calcFastHrs));val=hrs.toFixed(1)+'h';sub=todayFasts[todayFasts.length-1].type+' · logged';color='var(--accent5)';icon='✓';}
   else if(is36){icon='🌙';val='36hr Fast Window';sub=dow===5?'Begins after dinner tonight':dow===6?'Fast active day 1':'Breaks this morning';}
   document.getElementById(containerId||'fasting-status-container').innerHTML=`<div class="fast-status-bar" style="border-color:rgba(79,216,196,.25);background:rgba(79,216,196,.04)"><div class="fast-status-icon">${icon}</div><div class="fast-status-info"><div class="fast-status-label">Fasting · ${getScheduleForDate(ds).fastLabel}</div><div class="fast-status-val" style="color:${color}">${val}</div><div class="fast-status-sub">${sub}</div></div></div>`;
