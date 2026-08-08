@@ -123,6 +123,8 @@ Me-Tracker/
 │   └── components.css      # Cards, bars, keypad, day-strip, checkboxes
 │
 ├── js/
+│   ├── app.js              # Entry point. Modules need one; keeps the bootstrap out of index.html
+│   ├── util.js             # Local-date helpers. Below store/schedule so imports cannot cycle
 │   ├── store.js            # metracker_v2 read/write, export/import. Schema owner
 │   ├── schedule.js         # SCHEDULE, PROGRESSION, PROGRAM_START constants
 │   ├── derive.js           # Scoring, program week, HR zones, averages
@@ -133,7 +135,9 @@ Me-Tracker/
 │       ├── dietary.js
 │       ├── vitals.js       # Sleep / HR / Steps
 │       ├── fasting.js
-│       └── health.js       # Health Status
+│       ├── health.js       # Health Status
+│       ├── calendar.js     # Drawer's Calendar page. Exists today, so its code needs a home
+│       └── log.js          # Drawer's Log Entry page. Same reason; keeps one screen in one file
 │
 ├── server/                 # Runs on the Alienware, also serves the client
 │   ├── app.py              # FastAPI. Binds the Tailscale interface only
@@ -218,10 +222,6 @@ down automatically — that shift is itself evidence the program is working.
 133–144. Training at the lower band builds little aerobic base. If a future
 session "corrects" this back to %MHR, that is drift, not a fix.
 
-**Known artifact:** the legacy Tuesday note hardcodes "120–145 bpm". It is close
-to Karvonen output by coincidence, not derived. Replace it with the computed
-zone; do not preserve it.
-
 ---
 
 ## 6. Google Health API
@@ -304,18 +304,28 @@ an angle so height projects into the frame.
 
 ## 9. Training page
 
+**Status: specification, not description.** None of the following is built yet.
+`js/pages/training.js` currently renders the prescription card only. Everything
+below is what to build, and how — not what exists.
+
 - Per-exercise checkboxes grouped by block (warm-up → giant set → assistance →
   finisher), matching `{name, equip, detail, block}` in `schedule.js`.
 - Live HR + zone + steps pinned at top (same component as Main Page).
-- **Program pause** writes to `d.programPauses[]`, an additive array of
-  `{start, end}`. `programWeek(date)` subtracts elapsed paused days before
+- **Program pause** should write to `d.programPauses[]`, an additive array of
+  `{start, end}`. `programWeek(date)` should subtract elapsed paused days before
   dividing.
+  **Not yet implemented. `programWeek()` currently divides elapsed days by seven
+  with no pause concept.** There is no `programPauses` key in the store, no
+  pause control in the UI, and the app displays an advancing week number.
 - **Pause confirmation gate:** a random 3-digit challenge renders above a numeric
   keypad with a cancel button. Pause executes only on exact match. This is
   deliberate-action protection, not security. Do not simplify it to a confirm
-  dialog.
-- **The program is currently paused.** The console functions fully while paused;
-  Training shows the program dormant rather than advancing weeks.
+  dialog. Not yet implemented.
+- **Intended behaviour once pause exists:** the console functions fully while
+  paused; Training shows the program dormant rather than advancing weeks.
+
+If Ryan says "the program is paused", that is a statement about his training,
+not about the software. The app cannot currently represent it.
 
 ---
 
@@ -362,4 +372,19 @@ present a clinical value.
   most commits. **Normal, not an error.** A naive byte comparison of a local file
   against GitHub will show every line as changed — that is line endings, not
   content. Normalize before diffing, or the diagnosis will be wrong.
+- **ES modules require HTTP. Double-clicking `index.html` yields a blank page.**
+  Browsers refuse to load `<script type="module">` over `file://`, so opening the
+  file directly fails with a CORS error and no UI renders. This is not a bug and
+  does not need "fixing" — §2 serves the app over HTTP anyway. To run it locally:
+
+  ```
+  cd C:\Users\Ryan\Desktop\Me-Tracker; python -m http.server 8123
+  ```
+
+  then open `http://127.0.0.1:8123/index.html`.
+- **Calendar days are local, never UTC.** `today()` and `dateStr()` in
+  `js/util.js` format with `getFullYear`/`getMonth`/`getDate` on purpose.
+  `toISOString()` converts to UTC first, which from 20:00 Eastern onward stamps
+  logs with tomorrow's date. Do not "simplify" them back. A deviation's
+  `timestamp` is a separate thing — an instant, correctly stored as UTC ISO.
 - Never read, print, or copy the contents of the secrets files.
