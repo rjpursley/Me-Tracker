@@ -19,6 +19,7 @@ import { calcScore, sc, getSleepForDate, getWorkoutForDate, consistencyRows, WEE
 import { getScheduleForDate, WCOLORS } from '../schedule.js';
 import { renderPrescription } from './training.js';
 import { renderFastingStatus } from './fasting.js';
+import { renderVitalsHeader } from '../components/vitals-header.js';
 
 let selectedDate=today();
 
@@ -38,7 +39,7 @@ export function buildDayStrip(){
 
 export function selectDay(ds){selectedDate=ds;buildDayStrip();renderHomeDayContent();}
 
-export function renderHome(){buildDayStrip();renderHomeDayContent();}
+export function renderHome(){renderVitalsHeader('vitals-header-home');buildDayStrip();renderHomeDayContent();}
 
 export function renderHomeDayContent(){
   const ds=selectedDate;const isToday=ds===today();const dt=new Date(ds+'T12:00:00');const dayNames=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];

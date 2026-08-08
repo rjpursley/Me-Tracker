@@ -15,10 +15,12 @@ import { db } from '../store.js';
 import { today } from '../util.js';
 import { getScheduleForDate, CATEGORY_COLORS, CATEGORY_BORDER, CATEGORY_COLOR_TEXT, PROGRESSION } from '../schedule.js';
 import { programWeek, mainLiftRx } from '../derive.js';
+import { renderVitalsHeader } from '../components/vitals-header.js';
 
 // The Training page reached from the score box (§4). Currently the vitals
 // header plus today's prescription; §9 lists what else belongs here once built.
 export function renderTrainingPage(){
+  renderVitalsHeader('vitals-header-training');
   renderPrescription(today(),'training-rx-container');
 }
 
