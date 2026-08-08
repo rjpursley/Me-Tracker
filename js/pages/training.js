@@ -12,10 +12,19 @@
 // ---------------------------------------------------------------------------
 
 import { db } from '../store.js';
+import { today } from '../util.js';
 import { getScheduleForDate, CATEGORY_COLORS, CATEGORY_BORDER, CATEGORY_COLOR_TEXT, PROGRESSION } from '../schedule.js';
 import { programWeek, mainLiftRx } from '../derive.js';
 
-export function renderPrescription(ds){
+// The Training page reached from the score box (§4). Currently the vitals
+// header plus today's prescription; §9 lists what else belongs here once built.
+export function renderTrainingPage(){
+  renderPrescription(today(),'training-rx-container');
+}
+
+// containerId lets the same prescription card mount on Home and on the
+// Training page without a second copy of the renderer.
+export function renderPrescription(ds,containerId){
   const sched=getScheduleForDate(ds);const d=db();const dev=d.deviations&&d.deviations[ds];const catColor=CATEGORY_COLOR_TEXT[sched.category]||'var(--text)';const catBg=CATEGORY_COLORS[sched.category]||'transparent';const catBorder=CATEGORY_BORDER[sched.category]||'var(--border)';const dayName=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date(ds+'T12:00:00').getDay()];
   const wk=programWeek(ds);const phase=PROGRESSION[wk-1].phase;
   let html=`<div class="rx-card" style="border-color:${catBorder};background:${catBg}"><div class="rx-header"><div><div class="rx-day-label">${dayName}</div><div class="rx-session-name">${sched.session}</div><div class="rx-week-tag">Week ${wk} of 12 · ${phase}</div></div><div class="rx-category-tag" style="color:${catColor};background:rgba(0,0,0,.2);border:1px solid ${catBorder}">${sched.category}</div></div>`;
@@ -41,5 +50,5 @@ export function renderPrescription(ds){
     });
     html+=`</div>`;
   }
-  html+=`</div>`;document.getElementById('rx-container').innerHTML=html;
+  html+=`</div>`;document.getElementById(containerId||'rx-container').innerHTML=html;
 }

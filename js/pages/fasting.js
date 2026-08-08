@@ -16,12 +16,18 @@ import { renderHome } from './home.js';
 
 let activeFastInterval=null;
 
-export function renderFastingStatus(ds){
+// The Fasting page reached from the score box (§4).
+export function renderFastingPage(){
+  renderFastingStatus(today(),'fasting-page-status');
+}
+
+// containerId lets the same status bar mount on Home and on the Fasting page.
+export function renderFastingStatus(ds,containerId){
   const d=db();const isToday=ds===today();const todayFasts=d.fasts.filter(f=>f.date===ds);let icon='⏱',val='18:6 Window',sub='No fast logged — silence = on track',color='var(--accent2)';const dow=new Date(ds+'T12:00:00').getDay();const is36=(dow===5||dow===6||dow===0);
   if(isToday&&d.activeFast){const hrs=calcFastHrs({start:d.activeFast.start,date:d.activeFast.date});icon='🔥';val=hrs.toFixed(1)+'h active';sub=d.activeFast.type+' · running now';color='var(--accent)';}
   else if(todayFasts.length){const hrs=Math.max(...todayFasts.map(calcFastHrs));val=hrs.toFixed(1)+'h';sub=todayFasts[todayFasts.length-1].type+' · logged';color='var(--accent5)';icon='✓';}
   else if(is36){icon='🌙';val='36hr Fast Window';sub=dow===5?'Begins after dinner tonight':dow===6?'Fast active day 1':'Breaks this morning';}
-  document.getElementById('fasting-status-container').innerHTML=`<div class="fast-status-bar" style="border-color:rgba(79,216,196,.25);background:rgba(79,216,196,.04)"><div class="fast-status-icon">${icon}</div><div class="fast-status-info"><div class="fast-status-label">Fasting · ${getScheduleForDate(ds).fastLabel}</div><div class="fast-status-val" style="color:${color}">${val}</div><div class="fast-status-sub">${sub}</div></div></div>`;
+  document.getElementById(containerId||'fasting-status-container').innerHTML=`<div class="fast-status-bar" style="border-color:rgba(79,216,196,.25);background:rgba(79,216,196,.04)"><div class="fast-status-icon">${icon}</div><div class="fast-status-info"><div class="fast-status-label">Fasting · ${getScheduleForDate(ds).fastLabel}</div><div class="fast-status-val" style="color:${color}">${val}</div><div class="fast-status-sub">${sub}</div></div></div>`;
 }
 
 export function logFast(){const d=db(),start=document.getElementById('fast-start').value;if(!start){alert('Please enter a start time');return;}d.fasts.push({type:document.getElementById('fast-type').value,start,end:document.getElementById('fast-end').value,date:document.getElementById('fast-date').value||today()});save(d);alert('Fast logged!');renderHome();}

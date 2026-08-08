@@ -25,7 +25,8 @@ import { renderHealth } from './pages/health.js';
 import { renderBody, logSleep, logHR } from './pages/vitals.js';
 import { renderDiet, logMeal } from './pages/dietary.js';
 import { initLogForms, setLogType, logWorkout, saveTargets } from './pages/log.js';
-import { logFast, startActiveFast, stopActiveFast } from './pages/fasting.js';
+import { logFast, startActiveFast, stopActiveFast, renderFastingPage } from './pages/fasting.js';
+import { renderTrainingPage } from './pages/training.js';
 
 // --- Drawer + navigation (moved verbatim from index.html) ------------------
 
@@ -33,7 +34,28 @@ function toggleDrawer(){const d=document.getElementById('drawer'),o=document.get
 
 function closeDrawer(){document.getElementById('drawer').classList.remove('open');document.getElementById('drawer-overlay').classList.remove('open');document.getElementById('hamburger-btn').classList.remove('open');}
 
-function showPage(id,title){closeDrawer();document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.drawer-item').forEach(b=>b.classList.remove('active'));document.getElementById('page-'+id).classList.add('active');document.getElementById('nav-'+id).classList.add('active');document.getElementById('topbar-title').textContent=title;if(id==='home')renderHome();if(id==='calendar')renderCalendar(getCalView());if(id==='health')renderHealth();if(id==='body')renderBody();if(id==='diet')renderDiet();if(id==='log')initLogForms();}
+function showPage(id,title){
+  closeDrawer();
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.drawer-item').forEach(b=>b.classList.remove('active'));
+  document.getElementById('page-'+id).classList.add('active');
+  // Training and Fasting are reached from the score box, not the drawer, so
+  // they have no nav- item to highlight. Guard rather than assume one exists.
+  const nav=document.getElementById('nav-'+id);
+  if(nav)nav.classList.add('active');
+  document.getElementById('topbar-title').textContent=title;
+  // The score box sits below the fold, so a row tap can land mid-page on the
+  // destination. Start every page at the top.
+  window.scrollTo(0,0);
+  if(id==='home')renderHome();
+  if(id==='training')renderTrainingPage();
+  if(id==='fasting')renderFastingPage();
+  if(id==='calendar')renderCalendar(getCalView());
+  if(id==='health')renderHealth();
+  if(id==='body')renderBody();
+  if(id==='diet')renderDiet();
+  if(id==='log')initLogForms();
+}
 
 // --- Backup / restore (ARCHITECTURE.md §2.1) -------------------------------
 

@@ -75,17 +75,7 @@
 <div class="page active" id="page-home">
   <div class="day-strip-wrap"><div class="day-strip" id="day-strip"></div></div>
   <div class="section-title">Consistency Score</div>
-  <div class="card" style="background:rgba(124,106,247,.06);border-color:rgba(124,106,247,.25)">
-    <div style="display:flex;align-items:flex-end;gap:14px">
-      <div class="stat-big" id="home-score" style="font-size:56px;color:var(--accent)">—</div>
-      <div style="padding-bottom:10px">
-        <div style="font-size:13px;color:var(--muted);font-family:var(--font-mono)">out of 100</div>
-        <div style="font-size:13px;color:var(--muted);font-family:var(--font-mono)" id="home-score-sub">Loading...</div>
-      </div>
-    </div>
-    <div class="progress-bar" style="height:8px"><div class="progress-fill" id="home-score-bar" style="width:0%;background:var(--accent)"></div></div>
-    <div class="score-pillars" id="score-pillars"></div>
-  </div>
+  <div id="score-box"></div>
   <div class="section-title" id="rx-section-label">Today's Prescription</div>
   <div id="rx-container"></div>
   <div class="section-title">Fasting</div>
@@ -117,6 +107,16 @@
   </div>
   <div class="section-title">Today's Status</div>
   <div class="status-grid" id="status-grid"></div>
+</div>
+
+<div class="page" id="page-training">
+  <div class="section-title">Today's Prescription</div>
+  <div id="training-rx-container"></div>
+</div>
+
+<div class="page" id="page-fasting">
+  <div class="section-title">Fasting</div>
+  <div id="fasting-page-status"></div>
 </div>
 
 <div class="page" id="page-calendar">

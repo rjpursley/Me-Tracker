@@ -14,9 +14,27 @@
 // do not substitute a %MHR formula.
 // ---------------------------------------------------------------------------
 
-import { today } from './util.js';
+import { today, dateStr, addDays } from './util.js';
 import { db } from './store.js';
 import { PROGRESSION, SPEED_PCT, getScheduleForDate, PROGRAM_START } from './schedule.js';
+
+// ---------------------------------------------------------------------------
+// Consistency-score averaging windows — ARCHITECTURE.md §4.
+//
+// The score box shows two numbers per row: a week average and a month average.
+// Until enough history exists BOTH render 0/0. Suppression was chosen
+// deliberately: an "average" computed over three days is noise wearing the
+// costume of a trend, and it would read as meaningful when it is not.
+//
+// WEEK_WINDOW_DAYS  = 7  — a week average needs 7 days of history.
+// MONTH_WINDOW_DAYS = 28 — a month average needs 28 days of history.
+//
+// "History" means days elapsed since the first record of any kind was logged,
+// not the number of days that happen to have data. Silence is compliance
+// (§1.1), so a quiet day is still a day the app has been running.
+// ---------------------------------------------------------------------------
+export const WEEK_WINDOW_DAYS = 7;
+export const MONTH_WINDOW_DAYS = 28;
 
 export function programWeek(ds){
   const start=new Date(PROGRAM_START+'T12:00:00');const cur=new Date((ds||today())+'T12:00:00');
@@ -63,3 +81,43 @@ export function getPhase(hrs){if(hrs<12)return{name:'Glycogen Depletion',idx:0};
 
 // Score -> colour token. Used for inline styles on generated markup.
 export function sc(n){return n>=80?'var(--accent5)':n>=50?'var(--warn)':'var(--danger)';}
+
+// How many days of history the app has, counted from the first record of any
+// kind through today, inclusive. 0 if nothing has ever been logged.
+export function historyDays(){
+  const d=db();const dates=[];
+  ['fasts','workouts','sleeps','meals','hrs'].forEach(k=>{(d[k]||[]).forEach(r=>{if(r&&r.date)dates.push(r.date);});});
+  Object.keys(d.deviations||{}).forEach(k=>dates.push(k));
+  Object.keys(d.fastDeviations||{}).forEach(k=>dates.push(k));
+  const body=d.body||{};
+  (body.weights||[]).forEach(r=>{if(r&&r.date)dates.push(r.date);});
+  (body.waists||[]).forEach(r=>{if(r&&r.date)dates.push(r.date);});
+  if(!dates.length)return 0;
+  // ISO dates sort correctly as plain strings.
+  const first=dates.slice().sort()[0];const t=today();
+  if(first>t)return 1;
+  return Math.floor((new Date(t+'T12:00:00')-new Date(first+'T12:00:00'))/86400000)+1;
+}
+
+// The six rows of the consistency score box (§4), each as {week, month, ready}.
+// `ready` is false while history is too short, in which case both numbers are 0
+// and the UI must render them as a suppressed "0/0", not as a real average.
+//
+// One pass over the last MONTH_WINDOW_DAYS days feeds every row, so this costs
+// 28 calcScore() calls per render rather than 28 per row.
+export function consistencyRows(){
+  const hist=historyDays();const now=new Date();const scores=[];
+  for(let i=0;i<MONTH_WINDOW_DAYS;i++)scores.push(calcScore(dateStr(addDays(now,-i))));
+  const mean=(key,n)=>Math.round(scores.slice(0,n).reduce((a,s)=>a+(s[key]||0),0)/n);
+  const pair=key=>({
+    week: hist>=WEEK_WINDOW_DAYS?mean(key,WEEK_WINDOW_DAYS):0,
+    month: hist>=MONTH_WINDOW_DAYS?mean(key,MONTH_WINDOW_DAYS):0,
+    weekReady: hist>=WEEK_WINDOW_DAYS,
+    monthReady: hist>=MONTH_WINDOW_DAYS
+  });
+  return{
+    historyDays:hist,
+    total:pair('total'),training:pair('training'),diet:pair('diet'),
+    sleep:pair('sleep'),fast:pair('fast')
+  };
+}
