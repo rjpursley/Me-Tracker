@@ -1,0 +1,199 @@
+/* ---------------------------------------------------------------------------
+   components.css — Topbar, drawer, cards, bars, keypad, day-strip, checkboxes,
+   calendar, prescription card, fasting, deviation tray, hormone indices.
+   Moved verbatim from the index.html <style> block. No rules changed.
+
+   NOTE: the semi-transparent colour literals below were already here before the
+   split. They are pre-existing, not new. See the session report re: §1.6.
+   --------------------------------------------------------------------------- */
+
+/* Topbar */
+.topbar{position:fixed;top:0;left:0;right:0;height:var(--top-h);background:var(--surface);border-bottom:1px solid var(--border);z-index:200;display:flex;align-items:center;padding:0 16px;gap:14px}
+.hamburger{background:none;border:none;cursor:pointer;display:flex;flex-direction:column;gap:5px;padding:4px;flex-shrink:0}
+.hamburger span{display:block;width:22px;height:2px;background:var(--text);border-radius:2px;transition:all .3s}
+.hamburger.open span:nth-child(1){transform:translateY(7px) rotate(45deg)}
+.hamburger.open span:nth-child(2){opacity:0}
+.hamburger.open span:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
+.topbar-title{font-size:17px;font-weight:800;flex:1;letter-spacing:-.01em}
+.topbar-score-wrap{display:flex;flex-direction:column;align-items:flex-end}
+.topbar-score-label{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-family:var(--font-mono)}
+.topbar-score-val{font-size:24px;font-weight:700;color:var(--accent);line-height:1}
+
+/* Drawer */
+.drawer-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300}
+.drawer-overlay.open{display:block}
+.drawer{position:fixed;top:0;left:-280px;bottom:0;width:260px;background:var(--surface);border-right:1px solid var(--border);z-index:400;transition:left .3s ease;padding-top:var(--top-h);overflow-y:auto}
+.drawer.open{left:0}
+.drawer-nav{padding:16px 0}
+.drawer-item{display:flex;align-items:center;gap:14px;padding:15px 20px;cursor:pointer;font-size:15px;font-weight:600;color:var(--muted);transition:all .2s;border-left:3px solid transparent}
+.drawer-item:hover{color:var(--text);background:var(--surface2)}
+.drawer-item.active{color:var(--accent);border-left-color:var(--accent);background:rgba(124,106,247,.08)}
+.drawer-item svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.drawer-section{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);padding:16px 20px 6px;font-family:var(--font-mono)}
+
+/* Cards */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px}
+.card+.card{margin-top:12px}
+.card-title{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:12px;font-family:var(--font-mono)}
+.stat-big{font-size:32px;font-weight:700;line-height:1;color:var(--text)}
+.stat-sub{font-size:13px;color:var(--muted);margin-top:4px;font-family:var(--font-mono)}
+
+/* Bars */
+.progress-bar{height:6px;background:var(--surface3);border-radius:3px;overflow:hidden;margin:8px 0}
+.progress-fill{height:100%;border-radius:3px;transition:width .5s ease}
+
+/* Status grid */
+.status-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.status-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:5px}
+.status-card-label{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-family:var(--font-mono)}
+.status-card-icon{font-size:22px;margin-bottom:2px}
+.status-card-val{font-size:18px;font-weight:700;line-height:1.2}
+.status-card-sub{font-size:11px;color:var(--muted);font-family:var(--font-mono)}
+.status-card.good{border-color:rgba(106,247,124,.3);background:rgba(106,247,124,.05)}
+.status-card.warn{border-color:rgba(247,196,106,.3);background:rgba(247,196,106,.05)}
+.status-card.bad{border-color:rgba(247,106,106,.3);background:rgba(247,106,106,.05)}
+.status-card.neutral{border-color:rgba(79,216,196,.3);background:rgba(79,216,196,.05)}
+
+/* Tags */
+.tag{display:inline-block;font-size:11px;padding:3px 8px;border-radius:6px;font-family:var(--font-mono);font-weight:500}
+.tag.green{background:rgba(106,247,124,.15);color:var(--accent5);border:1px solid rgba(106,247,124,.3)}
+.tag.teal{background:rgba(79,216,196,.15);color:var(--accent2);border:1px solid rgba(79,216,196,.3)}
+.tag.red{background:rgba(247,106,106,.15);color:var(--danger);border:1px solid rgba(247,106,106,.3)}
+
+/* Alerts */
+.alert{border-radius:12px;padding:12px 14px;font-size:13px;margin:8px 0;font-family:var(--font-mono)}
+.alert.err{background:rgba(247,106,106,.1);border:1px solid rgba(247,106,106,.3);color:var(--danger)}
+.alert.warn{background:rgba(247,196,106,.1);border:1px solid rgba(247,196,106,.3);color:var(--warn)}
+.alert.info{background:rgba(124,106,247,.1);border:1px solid rgba(124,106,247,.3);color:var(--accent)}
+.alert.success{background:rgba(106,247,124,.1);border:1px solid rgba(106,247,124,.3);color:var(--accent5)}
+
+/* Calendar */
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-top:8px}
+.cal-day-name{text-align:center;font-size:10px;color:var(--muted);font-family:var(--font-mono);padding:4px 0}
+.cal-day{min-height:48px;background:var(--surface2);border-radius:8px;padding:3px;display:flex;flex-direction:column;align-items:center;cursor:pointer;border:1px solid transparent}
+.cal-day.today{border-color:var(--accent)}
+.cal-day.empty{background:none;border:none;cursor:default}
+.cal-day-num{font-size:12px;font-weight:600;line-height:1.4}
+.cal-dot{width:5px;height:5px;border-radius:50%}
+.cal-dots{display:flex;flex-wrap:wrap;justify-content:center;gap:1px;margin-top:2px}
+.cal-abbr{font-size:7px;font-family:var(--font-mono);color:var(--accent);text-align:center;line-height:1.2;margin-top:1px}
+
+/* Toggles */
+.toggle-row{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.toggle-btn{flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-family:var(--font-mono);font-size:12px;cursor:pointer;text-align:center;transition:all .2s;min-width:60px}
+.toggle-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+/* History rows */
+.history-item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:13px}
+.history-item:last-child{border-bottom:none}
+.history-date{color:var(--muted);min-width:72px;font-size:12px}
+
+/* Charts */
+.chart-wrap{position:relative;width:100%;height:200px;margin-top:8px}
+
+/* Fasting timer + phases */
+.fasting-timer{font-size:44px;font-weight:700;text-align:center;font-family:var(--font-mono);color:var(--accent);letter-spacing:.05em;margin:10px 0}
+.phase-bar{display:flex;height:8px;border-radius:4px;overflow:hidden;gap:2px}
+.phase-seg{flex:1;background:var(--surface3);border-radius:2px;transition:background .5s}
+.phase-seg.active{background:var(--accent)}
+.phase-label{font-size:10px;font-family:var(--font-mono);color:var(--muted);text-align:center;margin-top:4px}
+
+/* Hormone bars + factors */
+.hgh-bar{height:10px;border-radius:5px;background:var(--surface3);overflow:hidden;margin:6px 0}
+.hgh-fill{height:100%;border-radius:5px;background:linear-gradient(90deg,var(--accent2),var(--accent))}
+.factor-row{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13px;font-family:var(--font-mono)}
+.factor-icon{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.factor-icon.good{background:var(--accent5)}
+.factor-icon.bad{background:var(--danger)}
+
+/* Target rows */
+.target-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;font-size:13px;font-family:var(--font-mono);border-bottom:1px solid var(--border)}
+.target-row:last-child{border-bottom:none}
+.target-label{color:var(--muted)}
+.target-val{color:var(--text);font-weight:500}
+
+/* Day strip */
+.day-strip-wrap{position:sticky;top:var(--top-h);z-index:100;background:var(--bg);padding:10px 0 6px;margin:0 -14px;padding-left:14px;padding-right:14px;border-bottom:1px solid var(--border);margin-bottom:14px}
+.day-strip{display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:4px}
+.day-strip::-webkit-scrollbar{display:none}
+.day-card{flex-shrink:0;width:52px;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 4px;border-radius:12px;cursor:pointer;border:1.5px solid transparent;transition:all .2s;background:var(--surface)}
+.day-card .dc-dow{font-size:10px;font-family:var(--font-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.day-card .dc-num{font-size:18px;font-weight:700;line-height:1;color:var(--text)}
+.day-card .dc-type{font-size:8px;font-family:var(--font-mono);color:var(--muted);text-align:center;line-height:1.3;min-height:16px}
+.day-card .dc-dot{width:6px;height:6px;border-radius:50%;margin-top:2px}
+.day-card.is-today{border-color:var(--accent)}
+.day-card.is-today .dc-num{color:var(--accent)}
+.day-card.selected{background:var(--accent);border-color:var(--accent)}
+.day-card.selected .dc-dow,.day-card.selected .dc-num,.day-card.selected .dc-type{color:#fff}
+.day-card.selected .dc-dot{background:#fff!important}
+
+/* Prescription card */
+.rx-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden}
+.rx-header{padding:16px;display:flex;justify-content:space-between;align-items:flex-start}
+.rx-day-label{font-size:13px;font-weight:600;color:var(--muted);font-family:var(--font-mono)}
+.rx-session-name{font-size:20px;font-weight:800;color:var(--text);line-height:1.2;margin-top:2px}
+.rx-category-tag{font-size:11px;font-family:var(--font-mono);padding:4px 10px;border-radius:20px;font-weight:500}
+.rx-exercises{padding:0 16px 16px}
+.rx-exercise-item{display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-top:1px solid var(--border)}
+.rx-ex-num{font-size:11px;font-family:var(--font-mono);color:var(--accent);font-weight:500;min-width:20px;padding-top:2px}
+.rx-ex-name{font-size:16px;font-weight:600;color:var(--text);line-height:1.3}
+.rx-ex-equip{font-size:13px;color:var(--muted);font-family:var(--font-mono);margin-top:3px}
+.rx-ex-detail{font-size:13px;color:var(--text);font-family:var(--font-mono);margin-top:3px;line-height:1.45;opacity:.8}
+.rx-block-head{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--accent);font-family:var(--font-mono);font-weight:500;padding:16px 0 2px;border-top:1px solid var(--border);margin-top:4px}
+.rx-block-head:first-child{border-top:none;margin-top:0;padding-top:4px}
+.rx-week-tag{font-size:11px;font-family:var(--font-mono);color:var(--muted);letter-spacing:.06em;margin-top:3px}
+.rx-main-line{margin-top:8px;padding:10px 12px;border-radius:10px;background:var(--surface2);border:1px solid var(--border)}
+.rx-main-rx{font-size:15px;font-weight:600;color:var(--accent);font-family:var(--font-mono);line-height:1.45}
+.rx-main-meta{font-size:12px;color:var(--muted);font-family:var(--font-mono);margin-top:4px}
+.rx-main-line.rx-no-tm .rx-main-rx{color:var(--warn)}
+.rx-rest-day{padding:20px 16px;text-align:center}
+.rx-rest-icon{font-size:36px;margin-bottom:8px}
+.rx-rest-text{font-size:16px;font-weight:600;color:var(--muted)}
+.rx-rest-sub{font-size:13px;color:var(--muted);font-family:var(--font-mono);margin-top:4px}
+
+/* Fasting status bar */
+.fast-status-bar{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:14px 16px;display:flex;align-items:center;gap:14px;margin-top:12px}
+.fast-status-icon{font-size:28px;flex-shrink:0}
+.fast-status-info{flex:1}
+.fast-status-label{font-size:11px;font-family:var(--font-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.fast-status-val{font-size:18px;font-weight:700;color:var(--accent2);margin-top:2px}
+.fast-status-sub{font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:2px}
+
+/* Deviation tray */
+.deviation-tray{margin-top:12px}
+.deviation-tray-label{font-size:11px;font-family:var(--font-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px}
+.dev-btn-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.dev-btn{padding:10px 4px;border-radius:12px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text);font-family:var(--font-head);font-size:13px;font-weight:600;cursor:pointer;text-align:center;transition:all .15s;display:flex;flex-direction:column;align-items:center;gap:4px}
+.dev-btn span.dev-icon{font-size:18px;display:block}
+.dev-btn span.dev-label{font-size:11px;font-family:var(--font-mono);color:var(--muted);display:block}
+.dev-btn:active{transform:scale(.96)}
+.dev-btn.active-btn{border-color:var(--accent5);background:rgba(106,247,124,.1)}
+.dev-btn.active-btn span.dev-label{color:var(--accent5)}
+.dev-btn.missed-btn.active-btn{border-color:var(--danger);background:rgba(247,106,106,.1)}
+.dev-btn.missed-btn.active-btn span.dev-label{color:var(--danger)}
+.dev-btn.skip-btn.active-btn{border-color:var(--muted);background:rgba(107,107,138,.1)}
+.dev-note-area{margin-top:8px;display:none}
+.dev-swap-area{margin-top:8px;display:none}
+
+/* Score pillars */
+.score-pillars{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.pillar-item{background:var(--surface2);border-radius:10px;padding:10px 12px}
+.pillar-bar-wrap{flex:1}
+.pillar-label{font-size:11px;font-family:var(--font-mono);color:var(--muted);margin-bottom:4px}
+
+/* Hormone indices */
+.hormone-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:4px}
+.hormone-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px;text-align:center}
+.hormone-label{font-size:10px;font-family:var(--font-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
+.hormone-val{font-size:22px;font-weight:800;line-height:1}
+.hormone-sub{font-size:10px;font-family:var(--font-mono);color:var(--muted);margin-top:3px}
+.cortisol-bar{height:8px;border-radius:4px;background:linear-gradient(90deg,var(--accent5),var(--warn),var(--danger));position:relative;overflow:hidden;margin-top:8px}
+.cortisol-indicator{position:absolute;top:0;bottom:0;width:3px;background:#fff;border-radius:2px;transition:left .5s}
+
+/* Sugar damage banner */
+.sugar-damage{border-radius:14px;padding:14px 16px;font-size:14px;font-family:var(--font-mono);font-weight:500;margin:10px 0;display:flex;align-items:center;gap:10px}
+.sugar-damage .sd-icon{font-size:24px;flex-shrink:0}
+.sugar-damage.sd-clean{background:rgba(106,247,124,.08);border:1.5px solid rgba(106,247,124,.3);color:var(--accent5)}
+.sugar-damage.sd-mild{background:rgba(247,196,106,.08);border:1.5px solid rgba(247,196,106,.3);color:var(--warn)}
+.sugar-damage.sd-sig{background:rgba(247,164,106,.08);border:1.5px solid rgba(247,164,106,.3);color:var(--accent3)}
+.sugar-damage.sd-severe{background:rgba(247,106,106,.08);border:1.5px solid rgba(247,106,106,.3);color:var(--danger)}

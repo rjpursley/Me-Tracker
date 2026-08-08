@@ -1,0 +1,12 @@
+/* ---------------------------------------------------------------------------
+   tokens.css — THE only place colors are defined.
+   ARCHITECTURE.md §1.6: if a design needs a color that isn't here, that is a
+   conversation with Ryan, not a hex literal.
+   The :root block below was moved verbatim out of index.html.
+   --------------------------------------------------------------------------- */
+:root{
+  --bg:#0a0a0f;--surface:#12121a;--surface2:#1a1a26;--surface3:#22223a;--border:#2a2a42;
+  --text:#e8e8f0;--muted:#6b6b8a;--accent:#7c6af7;--accent2:#4fd8c4;--accent3:#f7a46a;
+  --accent4:#f76a8a;--accent5:#6af77c;--danger:#f76a6a;--warn:#f7c46a;
+  --font-head:'Syne',sans-serif;--font-mono:'DM Mono',monospace;--top-h:58px;
+}

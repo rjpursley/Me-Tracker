@@ -1,0 +1,26 @@
+/* ---------------------------------------------------------------------------
+   base.css — Reset, typography, layout primitives, form controls.
+   Moved verbatim from the index.html <style> block. No rules changed.
+   --------------------------------------------------------------------------- */
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--text);font-family:var(--font-head);min-height:100vh;overflow-x:hidden;font-size:15px}
+
+/* Page mounts */
+.page{display:none;padding:calc(var(--top-h) + 14px) 14px 40px}
+.page.active{display:block}
+.section-title{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin:20px 0 10px;font-family:var(--font-mono)}
+
+/* Layout primitives */
+.row{display:flex;gap:10px}
+.row .card{flex:1}
+
+/* Form controls */
+input[type=text],input[type=number],input[type=time],select,textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:10px 12px;font-family:var(--font-mono);font-size:14px;outline:none;-webkit-appearance:none}
+input:focus,select:focus{border-color:var(--accent)}
+select option{background:var(--surface2)}
+.btn{display:block;width:100%;padding:13px;border-radius:12px;border:none;font-family:var(--font-head);font-size:15px;font-weight:600;cursor:pointer;transition:transform .1s,opacity .2s}
+.btn:active{transform:scale(.97)}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-secondary{background:var(--surface2);color:var(--text);border:1px solid var(--border)}
+.form-row{margin-bottom:12px}
+.form-label{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:5px;font-family:var(--font-mono)}
