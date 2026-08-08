@@ -1,6 +1,16 @@
 import json
+import os
+import sys
+from pathlib import Path
+
 import requests
 from google_auth_oauthlib.flow import InstalledAppFlow
+
+# Credentials live OUTSIDE this repo so they can never be committed.
+# Override with the METRACKER_SECRETS_DIR environment variable.
+DEFAULT_SECRETS_DIR = Path.home() / '.metracker'
+SECRETS_DIR = Path(os.environ.get('METRACKER_SECRETS_DIR', DEFAULT_SECRETS_DIR))
+CLIENT_SECRET_FILE = SECRETS_DIR / 'client_secret.json'
 
 # Google Health API scopes for activity, metrics, and sleep
 SCOPES = [
@@ -10,8 +20,13 @@ SCOPES = [
 ]
 
 def authenticate():
-    """Starts local server OAuth flow using client_secret.json."""
-    flow = InstalledAppFlow.from_client_secrets_file('client_secret.json', SCOPES)
+    """Starts local server OAuth flow using the out-of-repo client secret."""
+    if not CLIENT_SECRET_FILE.is_file():
+        sys.exit(
+            f"client_secret.json not found at: {CLIENT_SECRET_FILE}\n"
+            "Put it there, or set METRACKER_SECRETS_DIR to the folder holding it."
+        )
+    flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRET_FILE), SCOPES)
     creds = flow.run_local_server(port=8080)
     return creds.token
 
