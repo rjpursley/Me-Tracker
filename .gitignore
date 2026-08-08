@@ -1,0 +1,34 @@
+# ---------------------------------------------------------------------------
+# SECRETS — never commit these.
+# The real files live in C:\Users\Ryan\.metracker\ , outside this folder.
+# If a file matching these patterns ever appears here, it is a mistake.
+# ---------------------------------------------------------------------------
+client_secret*.json
+env.txt
+*.env
+secrets/
+.metracker/
+token.json
+*.token
+credentials.json
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# ---------------------------------------------------------------------------
+# Machine-local editor/tool settings — not part of the project
+# ---------------------------------------------------------------------------
+.claude/settings.local.json
+
+# ---------------------------------------------------------------------------
+# OS noise
+# ---------------------------------------------------------------------------
+Thumbs.db
+desktop.ini
+.DS_Store
