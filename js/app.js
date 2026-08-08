@@ -21,7 +21,7 @@ import {
   setDeviation, toggleSwapArea, toggleNoteArea, saveSwap, saveNote
 } from './pages/home.js';
 import { renderCalendar, setCalView, getCalView } from './pages/calendar.js';
-import { renderHealth } from './pages/health.js';
+import { renderHealth, saveBodyHeight, logBodyMeasurement } from './pages/health.js';
 import { renderBody, logSleep, logHR } from './pages/vitals.js';
 import { renderDiet, logMeal } from './pages/dietary.js';
 import { initLogForms, setLogType, logWorkout, saveTargets } from './pages/log.js';
@@ -94,6 +94,9 @@ window.saveNote=saveNote;
 window.setCalView=setCalView;
 window.setLogType=setLogType;
 window.saveTargets=saveTargets;
+
+window.saveBodyHeight=saveBodyHeight;
+window.logBodyMeasurement=logBodyMeasurement;
 
 window.logFast=logFast;
 window.startActiveFast=startActiveFast;

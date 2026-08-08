@@ -141,9 +141,30 @@
 </div>
 
 <div class="page" id="page-health">
+  <div class="section-title">Body</div>
+  <div id="body-summary"></div>
+
+  <div class="section-title">Awaiting Sync</div>
+  <div id="body-awaiting"></div>
+
+  <div class="section-title">Relative Strength</div>
+  <div class="card" id="relative-strength"></div>
+
+  <div class="section-title">Log Measurements</div>
+  <div class="card">
+    <div class="form-row"><div class="form-label">Height (inches)</div><input type="number" id="health-height" placeholder="e.g. 71" step="0.5" onchange="saveBodyHeight()"></div>
+    <div class="form-label" style="margin-top:16px;color:var(--accent)">Add a measurement</div>
+    <div class="row" style="margin-top:8px">
+      <div class="form-row" style="flex:1"><div class="form-label">Bodyweight (lbs)</div><input type="number" id="health-weight" placeholder="e.g. 205" step="0.1"></div>
+      <div class="form-row" style="flex:1"><div class="form-label">Waist (inches)</div><input type="number" id="health-waist" placeholder="e.g. 34" step="0.25"></div>
+    </div>
+    <div class="form-row"><div class="form-label">Date</div><input type="text" id="health-measure-date" placeholder="YYYY-MM-DD"></div>
+    <button class="btn btn-primary" onclick="logBodyMeasurement()">Save Measurement</button>
+  </div>
+
+  <div class="section-title">Hormone Indices</div>
   <div class="alert info" style="margin-top:4px;font-size:13px">Estimates from behavioral data only — not a medical measurement.</div>
   <div id="cortisol-warning"></div>
-  <div class="section-title">Hormone Indices</div>
   <div class="hormone-grid">
     <div class="hormone-card" style="border-color:rgba(79,216,196,.3);background:rgba(79,216,196,.04)">
       <div class="hormone-label">HGH</div>

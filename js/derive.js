@@ -82,6 +82,53 @@ export function getPhase(hrs){if(hrs<12)return{name:'Glycogen Depletion',idx:0};
 // Score -> colour token. Used for inline styles on generated markup.
 export function sc(n){return n>=80?'var(--accent5)':n>=50?'var(--warn)':'var(--danger)';}
 
+// ---------------------------------------------------------------------------
+// Body composition — ARCHITECTURE.md §10.
+//
+// BODYWEIGHT DISPLAYS AS THE 7-DAY ROLLING AVERAGE, NEVER THE DAILY VALUE.
+// Daily weight is mostly water and produces noise that misleads. If a future
+// session "helpfully" surfaces the latest reading as the headline number, that
+// is drift, not a fix.
+// ---------------------------------------------------------------------------
+export const BODYWEIGHT_WINDOW_DAYS = 7;
+
+// {avg, count, latest} — avg is null when nothing was logged inside the window,
+// in which case the UI must say so rather than fall back to an older reading.
+export function rollingBodyweight(){
+  const d=db();
+  const list=((d.body&&d.body.weights)||[]).filter(w=>w&&w.date&&+w.lbs>0);
+  if(!list.length)return{avg:null,count:0,latest:null};
+  const sorted=list.slice().sort((a,b)=>a.date<b.date?1:-1);
+  const cutoff=dateStr(addDays(new Date(),-(BODYWEIGHT_WINDOW_DAYS-1)));
+  const win=sorted.filter(w=>w.date>=cutoff);
+  const avg=win.length?Math.round((win.reduce((a,w)=>a+(+w.lbs),0)/win.length)*10)/10:null;
+  return{avg,count:win.length,latest:sorted[0]};
+}
+
+// Most recent waist measurement, or null.
+export function latestWaist(){
+  const d=db();
+  const list=((d.body&&d.body.waists)||[]).filter(w=>w&&w.date&&+w.inches>0);
+  if(!list.length)return null;
+  return list.slice().sort((a,b)=>a.date<b.date?1:-1)[0];
+}
+
+// Relative strength = each Training Max ÷ bodyweight (§10). Bodyweight is the
+// rolling average, matching what the page displays. ratio is null when either
+// the TM or the bodyweight is missing — never a fabricated number.
+export function relativeStrength(){
+  const d=db();const tg=d.targets||{};const bw=rollingBodyweight().avg;
+  return[
+    {key:'tm_squat',name:'Back Squat'},
+    {key:'tm_ohp',  name:'Overhead Press'},
+    {key:'tm_dl',   name:'Deadlift'},
+    {key:'tm_bench',name:'Bench Press'}
+  ].map(l=>{
+    const tm=+tg[l.key]||0;
+    return{name:l.name,tm,bodyweight:bw,ratio:(tm>0&&bw>0)?Math.round((tm/bw)*100)/100:null};
+  });
+}
+
 // How many days of history the app has, counted from the first record of any
 // kind through today, inclusive. 0 if nothing has ever been logged.
 export function historyDays(){
