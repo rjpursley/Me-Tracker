@@ -109,12 +109,22 @@ export function fastBroken(ds){
 }
 
 export function calcScore(ds){
-  ds=ds||today();const d=db();const dow=new Date(ds+'T12:00:00').getDay();const isRestDay=(dow===0);const tgts=d.targets||{};const fastGoal=+(tgts.daily)||18;
-  const todayFasts=d.fasts.filter(f=>f.date===ds);const fastHrs=d.activeFast&&ds===today()?calcFastHrs({start:d.activeFast.start,date:d.activeFast.date}):(todayFasts.length?Math.max(...todayFasts.map(calcFastHrs)):0);
-  // §7.1 — a broken fast is binary. No partial credit, no hours-completed
-  // grading: the day scores 0 for fasting regardless of hours logged. An
-  // untouched day is unaffected, because silence is compliance (§1.1).
-  const fastScore=fastBroken(ds)?0:Math.min(100,Math.round((fastHrs/fastGoal)*100));
+  ds=ds||today();const d=db();const dow=new Date(ds+'T12:00:00').getDay();const isRestDay=(dow===0);const tgts=d.targets||{};
+  // FASTING DEFAULTS TO COMPLIANT — §1.1 per-pillar defaults, §7.1 binary.
+  //
+  // An unlogged day scores 100. Only a fastDeviations record marking the day
+  // broken drops it to 0. A logged fast that met protocol also scores 100.
+  //
+  // This used to divide logged hours by the daily goal, which meant an
+  // untouched day scored 0 and the Fasting Fail button changed the stored
+  // record without changing the number — the exact opposite of "taps are spent
+  // on deviations". It also contradicted §7.1: hours-completed grading is
+  // explicitly not how this pillar works. A break is a break; silence held.
+  //
+  // targets.daily is still stored and still editable on the Log page, it just
+  // no longer feeds the score. calcFastHrs() is untouched and still drives the
+  // timer, the phase bar and the hormone indices.
+  const fastScore=fastBroken(ds)?0:100;
   const sl=getSleepForDate(ds);const sleepGoal=+(tgts.sleep)||8;const sleepScore=Math.min(100,Math.round((Math.min(100,(+(sl.hours)/sleepGoal)*100))*.7+((+(sl.quality)/5)*100)*.3));
   const w=getWorkoutForDate(ds);let trainingScore=0;if(w){const t=w.type;if(t==='Resistance'||t==='HIIT')trainingScore=100;else if(t==='Zone 2'||t==='Bodyweight')trainingScore=85;else if(t==='Wtd Walk')trainingScore=70;else if(t==='Mobility')trainingScore=60;else if(t==='Active Rest')trainingScore=isRestDay?80:60;else trainingScore=60;}else{trainingScore=isRestDay?80:0;}
   const meals=d.meals.filter(m=>m.date===ds);const ts=meals.reduce((a,m)=>a+(+m.sugar||0),0);const tp=meals.reduce((a,m)=>a+(+m.protein||0),0);const protGoal=+(tgts.protein)||180;let dietScore=100;if(ts>0&&ts<=10)dietScore=Math.max(70,100-(ts/10)*30);else if(ts>10&&ts<=25)dietScore=Math.max(40,70-((ts-10)/15)*30);else if(ts>25)dietScore=10;if(tp>=protGoal)dietScore=Math.min(100,dietScore+10);dietScore=Math.round(dietScore);
