@@ -282,11 +282,30 @@ function scheduleFallbackScore(ds,isRestDay){
   return 60;
 }
 
+// The deviation type recorded for a date, or null. 'missed', 'swapped',
+// 'completed', 'skipped', 'makeup' — set from the tray on the Home page.
+export function deviationType(ds){
+  const d=db();const dev=d.deviations&&d.deviations[ds];
+  return(dev&&dev.type)||null;
+}
+
 export function calcTrainingScore(ds){
   ds=ds||today();
   const isRestDay=new Date(ds+'T12:00:00').getDay()===0;
   if(getScheduleForDate(ds).rest)return scheduleFallbackScore(ds,isRestDay);
   if(isPaused(ds))return hasStartedActivity(ds)?100:0;
+  // AN EXPLICIT "MISSED" OUTRANKS THE CHECKBOXES — §9.5.
+  //
+  // Saying "I missed this session" is a direct statement about the day; ticks
+  // are just the residue of tapping through a card. Without this, marking a day
+  // Missed and ticking every box scored 100, which is nonsense.
+  //
+  // This is deliberately ONLY 'missed'. The other deviation types keep flowing
+  // through the fallback exactly as before — 'swapped' still scores by the
+  // category swapped to, and 'completed'/'skipped'/'makeup' are unchanged.
+  // An untouched missed day already scored 0 via the fallback, so this changes
+  // nothing there; it fixes the touched case.
+  if(deviationType(ds)==='missed')return 0;
   const p=exerciseProgress(ds);
   if(!p.touched)return scheduleFallbackScore(ds,isRestDay);
   const boxes=p.total?Math.round((p.checked/p.total)*100):0;
