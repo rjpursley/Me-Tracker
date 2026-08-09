@@ -108,8 +108,19 @@
   <div id="vitals-header-training"></div>
   <div class="section-title">Program</div>
   <div id="training-pause"></div>
+  <!-- Records lives behind Training rather than in the drawer: §11 protects the
+       drawer structure, and 1RMs are training data. Reuses the .score-box /
+       .score-row nav component so it looks like every other nav row. -->
+  <div class="score-box" style="margin-top:12px">
+    <button class="score-row" onclick="showPage('prs','Personal Records')"><span class="score-row-label">Personal Records</span><span class="score-row-chev">›</span></button>
+  </div>
   <div class="section-title">Today's Prescription</div>
   <div id="training-rx-container"></div>
+</div>
+
+<div class="page" id="page-prs">
+  <div class="section-title">Personal Records — Main Lifts</div>
+  <div id="pr-container"></div>
 </div>
 
 <div class="page" id="page-fasting">

@@ -209,6 +209,32 @@
 .keypad-spacer{min-height:56px}
 .pause-btn.keypad-cancel{color:var(--muted)}
 
+/* Personal Records (ARCHITECTURE.md §10.1) — four main lifts, tested 1RMs.
+   The 1RM is the entered value; the Training Max beside it is derived. */
+.pr-intro{font-family:var(--font-mono);font-size:11.5px;line-height:1.6;color:var(--muted);margin-bottom:12px}
+.pr-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:14px 16px;margin-bottom:10px}
+.pr-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.pr-name{font-size:17px;font-weight:700;color:var(--text)}
+.pr-date{font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+.pr-date.pr-none{color:var(--warn)}
+.pr-stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.pr-stat{background:var(--surface2);border-radius:10px;padding:10px 12px;text-align:center}
+.pr-stat-label{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+.pr-stat-val{font-size:26px;font-weight:700;line-height:1.15;margin-top:2px}
+.pr-stat-val.pr-tm{color:var(--accent)}
+.pr-stat-unit{font-family:var(--font-mono);font-size:10px;color:var(--muted)}
+.pr-note{margin-top:10px;font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--muted)}
+.pr-entry{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;margin-top:12px;align-items:center}
+.pr-entry input{margin:0}
+.pr-save{width:auto;min-height:44px;padding:12px 18px}
+.pr-hist-head{margin-top:14px;padding-top:10px;border-top:1px solid var(--border);font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted)}
+.pr-hist-row{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:7px 0;font-family:var(--font-mono);font-size:12px;border-bottom:1px solid var(--border)}
+.pr-hist-row:last-child{border-bottom:none}
+.pr-hist-date{color:var(--muted);min-width:88px}
+.pr-hist-lbs{font-weight:500;color:var(--text)}
+.pr-hist-tm{color:var(--muted)}
+.pr-hist-cur{margin-left:auto;padding:1px 7px;border-radius:6px;border:1px solid var(--accent5);color:var(--accent5);font-size:9.5px;letter-spacing:.06em}
+
 /* Deviation tray */
 .deviation-tray{margin-top:12px}
 .deviation-tray-label{font-size:11px;font-family:var(--font-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px}

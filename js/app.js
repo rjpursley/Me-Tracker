@@ -27,6 +27,7 @@ import { renderDiet, logMeal } from './pages/dietary.js';
 import { initLogForms, setLogType, logWorkout, saveTargets } from './pages/log.js';
 import { logFast, startActiveFast, stopActiveFast, renderFastingPage, toggleFastFail, saveFastFailNote } from './pages/fasting.js';
 import { renderTrainingPage, openPauseGate, closePauseGate, pauseGateKey, pauseGateBack, toggleExercise } from './pages/training.js';
+import { renderPRs, logOneRM } from './pages/prs.js';
 
 // --- Drawer + navigation (moved verbatim from index.html) ------------------
 
@@ -49,6 +50,7 @@ function showPage(id,title){
   window.scrollTo(0,0);
   if(id==='home')renderHome();
   if(id==='training')renderTrainingPage();
+  if(id==='prs')renderPRs();
   if(id==='fasting')renderFastingPage();
   if(id==='calendar')renderCalendar(getCalView());
   if(id==='health')renderHealth();
@@ -101,6 +103,7 @@ window.closePauseGate=closePauseGate;
 window.pauseGateKey=pauseGateKey;
 window.pauseGateBack=pauseGateBack;
 window.toggleExercise=toggleExercise;
+window.logOneRM=logOneRM;
 
 window.toggleFastFail=toggleFastFail;
 window.saveFastFailNote=saveFastFailNote;
