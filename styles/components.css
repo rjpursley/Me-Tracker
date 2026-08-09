@@ -135,6 +135,22 @@
 .rx-category-tag{font-size:11px;font-family:var(--font-mono);padding:4px 10px;border-radius:20px;font-weight:500}
 .rx-exercises{padding:0 16px 16px}
 .rx-exercise-item{display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-top:1px solid var(--border)}
+
+/* Per-exercise checkboxes (ARCHITECTURE.md §9.4). The whole row is the tap
+   target — 44pt minimum via min-height, and the row already runs the full card
+   width, so a thumb in a gym cannot miss it. Button resets first, because
+   .rx-exercise-item was written for a div. */
+.rx-ex-toggle{width:100%;min-height:44px;margin:0;background:none;border:none;border-top:1px solid var(--border);border-radius:0;color:inherit;font:inherit;text-align:left;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .15s}
+.rx-ex-toggle:active{background:var(--surface2)}
+.rx-ex-box{flex-shrink:0;width:24px;height:24px;margin-top:1px;display:flex;align-items:center;justify-content:center;border-radius:7px;border:1.5px solid var(--border);background:var(--surface2);font-size:14px;line-height:1;color:var(--accent5)}
+.rx-ex-toggle.is-done .rx-ex-box{border-color:var(--accent5)}
+.rx-ex-toggle.is-done .rx-ex-name{color:var(--muted);text-decoration:line-through}
+.rx-progress{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:10px 0 2px}
+.rx-progress-count{font-family:var(--font-mono);font-size:15px;font-weight:500;color:var(--muted)}
+.rx-progress-state{font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--muted)}
+.rx-progress.is-partial .rx-progress-count{color:var(--warn)}
+.rx-progress.is-done .rx-progress-count{color:var(--accent5)}
+.rx-progress.is-dormant .rx-progress-state{color:var(--warn)}
 .rx-ex-num{font-size:11px;font-family:var(--font-mono);color:var(--accent);font-weight:500;min-width:20px;padding-top:2px}
 .rx-ex-name{font-size:16px;font-weight:600;color:var(--text);line-height:1.3}
 .rx-ex-equip{font-size:13px;color:var(--muted);font-family:var(--font-mono);margin-top:3px}

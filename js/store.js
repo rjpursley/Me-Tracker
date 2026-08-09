@@ -13,14 +13,31 @@ import { today } from './util.js';
 
 const DB_KEY = 'metracker_v2';
 
-// Additive only (§1.4). fastDeviations (§7.1), body (§10) and programPauses
-// (§9) were appended; no existing key was renamed, retyped or removed.
+// Additive only (§1.4). fastDeviations (§7.1), body (§10), programPauses (§9.1)
+// and exerciseLogs (§9.4) were appended; no existing key was renamed, retyped
+// or removed.
 //
 // programPauses is an ARRAY of {start, end} — dates as YYYY-MM-DD, end null
 // while a pause is open. It is append-only: resuming closes the last entry by
 // setting its end, and a later pause pushes a new entry. History is never
 // rewritten, so "how long was the program dormant" stays answerable.
-export function init(){return{fasts:[],workouts:[],sleeps:[],meals:[],hrs:[],targets:{},activeFast:null,deviations:{},fastDeviations:{},body:{},programPauses:[]};}
+//
+// exerciseLogs is an OBJECT keyed by date: {touched:true, checked:[name,...]}.
+//
+// `touched` and `checked` are two DIFFERENT FACTS and the training score
+// depends on telling them apart:
+//   - no record at all -> the day was never opened, so the session is assumed
+//     to have happened and scores by the schedule fallback.
+//   - {touched:true, checked:[]} -> the day WAS worked and nothing was done.
+//     That scores 0, not 100.
+// Ticking a box and then unticking it therefore leaves `touched` true. Do not
+// "simplify" this by inferring touched from checked.length — that silently
+// turns every abandoned session back into full compliance.
+//
+// Exercises are stored BY NAME, not by index, so reordering schedule.js cannot
+// silently re-point a tick at a different movement. Names are also readable in
+// an exported backup.
+export function init(){return{fasts:[],workouts:[],sleeps:[],meals:[],hrs:[],targets:{},activeFast:null,deviations:{},fastDeviations:{},body:{},programPauses:[],exerciseLogs:{}};}
 export function db(){try{return JSON.parse(localStorage.getItem(DB_KEY))||init();}catch(e){return init();}}
 export function save(d){localStorage.setItem(DB_KEY,JSON.stringify(d));}
 

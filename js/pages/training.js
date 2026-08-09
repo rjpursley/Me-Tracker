@@ -5,16 +5,19 @@
 // here because it is training content: when the score-box nav of
 // ARCHITECTURE.md §4 gets built, the Training page is already in place.
 //
-// Moved verbatim from index.html. No markup or logic changed.
-//
-// NOT YET BUILT (§9.3): per-exercise checkboxes.
+// NOTE ON IMPORT CYCLE: home.js imports renderPrescription from here, and this
+// file imports renderHome back so a ticked checkbox can refresh the day strip
+// and score box. That cycle is safe only because every shared symbol is a
+// hoisted `function` declaration — the same rule home.js and fasting.js follow.
+// Do not convert these to `const fn = () => {}`.
 // ---------------------------------------------------------------------------
 
 import { db, save } from '../store.js';
 import { today, esc } from '../util.js';
 import { getScheduleForDate, CATEGORY_COLORS, CATEGORY_BORDER, CATEGORY_COLOR_TEXT, PROGRESSION } from '../schedule.js';
-import { programWeek, mainLiftRx, openPause, pausedDays } from '../derive.js';
+import { programWeek, mainLiftRx, openPause, pausedDays, isPaused, exerciseLog, exerciseProgress } from '../derive.js';
 import { renderVitalsHeader } from '../components/vitals-header.js';
+import { renderHome } from './home.js';
 
 // The Training page reached from the score box (§4). Currently the vitals
 // header, the program pause control and today's prescription; §9 lists what
@@ -155,6 +158,57 @@ function resumeProgram(){
   }
 }
 
+// ---------------------------------------------------------------------------
+// Per-exercise checkboxes — ARCHITECTURE.md §9.4.
+//
+// A commercial gym produces genuine partial completion: the rack is taken, the
+// hour runs out. Ticking records what was actually accomplished.
+//
+// THE CHECKBOXES RENDER INSIDE THE SHARED PRESCRIPTION CARD, which means they
+// appear both on the Training page (today) and on the Home page (whichever day
+// the strip has selected). That is deliberate: retroactive ticking is allowed
+// with no time limit, and the Home day strip is the date picker that already
+// exists. Building a second one on the Training page would be a worse version
+// of it.
+//
+// The handler is given the DATE it was rendered for, never today(), so a tick
+// always lands on the day the card is showing.
+// ---------------------------------------------------------------------------
+
+// The "3 of 12" line above the exercises. It exists to make the untouched vs
+// touched-but-empty distinction visible, because the two look identical on the
+// card — every box unticked — but score 100 and 0 respectively.
+function progressHtml(prog,log,dormant){
+  let state,cls;
+  if(dormant){state='Program dormant — ticks are recorded but do not count while paused';cls=' is-dormant';}
+  else if(!log.touched){state='Not started — an untouched day counts as done';cls='';}
+  else if(prog.checked===prog.total){state='All done';cls=' is-done';}
+  else state=`${prog.total-prog.checked} still open`,cls=' is-partial';
+  return `<div class="rx-progress${cls}"><span class="rx-progress-count">${prog.checked} of ${prog.total}</span><span class="rx-progress-state">${state}</span></div>`;
+}
+
+// Toggle one exercise on one date. Writes {touched, checked[]} additively.
+//
+// `touched` is set on the FIRST tap and never cleared — unticking everything
+// leaves the day marked as worked, which is what makes "touched but empty"
+// score 0 instead of reverting to the assumed-done default.
+export function toggleExercise(ds,idx){
+  const ex=(getScheduleForDate(ds).exercises||[])[idx];
+  if(!ex)return;
+  const d=db();
+  if(!d.exerciseLogs||typeof d.exerciseLogs!=='object'||Array.isArray(d.exerciseLogs))d.exerciseLogs={};
+  const cur=d.exerciseLogs[ds];
+  const checked=Array.isArray(cur&&cur.checked)?cur.checked.slice():[];
+  const at=checked.indexOf(ex.name);
+  if(at>=0)checked.splice(at,1);else checked.push(ex.name);
+  d.exerciseLogs[ds]={touched:true,checked};
+  save(d);
+  // Re-render whichever page the tap came from. Home owns the day strip, the
+  // score box and the status grid, all of which move when a box is ticked.
+  if(document.getElementById('page-training').classList.contains('active'))renderTrainingPage();
+  else renderHome();
+}
+
 // containerId lets the same prescription card mount on Home and on the
 // Training page without a second copy of the renderer.
 // Deviation notes are DEPRECATED: the note input was removed and nothing writes
@@ -173,16 +227,28 @@ export function renderPrescription(ds,containerId){
   if(sched.rest)html+=`<div class="rx-rest-day"><div class="rx-rest-icon">🌿</div><div class="rx-rest-text">Full Rest — total recovery</div><div class="rx-rest-sub">Zero structured lifting or high-intensity cardio · hydration, protein, sleep</div></div>`;
   else if(sched.exercises&&sched.exercises.length){
     const rx=mainLiftRx(sched,ds);
+    const log=exerciseLog(ds);const prog=exerciseProgress(ds);const dormant=isPaused(ds);
+    // Index into sched.exercises is what the handler receives; the NAME is what
+    // gets stored. Passing the index keeps apostrophes ("World's Greatest
+    // Stretch") out of the inline onclick attribute entirely.
+    let idx=-1;
     const blocks=[];sched.exercises.forEach(ex=>{let b=blocks[blocks.length-1];if(!b||b.name!==ex.block){b={name:ex.block,items:[]};blocks.push(b);}b.items.push(ex);});
     html+=`<div class="rx-exercises">`;
+    html+=progressHtml(prog,log,dormant);
     blocks.forEach(b=>{
       const isGiant=/Giant Set/i.test(b.name);
       html+=`<div class="rx-block-head">${b.name}</div>`;
       b.items.forEach((ex,i)=>{
+        idx++;
         const marker=isGiant?String.fromCharCode(65+i):(i+1);
+        const done=log.checked.includes(ex.name);
         let line='';
         if(ex.main&&rx)line=`<div class="rx-main-line${rx.weight==='set TM'?' rx-no-tm':''}"><div class="rx-main-rx">Week ${rx.week} — ${rx.phase} — ${rx.setsReps} @ ${rx.pctLabel} — ${rx.weight}</div><div class="rx-main-meta">Rest ${rx.rest} · ${rx.objective}</div></div>`;
-        html+=`<div class="rx-exercise-item"><span class="rx-ex-num">${marker}</span><div style="flex:1"><div class="rx-ex-name">${ex.name}</div><div class="rx-ex-equip">${ex.equip}</div>${ex.detail?`<div class="rx-ex-detail">${ex.detail}</div>`:''}${line}</div></div>`;
+        html+=`<button type="button" class="rx-exercise-item rx-ex-toggle${done?' is-done':''}" aria-pressed="${done?'true':'false'}" onclick="toggleExercise('${ds}',${idx})">`+
+          `<span class="rx-ex-box">${done?'✓':''}</span>`+
+          `<span class="rx-ex-num">${marker}</span>`+
+          `<div style="flex:1"><div class="rx-ex-name">${ex.name}</div><div class="rx-ex-equip">${ex.equip}</div>${ex.detail?`<div class="rx-ex-detail">${ex.detail}</div>`:''}${line}</div>`+
+        `</button>`;
       });
     });
     html+=`</div>`;

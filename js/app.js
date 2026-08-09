@@ -26,7 +26,7 @@ import { renderBody, logSleep, logHR } from './pages/vitals.js';
 import { renderDiet, logMeal } from './pages/dietary.js';
 import { initLogForms, setLogType, logWorkout, saveTargets } from './pages/log.js';
 import { logFast, startActiveFast, stopActiveFast, renderFastingPage, toggleFastFail, saveFastFailNote } from './pages/fasting.js';
-import { renderTrainingPage, openPauseGate, closePauseGate, pauseGateKey, pauseGateBack } from './pages/training.js';
+import { renderTrainingPage, openPauseGate, closePauseGate, pauseGateKey, pauseGateBack, toggleExercise } from './pages/training.js';
 
 // --- Drawer + navigation (moved verbatim from index.html) ------------------
 
@@ -100,6 +100,7 @@ window.openPauseGate=openPauseGate;
 window.closePauseGate=closePauseGate;
 window.pauseGateKey=pauseGateKey;
 window.pauseGateBack=pauseGateBack;
+window.toggleExercise=toggleExercise;
 
 window.toggleFastFail=toggleFastFail;
 window.saveFastFailNote=saveFastFailNote;
@@ -126,6 +127,7 @@ document.getElementById('import-file-input').addEventListener('change', handleIm
   if(!d.fastDeviations){d.fastDeviations={};changed=true;}
   if(!d.body){d.body={};changed=true;}
   if(!Array.isArray(d.programPauses)){d.programPauses=[];changed=true;}
+  if(!d.exerciseLogs||typeof d.exerciseLogs!=='object'||Array.isArray(d.exerciseLogs)){d.exerciseLogs={};changed=true;}
   if(changed)save(d);
 })();
 

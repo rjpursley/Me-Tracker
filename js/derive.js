@@ -101,6 +101,33 @@ export function getSleepForDate(ds){const d=db();const logged=d.sleeps.find(s=>s
 
 export function getWorkoutForDate(ds){const d=db();const dev=d.deviations&&d.deviations[ds];if(dev&&dev.type==='swapped'&&dev.swap)return{type:dev.swap,date:ds,_swapped:true};if(dev&&dev.type==='missed')return null;const logged=d.workouts.find(w=>w.date===ds);if(logged)return logged;const sched=getScheduleForDate(ds);if(sched.rest)return{type:'Active Rest',date:ds,_assumed:true};return{type:sched.category,date:ds,_assumed:true};}
 
+// ---------------------------------------------------------------------------
+// Per-exercise checkboxes — ARCHITECTURE.md §9.4.
+//
+// Stored additively under d.exerciseLogs{date} as {touched, checked[]}, with
+// exercises identified BY NAME. Reads only; pages/training.js does the writing.
+//
+// Retroactive ticking is allowed with no time limit — any date the app can
+// render a prescription card for can be edited. Nothing here looks at today().
+// ---------------------------------------------------------------------------
+
+// {touched, checked[]} for a date, normalised so callers never see undefined.
+export function exerciseLog(ds){
+  const d=db();const log=(d.exerciseLogs||{})[ds];
+  return{touched:!!(log&&log.touched),checked:Array.isArray(log&&log.checked)?log.checked:[]};
+}
+
+// {touched, checked, total} against the exercises actually scheduled that day.
+//
+// Only names still on the card are counted. If schedule.js renames or drops an
+// exercise, the stale tick is ignored rather than counted, so `checked` can
+// never exceed `total` and an old log cannot inflate a score above 100.
+export function exerciseProgress(ds){
+  const names=(getScheduleForDate(ds).exercises||[]).map(e=>e.name);
+  const log=exerciseLog(ds);
+  return{touched:log.touched,checked:names.filter(n=>log.checked.includes(n)).length,total:names.length};
+}
+
 // §7.1 — did the fast break on this date? Stored additively under
 // d.fastDeviations{date} as {broke:true, note:''}. Absence means it held.
 export function fastBroken(ds){
