@@ -302,7 +302,16 @@
   </div>
   <div class="section-title">Targets</div>
   <div class="card">
-    <div class="form-row"><div class="form-label">Daily fast goal (hours)</div><input type="number" id="ft-daily" placeholder="e.g. 18" onchange="saveTargets()"></div>
+    <!-- DEPRECATED (§7.1): fasting is scored binary — held or broken — so this
+         goal no longer feeds any score. The stored targets.daily value is kept
+         (§1.4 forbids deleting it) and still shown, but the input is disabled
+         so it cannot be mistaken for a live setting. Do not rewire it into
+         scoring; hours-completed grading is explicitly not how fasting works. -->
+    <div class="form-row is-retired">
+      <div class="form-label">Daily fast goal (hours) <span class="tag-inactive">inactive</span></div>
+      <input type="number" id="ft-daily" placeholder="e.g. 18" disabled>
+      <div class="form-note">No longer scored. Fasting is pass/fail — silence means the fast held, and the Fasting Fail button marks a break. Kept only so the old value is not lost.</div>
+    </div>
     <div class="form-row"><div class="form-label">Sleep goal (hours/night)</div><input type="number" id="ft-sleep" placeholder="e.g. 8" step="0.5" onchange="saveTargets()"></div>
     <div class="form-row"><div class="form-label">Protein target (g)</div><input type="number" id="ft-protein" placeholder="e.g. 180" onchange="saveTargets()"></div>
     <div class="form-label" style="margin-top:18px;color:var(--accent)">Training Maxes — 85% of current 1RM</div>

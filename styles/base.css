@@ -24,3 +24,11 @@ select option{background:var(--surface2)}
 .btn-secondary{background:var(--surface2);color:var(--text);border:1px solid var(--border)}
 .form-row{margin-bottom:12px}
 .form-label{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:5px;font-family:var(--font-mono)}
+
+/* A retired input: kept on screen so its stored value is still visible, but
+   visibly dead so nobody mistakes it for a live setting. See §7.1 re: the
+   daily fast goal. */
+.form-row.is-retired{opacity:.55}
+.form-row.is-retired input{cursor:not-allowed}
+.tag-inactive{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:9px;letter-spacing:.08em}
+.form-note{margin-top:5px;font-family:var(--font-mono);font-size:10.5px;line-height:1.5;color:var(--muted)}

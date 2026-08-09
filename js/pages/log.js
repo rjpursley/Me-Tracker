@@ -15,6 +15,22 @@ import { today } from '../util.js';
 import { startFastTimer } from './fasting.js';
 import { renderHome } from './home.js';
 
+// ---------------------------------------------------------------------------
+// DEPRECATED: targets.daily — the "Daily fast goal (hours)" field.
+//
+// It no longer affects any score. Fasting is binary (§7.1): silence means the
+// fast held, the Fasting Fail button marks a break, and there is no
+// hours-completed grading. Dividing logged hours by this goal is exactly the
+// behaviour that was removed.
+//
+// THE STORED VALUE IS KEPT — §1.4 makes the schema additive-only, so
+// targets.daily stays in localStorage and is still loaded into the input below
+// so the old number remains visible. The input is disabled in index.html and
+// labelled "inactive".
+//
+// DO NOT rewire this into scoring. If a future session wants an hours target
+// again, that is a conversation with Ryan, not a reconnection of a dead wire.
+// ---------------------------------------------------------------------------
 export function initLogForms(){const d=db(),tgts=d.targets||{},ts=today();['fast-date','workout-date','sleep-date','meal-date','hr-date'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=ts;});if(tgts.daily)document.getElementById('ft-daily').value=tgts.daily;if(tgts.sleep)document.getElementById('ft-sleep').value=tgts.sleep;if(tgts.protein)document.getElementById('ft-protein').value=tgts.protein;
   Object.entries({tm_squat:'ft-tm-squat',tm_ohp:'ft-tm-ohp',tm_dl:'ft-tm-dl',tm_bench:'ft-tm-bench'}).forEach(([k,id])=>{const el=document.getElementById(id);if(el&&tgts[k])el.value=tgts[k];});if(d.activeFast){document.getElementById('fast-active-display').style.display='block';document.getElementById('fast-start-btn-wrap').style.display='none';document.getElementById('fast-stop-btn-wrap').style.display='block';startFastTimer();}}
 
