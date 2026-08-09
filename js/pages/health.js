@@ -6,10 +6,14 @@
 // banner in index.html is load-bearing — do not remove it, and never present a
 // clinical value.
 //
-// Moved verbatim from index.html. No logic changed.
+// BUILT (§10): manual height / bodyweight / waist entry, the 7-day rolling
+// bodyweight trend, and relative strength (each derived Training Max ÷ the
+// rolling bodyweight — see §10.1, it reads the derived TM, not a stored one).
 //
-// NOT YET BUILT (§10): manual height / bodyweight / waist entry, body fat %,
-// VO2 max, HRV, 7-day rolling bodyweight trend, relative strength.
+// NOT YET BUILT (§10): body fat %, VO2 max and HRV. All three come from the
+// Google Health API (§6), which has no server yet, so they render as
+// em-dashes under "Awaiting Sync" — never as zeroes, which would read as a
+// measurement of zero.
 // ---------------------------------------------------------------------------
 
 import { db, save } from '../store.js';
