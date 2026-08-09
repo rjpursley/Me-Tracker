@@ -46,7 +46,7 @@ rule. Each pillar has its own default and its own controls:
 |----------|--------------|---------|
 | Fasting  | Assumed held — scores 100 | Fasting Fail button (§7.1). **No pause exists.** |
 | Sleep    | 7h assumed | API overrides the assumption once it lands (§6) |
-| Training | Rules change in a later task — not documented here | **Pausable** (§9) |
+| Training | Assumed done — schedule fallback | Per-exercise checkboxes (§9.4), **pausable** (§9.1). Full rules in §9.5 |
 | Dietary  | Nothing assumed | Macros count only when supplied |
 
 - **Fasting.** The fast is assumed to have held unless the Fail button is
@@ -54,9 +54,9 @@ rule. Each pillar has its own default and its own controls:
   broken drops it to 0. Binary, per §7.1 — no hours-completed grading.
 - **Sleep.** 7h is assumed when there is no data. The API overrides that
   assumption; it does not compete with it.
-- **Training.** Pausable — see §9. **Its scoring rules change in a later task
-  and are deliberately not documented here.** Do not infer them from the code
-  and write them down.
+- **Training.** A day nobody touched is assumed to have happened and scores by
+  the schedule fallback. Once a checkbox is tapped the day is scored on what was
+  actually ticked. Pausable — see §9.1. **Full rules in §9.5.**
 - **Dietary.** Nothing is assumed. Macros are counted only when supplied,
   because there is no defensible default for food that wasn't logged.
 
@@ -66,12 +66,12 @@ no global pause and must not be one.** Each pillar gets its own control with its
 own ruleset; a single switch that suspended everything would make the number
 mean "Ryan wasn't measuring" rather than "Ryan wasn't doing it."
 
-**Scoped exception — training only.** Per-exercise checkboxes belong on the
-Training page (not yet built, §9) because a commercial gym produces genuine
-partial completion (equipment in use, time ran out). Checkboxes are
-**unchecked-but-counted-as-done by default**. Ticking records what was
-accomplished; an untouched day still scores as full compliance. This exception
-does not extend to fasting, sleep, or diet.
+**Scoped exception — training only.** Per-exercise checkboxes exist (§9.4)
+because a commercial gym produces genuine partial completion (equipment in use,
+time ran out). Checkboxes are **unchecked-but-counted-as-done by default**: an
+untouched day still scores as full compliance. Ticking records what was
+accomplished — and once a day has been touched at all, it is scored on the
+ticks. This exception does not extend to fasting, sleep, or diet.
 
 **Deviation notes are deprecated.** The free-text note on a training deviation
 is no longer written: the note input was removed from the tray, which is buttons
@@ -341,10 +341,10 @@ an angle so height projects into the frame.
 
 **Status: description, not specification** — except where marked. The page
 renders, top to bottom: the live vitals header, the program pause card, and
-today's prescription card.
+today's prescription card with a checkbox per exercise.
 
-**Training scoring rules change in a later task. They are deliberately not
-documented here.** Do not derive them from the code and write them down.
+**Training scoring is defined in §9.5.** That section is the authority; if the
+code disagrees with it, the code is wrong.
 
 ### 9.1 Program pause — built
 
@@ -369,10 +369,16 @@ If Ryan says "the program is paused", the app can now represent it.
   `pausedDays`) and write nothing, per §1.3. Pausing and resuming write from
   `pages/training.js`.
 
-**Known and accepted:** while paused, the training pillar scores whatever the
-unchanged training rules give it. There is deliberately **no neutral or excluded
-state** for paused days — that would be a scoring change, and scoring is a later
-task.
+**While paused, a non-rest day scores by the paused branch in §9.5** — API
+activity only, checkboxes ignored. Since the API check is stubbed, that means
+**0 today**. There is deliberately **no neutral or excluded state**.
+
+*Historical note, so the record is straight:* an earlier revision of this file
+implied pause already forced training to 0. It never did. Before §9.5 landed,
+pause had **no effect whatsoever** on the training score — a paused Monday
+scored 100 exactly like a running one, because `getWorkoutForDate()` assumed the
+scheduled session regardless. Pause only ever moved the week number. The paused
+branch in §9.5 is what actually connects the two.
 
 ### 9.2 Pause confirmation gate — built
 
@@ -394,9 +400,91 @@ it today. If a second pillar ever needs one, extract it to `js/components/` then
 
 ### 9.3 Not yet built
 
-- Per-exercise checkboxes grouped by block (warm-up → giant set → assistance →
-  finisher), matching `{name, equip, detail, block}` in `schedule.js`. The
-  default-state rule for these is in §1.1.
+- A live data source for the vitals header and for §9.5's activity check. Both
+  wait on the server (§3) and the Google Health sync (§6).
+
+### 9.4 Per-exercise checkboxes — built
+
+One checkbox per exercise, grouped by block (warm-up → giant set → assistance →
+finisher), matching `{name, equip, detail, block}` in `schedule.js`.
+
+- **Retroactive ticking is allowed with no time limit.** Any date the app can
+  render a prescription card for can be edited.
+- The checkboxes live **inside the shared prescription card**, so they appear on
+  the Training page (today) and on the Home page (whichever day the strip has
+  selected). The Home day strip *is* the date picker for retroactive edits — do
+  not build a second one. The click handler is given the date the card was
+  rendered for, never `today()`.
+- **Stored as `d.exerciseLogs{}`**, keyed by date:
+  `{ touched: true, checked: ["Goblet Squat", ...] }`
+- Exercises are stored **by name, not by index**, so reordering `schedule.js`
+  cannot silently re-point a tick at a different movement. Only names still on
+  that day's card are counted, so a renamed or removed exercise is ignored
+  rather than inflating the total.
+
+**`touched` and `checked` are two different facts.** This is the part that is
+easy to get silently wrong:
+
+| Stored state | Meaning | Score |
+|---|---|---|
+| no record | the day was never opened | assumed done — schedule fallback |
+| `{touched:true, checked:[]}` | the day was worked, nothing got done | **0** |
+
+Both render as a card with every box empty. Tick a box and untick it and
+`touched` **stays true** — the day does not revert to assumed-done. Do not
+"simplify" this by inferring `touched` from `checked.length`.
+
+### 9.5 Training scoring — built
+
+**Rest days are unaffected by all of this.** Checkboxes, pause and API activity
+are skipped entirely and the original schedule fallback applies (a rest day
+scores 80).
+
+**Program active, non-rest day:**
+
+| Case | Score |
+|---|---|
+| Never touched | assume the session happened — schedule fallback, unchanged |
+| Touched | `(checked / total) * 100` |
+| Started API activity that day | **+50** |
+| — | **capped at 100** |
+
+Worked examples on a 12-exercise day: all boxes = 100. Touched with zero boxes
+and no activity = 0. Half the boxes, no activity = 50. Half the boxes plus an
+activity = 100. Zero boxes plus an activity = 50.
+
+**Program paused, non-rest day:**
+
+- **Checkboxes are ignored entirely.**
+- Any started API activity = **100**. No activity = **0**.
+
+The schedule fallback is the original category table — Resistance/HIIT 100,
+Zone 2/Bodyweight 85, Weighted Walk 70, Mobility 60, Active Rest 80 on a rest
+day and 60 otherwise, and 0 for a day with a `missed` deviation.
+
+#### What counts as an API activity
+
+**Only a deliberately started, tracked exercise session.** A run, a ride, a
+session the user actively began in the health app. **The deliberate start IS the
+signal** — it is the user saying "this was training".
+
+**Elevated heart rate alone never counts.** Not a brisk walk, not stairs, not a
+stressful meeting.
+
+**There is no duration threshold and no heart-rate threshold, and adding one is
+not an improvement.** A future session will be tempted to "fix" this by
+accepting, say, 20 minutes above 120bpm. That is drift. A threshold makes the
+app guess at intent; the start button already recorded it. A 6-minute deliberate
+session counts. An hour of accidentally-elevated HR does not.
+
+**The check is stubbed.** `hasStartedActivity()` in `derive.js` returns `false`
+unconditionally, with a TODO naming the Google Health server task (§6) that will
+implement it. It is deliberately **not** stubbed with sample data — a fabricated
+activity on a health console is worse than no number (§1.7). It should query
+sessions/activities with an explicit start, **not** heart-rate samples.
+
+Because it is always false today, **paused days score 0 for training**. That is
+expected and accepted. Do not build a neutral or excluded state to hide it.
 
 ---
 
