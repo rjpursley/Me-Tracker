@@ -5,9 +5,9 @@
 // SAME component to the top of the Training page. One renderer, mounted twice
 // by container id — not two copies that drift apart.
 //
-// This file is NOT in the ARCHITECTURE.md §3 tree; it introduces js/components/.
-// It lives outside pages/ precisely because it belongs to no single page. It
-// imports nothing, so it cannot participate in an import cycle.
+// Listed in the ARCHITECTURE.md §3 tree under js/components/. It lives outside
+// pages/ precisely because it belongs to no single page. It imports nothing, so
+// it cannot participate in an import cycle.
 //
 // ---------------------------------------------------------------------------
 // NO DATA SOURCE EXISTS YET.

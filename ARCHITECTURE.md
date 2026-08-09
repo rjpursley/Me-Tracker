@@ -34,17 +34,50 @@ The client never holds a secret. The server never has a public port.
 
 These are load-bearing. Violating one is a bug even if the code works.
 
-### 1.1 Silence = compliance
-No log for a day means the plan was followed. The app scores an unlogged day as
-fully adherent. Do not add "did you do X today?" prompts. Do not default
-anything to incomplete. **Taps are spent on deviations, not confirmations.**
+### 1.1 Per-pillar defaults
+The governing intent is unchanged: no log for a day means the plan was followed.
+Do not add "did you do X today?" prompts. Do not default anything to incomplete.
+**Taps are spent on deviations, not confirmations.**
 
-**Scoped exception — training only.** Per-exercise checkboxes exist on the
-Training page because a commercial gym produces genuine partial completion
-(equipment in use, time ran out). Checkboxes are **unchecked-but-counted-as-done
-by default**. Ticking records what was accomplished; an untouched day still
-scores as full compliance. This exception does not extend to fasting, sleep, or
-diet.
+What that means differs per pillar, so state it per pillar rather than as one
+rule. Each pillar has its own default and its own controls:
+
+| Pillar   | Unlogged day | Control |
+|----------|--------------|---------|
+| Fasting  | Assumed held — scores 100 | Fasting Fail button (§7.1). **No pause exists.** |
+| Sleep    | 7h assumed | API overrides the assumption once it lands (§6) |
+| Training | Rules change in a later task — not documented here | **Pausable** (§9) |
+| Dietary  | Nothing assumed | Macros count only when supplied |
+
+- **Fasting.** The fast is assumed to have held unless the Fail button is
+  pressed. Unlogged scores 100; only a `fastDeviations` record marking the day
+  broken drops it to 0. Binary, per §7.1 — no hours-completed grading.
+- **Sleep.** 7h is assumed when there is no data. The API overrides that
+  assumption; it does not compete with it.
+- **Training.** Pausable — see §9. **Its scoring rules change in a later task
+  and are deliberately not documented here.** Do not infer them from the code
+  and write them down.
+- **Dietary.** Nothing is assumed. Macros are counted only when supplied,
+  because there is no defensible default for food that wasn't logged.
+
+**Pause is training only.** Pausing holds the 12-week program clock and touches
+nothing else — fasting, sleep and dietary scoring carry on unchanged. **There is
+no global pause and must not be one.** Each pillar gets its own control with its
+own ruleset; a single switch that suspended everything would make the number
+mean "Ryan wasn't measuring" rather than "Ryan wasn't doing it."
+
+**Scoped exception — training only.** Per-exercise checkboxes belong on the
+Training page (not yet built, §9) because a commercial gym produces genuine
+partial completion (equipment in use, time ran out). Checkboxes are
+**unchecked-but-counted-as-done by default**. Ticking records what was
+accomplished; an untouched day still scores as full compliance. This exception
+does not extend to fasting, sleep, or diet.
+
+**Deviation notes are deprecated.** The free-text note on a training deviation
+is no longer written: the note input was removed from the tray, which is buttons
+only. Notes already in storage are **preserved and still rendered** — §1.4
+forbids deleting the field. The Fasting Fail note (§7.1) is a different control
+and stays.
 
 ### 1.2 localStorage is the source of truth
 `metracker_v2` in the browser holds everything the app scores from. The server
@@ -129,6 +162,8 @@ Me-Tracker/
 │   ├── schedule.js         # SCHEDULE, PROGRESSION, PROGRAM_START constants
 │   ├── derive.js           # Scoring, program week, HR zones, averages
 │   ├── api.js              # Calls to the local server. All fetch() lives here
+│   ├── components/
+│   │   └── vitals-header.js  # Live HR / zone / steps. Mounted on Main AND Training
 │   └── pages/
 │       ├── home.js
 │       ├── training.js
@@ -304,28 +339,64 @@ an angle so height projects into the frame.
 
 ## 9. Training page
 
-**Status: specification, not description.** None of the following is built yet.
-`js/pages/training.js` currently renders the prescription card only. Everything
-below is what to build, and how — not what exists.
+**Status: description, not specification** — except where marked. The page
+renders, top to bottom: the live vitals header, the program pause card, and
+today's prescription card.
+
+**Training scoring rules change in a later task. They are deliberately not
+documented here.** Do not derive them from the code and write them down.
+
+### 9.1 Program pause — built
+
+If Ryan says "the program is paused", the app can now represent it.
+
+- **Stored as `d.programPauses[]`** — an additive array of `{start, end}`, dates
+  as `YYYY-MM-DD`. An open pause has `end === null`. The array is **append-only**:
+  resuming sets `end` on the last open entry, and a later pause pushes a new
+  entry. Pause history is never rewritten, so "how long was it dormant" stays
+  answerable.
+- **`programWeek(date)` subtracts elapsed paused days before dividing by seven,**
+  so unpausing resumes at the same program week rather than jumping ahead. A
+  paused span is `[start, end)` — the resume date counts as a running day, which
+  makes a 10-day pause subtract exactly 10 days. An open pause accrues up to the
+  date being asked about, so a dormant program stops advancing live.
+- **While paused the Training page says the program is dormant**, with the week
+  it is held at, rather than showing an advancing number. The rest of the
+  console functions normally.
+- **Pause is training only** (§1.1). It does not touch fasting, sleep or dietary
+  scoring, and there is no global pause.
+- Helpers live in `derive.js` (`programPauses`, `openPause`, `isPaused`,
+  `pausedDays`) and write nothing, per §1.3. Pausing and resuming write from
+  `pages/training.js`.
+
+**Known and accepted:** while paused, the training pillar scores whatever the
+unchanged training rules give it. There is deliberately **no neutral or excluded
+state** for paused days — that would be a scoring change, and scoring is a later
+task.
+
+### 9.2 Pause confirmation gate — built
+
+A random 3-digit challenge renders above a numeric keypad with a cancel button.
+The action commits **only on an exact match**. A new number is generated every
+time the gate opens, so the entry cannot become muscle memory. Cancel and a
+wrong code both leave the store untouched; a wrong code clears the entry and
+keeps the same challenge for the retry.
+
+**This is deliberate-action protection against a mis-tap, not security.** Anyone
+holding the phone can read the number off the screen — that is fine, it is not
+the threat. **Do not simplify it to a `confirm()` dialog:** a confirm sheet is
+one tap away from the same accident, rendered right where the thumb is already
+travelling.
+
+The gate lives in `pages/training.js` because pause is the only thing that uses
+it today. If a second pillar ever needs one, extract it to `js/components/` then
+— not before.
+
+### 9.3 Not yet built
 
 - Per-exercise checkboxes grouped by block (warm-up → giant set → assistance →
-  finisher), matching `{name, equip, detail, block}` in `schedule.js`.
-- Live HR + zone + steps pinned at top (same component as Main Page).
-- **Program pause** should write to `d.programPauses[]`, an additive array of
-  `{start, end}`. `programWeek(date)` should subtract elapsed paused days before
-  dividing.
-  **Not yet implemented. `programWeek()` currently divides elapsed days by seven
-  with no pause concept.** There is no `programPauses` key in the store, no
-  pause control in the UI, and the app displays an advancing week number.
-- **Pause confirmation gate:** a random 3-digit challenge renders above a numeric
-  keypad with a cancel button. Pause executes only on exact match. This is
-  deliberate-action protection, not security. Do not simplify it to a confirm
-  dialog. Not yet implemented.
-- **Intended behaviour once pause exists:** the console functions fully while
-  paused; Training shows the program dormant rather than advancing weeks.
-
-If Ryan says "the program is paused", that is a statement about his training,
-not about the software. The app cannot currently represent it.
+  finisher), matching `{name, equip, detail, block}` in `schedule.js`. The
+  default-state rule for these is in §1.1.
 
 ---
 
@@ -333,6 +404,12 @@ not about the software. The app cannot currently represent it.
 
 - **Manual:** height, bodyweight, waist circumference.
 - **Auto from API:** body fat %, VO2 max, HRV.
+
+**VO2 max is available from the Versa 2.** Fitbit calls it **Cardio Fitness
+Score**, which is why a search for "VO2 max" in their docs comes up empty — the
+metric is there under a marketing name. Keep it as a trackable field awaiting
+sync. It renders as an em-dash under "Awaiting Sync" until §6 lands. Do not drop
+it on the assumption the hardware cannot produce it.
 - **Derived:** 7-day rolling bodyweight trend, relative strength (each Training
   Max ÷ bodyweight).
 

@@ -7,7 +7,7 @@
 //
 // Moved verbatim from index.html. No markup or logic changed.
 //
-// NOT YET BUILT (§9): per-exercise checkboxes, live HR/zone/steps header.
+// NOT YET BUILT (§9.3): per-exercise checkboxes.
 // ---------------------------------------------------------------------------
 
 import { db, save } from '../store.js';

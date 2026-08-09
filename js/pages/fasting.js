@@ -5,7 +5,7 @@
 // touched without explicit instruction. Everything below is moved verbatim
 // from index.html — no thresholds, phases or wording changed.
 //
-// NOT YET BUILT (§7.1): the Fasting Fail button.
+// BUILT (§7.1): the Fasting Fail button, below.
 // ---------------------------------------------------------------------------
 
 import { db, save } from '../store.js';
