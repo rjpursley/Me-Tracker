@@ -13,9 +13,14 @@ import { today } from './util.js';
 
 const DB_KEY = 'metracker_v2';
 
-// Additive only (§1.4). fastDeviations (§7.1) and body (§10) were appended;
-// no existing key was renamed, retyped or removed.
-export function init(){return{fasts:[],workouts:[],sleeps:[],meals:[],hrs:[],targets:{},activeFast:null,deviations:{},fastDeviations:{},body:{}};}
+// Additive only (§1.4). fastDeviations (§7.1), body (§10) and programPauses
+// (§9) were appended; no existing key was renamed, retyped or removed.
+//
+// programPauses is an ARRAY of {start, end} — dates as YYYY-MM-DD, end null
+// while a pause is open. It is append-only: resuming closes the last entry by
+// setting its end, and a later pause pushes a new entry. History is never
+// rewritten, so "how long was the program dormant" stays answerable.
+export function init(){return{fasts:[],workouts:[],sleeps:[],meals:[],hrs:[],targets:{},activeFast:null,deviations:{},fastDeviations:{},body:{},programPauses:[]};}
 export function db(){try{return JSON.parse(localStorage.getItem(DB_KEY))||init();}catch(e){return init();}}
 export function save(d){localStorage.setItem(DB_KEY,JSON.stringify(d));}
 

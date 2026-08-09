@@ -36,10 +36,51 @@ import { PROGRESSION, SPEED_PCT, getScheduleForDate, PROGRAM_START } from './sch
 export const WEEK_WINDOW_DAYS = 7;
 export const MONTH_WINDOW_DAYS = 28;
 
+// ---------------------------------------------------------------------------
+// Program pause — ARCHITECTURE.md §9. TRAINING ONLY.
+//
+// Pausing stops the 12-week program clock. It does NOT touch fasting, sleep or
+// dietary scoring: each pillar has its own control with its own rules, and
+// there is no global pause. Do not wire this into calcScore()'s other pillars.
+//
+// Stored as d.programPauses[] — {start, end}, end null while open. A paused
+// span is [start, end): the end date is the day training resumed, so it counts
+// as a running day. That convention makes the arithmetic exact — pause on the
+// 8th, resume on the 18th, and exactly 10 days are subtracted.
+//
+// These three read the store but never write. Pausing and resuming live in
+// pages/training.js, because §1.3 keeps this file derive-only.
+// ---------------------------------------------------------------------------
+
+// Every well-formed pause record, oldest first. Anything without a start is
+// ignored rather than repaired — §1.4 forbids rewriting stored data.
+export function programPauses(){const d=db();return(Array.isArray(d.programPauses)?d.programPauses:[]).filter(p=>p&&p.start);}
+
+// The currently open pause ({start, end:null}), or null when running.
+export function openPause(){const list=programPauses();for(let i=list.length-1;i>=0;i--)if(!list[i].end)return list[i];return null;}
+
+// Was the program dormant on this date?
+export function isPaused(ds){const cur=ds||today();return programPauses().some(p=>p.start<=cur&&(!p.end||cur<p.end));}
+
+// Days of pause elapsed on or before `ds`. An open pause is counted up to `ds`
+// itself, so a dormant program stops accumulating program weeks live.
+export function pausedDays(ds){
+  const cur=ds||today();
+  return programPauses().reduce((total,p)=>{
+    const from=p.start>cur?cur:p.start;
+    const to=(p.end&&p.end<cur)?p.end:cur;
+    if(to<=from)return total;
+    return total+Math.round((new Date(to+'T12:00:00')-new Date(from+'T12:00:00'))/86400000);
+  },0);
+}
+
+// Elapsed days minus paused days, divided by seven. Unpausing therefore resumes
+// at the same program week instead of jumping ahead to wall-clock time.
 export function programWeek(ds){
   const start=new Date(PROGRAM_START+'T12:00:00');const cur=new Date((ds||today())+'T12:00:00');
   if(isNaN(start)||isNaN(cur))return 1;
-  return Math.max(1,Math.min(12,Math.floor(Math.floor((cur-start)/86400000)/7)+1));
+  const elapsed=Math.floor((cur-start)/86400000)-pausedDays(ds);
+  return Math.max(1,Math.min(12,Math.floor(Math.max(0,elapsed)/7)+1));
 }
 
 export function round5(v){return Math.round(v/5)*5;}

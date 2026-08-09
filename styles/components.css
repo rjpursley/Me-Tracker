@@ -168,6 +168,31 @@
 .fast-fail-note{margin-top:8px}
 .fast-fail-hint{margin-top:8px;font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--muted)}
 
+/* Program pause + its keypad gate (ARCHITECTURE.md §9) — training only.
+   The gate is deliberate-action protection against a mis-tap, not security, so
+   it is styled as a plain panel rather than anything alarming. Keys are 56px to
+   clear the 44pt tap minimum with room to spare on a phone held one-handed. */
+.pause-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:14px 16px}
+.pause-card.is-paused{border-color:var(--warn)}
+.pause-state{font-size:18px;font-weight:700;color:var(--text)}
+.pause-card.is-paused .pause-state{color:var(--warn)}
+.pause-sub{font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:3px}
+.pause-btn{display:block;width:100%;min-height:56px;margin-top:12px;padding:14px;border-radius:14px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text);font-family:var(--font-head);font-size:16px;font-weight:600;cursor:pointer;transition:border-color .15s,color .15s,transform .1s;-webkit-tap-highlight-color:transparent}
+.pause-btn:active{transform:scale(.98)}
+.pause-btn.is-paused{border-color:var(--accent5);color:var(--accent5)}
+.pause-hint{margin-top:8px;font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--muted)}
+.keypad-code{margin-top:14px;text-align:center;font-family:var(--font-mono);font-size:38px;font-weight:500;letter-spacing:.22em;text-indent:.22em;color:var(--accent)}
+.keypad-entry{display:flex;justify-content:center;gap:10px;margin-top:10px}
+.keypad-slot{width:44px;height:52px;display:flex;align-items:center;justify-content:center;border-radius:10px;border:1.5px solid var(--border);background:var(--surface2);font-family:var(--font-mono);font-size:24px;color:var(--text)}
+.keypad-slot.is-filled{border-color:var(--accent)}
+.keypad-msg{margin-top:10px;text-align:center;font-family:var(--font-mono);font-size:12px;line-height:1.4;color:var(--danger)}
+.keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+.keypad-key{min-height:56px;border-radius:12px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text);font-family:var(--font-mono);font-size:22px;cursor:pointer;transition:background .15s,transform .1s;-webkit-tap-highlight-color:transparent}
+.keypad-key:active{background:var(--surface3);transform:scale(.96)}
+.keypad-key.keypad-alt{color:var(--muted);font-size:19px}
+.keypad-spacer{min-height:56px}
+.pause-btn.keypad-cancel{color:var(--muted)}
+
 /* Deviation tray */
 .deviation-tray{margin-top:12px}
 .deviation-tray-label{font-size:11px;font-family:var(--font-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px}
