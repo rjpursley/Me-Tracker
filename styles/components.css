@@ -206,7 +206,6 @@
 .dev-btn.missed-btn.active-btn{border-color:var(--danger);background:rgba(247,106,106,.1)}
 .dev-btn.missed-btn.active-btn span.dev-label{color:var(--danger)}
 .dev-btn.skip-btn.active-btn{border-color:var(--muted);background:rgba(107,107,138,.1)}
-.dev-note-area{margin-top:8px;display:none}
 .dev-swap-area{margin-top:8px;display:none}
 
 /* Live vitals header (ARCHITECTURE.md §4, §9) — mounted on Main and Training.

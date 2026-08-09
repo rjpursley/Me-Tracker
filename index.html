@@ -89,7 +89,6 @@
       <button class="dev-btn" id="dev-swapped" onclick="setDeviation('swapped');toggleSwapArea()"><span class="dev-icon">↔</span><span class="dev-label">Swapped</span></button>
       <button class="dev-btn" id="dev-makeup" onclick="setDeviation('makeup')"><span class="dev-icon">⟳</span><span class="dev-label">Make-up</span></button>
       <button class="dev-btn skip-btn" id="dev-skipped" onclick="setDeviation('skipped')"><span class="dev-icon">⏭</span><span class="dev-label">Planned Skip</span></button>
-      <button class="dev-btn" id="dev-note" onclick="toggleNoteArea()"><span class="dev-icon">💬</span><span class="dev-label">Note</span></button>
     </div>
     <div class="dev-swap-area" id="dev-swap-area">
       <div class="form-label">What did you do instead?</div>
@@ -99,11 +98,6 @@
         <option value="HIIT">HIIT</option><option value="Mobility">Mobility / Stretching</option><option value="Other">Other</option>
       </select>
       <button class="btn btn-primary" style="margin-top:8px" onclick="saveSwap()">Save Swap</button>
-    </div>
-    <div class="dev-note-area" id="dev-note-area">
-      <div class="form-label">Note</div>
-      <input type="text" id="dev-note-text" placeholder="e.g. Traveled, made it up Tuesday">
-      <button class="btn btn-primary" style="margin-top:8px" onclick="saveNote()">Save Note</button>
     </div>
   </div>
   <div class="section-title">Today's Status</div>

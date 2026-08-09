@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { db, save } from '../store.js';
-import { today, pad } from '../util.js';
+import { today, pad, esc } from '../util.js';
 import { calcFastHrs, getPhase, fastBroken } from '../derive.js';
 import { getScheduleForDate } from '../schedule.js';
 import { renderHome } from './home.js';
@@ -39,7 +39,9 @@ export function renderFastingPage(){
 // Acts on today only; the page has no day picker.
 // ---------------------------------------------------------------------------
 
-function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+// esc() moved to util.js so training.js can escape its stored deviation notes
+// with the same one. The Fasting Fail note itself is NOT deprecated — §7.1
+// keeps it, and it is the only free text the app still writes.
 
 export function renderFastFail(){
   const el=document.getElementById('fasting-fail-container');

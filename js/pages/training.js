@@ -11,7 +11,7 @@
 // ---------------------------------------------------------------------------
 
 import { db, save } from '../store.js';
-import { today } from '../util.js';
+import { today, esc } from '../util.js';
 import { getScheduleForDate, CATEGORY_COLORS, CATEGORY_BORDER, CATEGORY_COLOR_TEXT, PROGRESSION } from '../schedule.js';
 import { programWeek, mainLiftRx, openPause, pausedDays } from '../derive.js';
 import { renderVitalsHeader } from '../components/vitals-header.js';
@@ -157,15 +157,19 @@ function resumeProgram(){
 
 // containerId lets the same prescription card mount on Home and on the
 // Training page without a second copy of the renderer.
+// Deviation notes are DEPRECATED: the note input was removed and nothing writes
+// `note` any more. Existing notes stay in storage and still render here, so the
+// value is HTML-escaped on the way out — it used to be injected raw. Do not
+// delete the field from stored records; §1.4 forbids it.
 export function renderPrescription(ds,containerId){
   const sched=getScheduleForDate(ds);const d=db();const dev=d.deviations&&d.deviations[ds];const catColor=CATEGORY_COLOR_TEXT[sched.category]||'var(--text)';const catBg=CATEGORY_COLORS[sched.category]||'transparent';const catBorder=CATEGORY_BORDER[sched.category]||'var(--border)';const dayName=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date(ds+'T12:00:00').getDay()];
   const wk=programWeek(ds);const phase=PROGRESSION[wk-1].phase;
   let html=`<div class="rx-card" style="border-color:${catBorder};background:${catBg}"><div class="rx-header"><div><div class="rx-day-label">${dayName}</div><div class="rx-session-name">${sched.session}</div><div class="rx-week-tag">Week ${wk} of 12 · ${phase}</div></div><div class="rx-category-tag" style="color:${catColor};background:rgba(0,0,0,.2);border:1px solid ${catBorder}">${sched.category}</div></div>`;
-  if(dev&&dev.type==='missed')html+=`<div style="padding:0 16px 16px"><div class="alert err" style="margin:0">✗ Missed</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${dev.note}</div>`:''}</div>`;
-  else if(dev&&dev.type==='swapped')html+=`<div style="padding:0 16px 16px"><div class="alert warn" style="margin:0">↔ Swapped to: ${dev.swap||'other'}</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${dev.note}</div>`:''}</div>`;
-  else if(dev&&dev.type==='completed')html+=`<div style="padding:0 16px 16px"><div class="alert success" style="margin:0">✓ Marked Completed</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${dev.note}</div>`:''}</div>`;
-  else if(dev&&dev.type==='skipped')html+=`<div style="padding:0 16px 16px"><div class="alert" style="margin:0;background:rgba(107,107,138,.1);border-color:var(--muted);color:var(--muted)">⏭ Planned skip</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${dev.note}</div>`:''}</div>`;
-  else if(dev&&dev.type==='makeup')html+=`<div style="padding:0 16px 16px"><div class="alert info" style="margin:0">⟳ Make-up session</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${dev.note}</div>`:''}</div>`;
+  if(dev&&dev.type==='missed')html+=`<div style="padding:0 16px 16px"><div class="alert err" style="margin:0">✗ Missed</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${esc(dev.note)}</div>`:''}</div>`;
+  else if(dev&&dev.type==='swapped')html+=`<div style="padding:0 16px 16px"><div class="alert warn" style="margin:0">↔ Swapped to: ${dev.swap||'other'}</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${esc(dev.note)}</div>`:''}</div>`;
+  else if(dev&&dev.type==='completed')html+=`<div style="padding:0 16px 16px"><div class="alert success" style="margin:0">✓ Marked Completed</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${esc(dev.note)}</div>`:''}</div>`;
+  else if(dev&&dev.type==='skipped')html+=`<div style="padding:0 16px 16px"><div class="alert" style="margin:0;background:rgba(107,107,138,.1);border-color:var(--muted);color:var(--muted)">⏭ Planned skip</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${esc(dev.note)}</div>`:''}</div>`;
+  else if(dev&&dev.type==='makeup')html+=`<div style="padding:0 16px 16px"><div class="alert info" style="margin:0">⟳ Make-up session</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${esc(dev.note)}</div>`:''}</div>`;
   if(sched.rest)html+=`<div class="rx-rest-day"><div class="rx-rest-icon">🌿</div><div class="rx-rest-text">Full Rest — total recovery</div><div class="rx-rest-sub">Zero structured lifting or high-intensity cardio · hydration, protein, sleep</div></div>`;
   else if(sched.exercises&&sched.exercises.length){
     const rx=mainLiftRx(sched,ds);

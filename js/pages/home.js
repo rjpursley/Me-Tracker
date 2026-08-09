@@ -99,10 +99,11 @@ export function renderScoreBox(){
   document.getElementById('score-box').innerHTML=html;
 }
 
+// The note input was removed (see the deprecation note above setDeviation), so
+// there is no longer a note area to show or hide here.
 export function renderDeviationState(ds){
   const d=db();const dev=d.deviations&&d.deviations[ds];const devType=dev&&dev.type;
   ['completed','missed','swapped','makeup','skipped'].forEach(t=>{const btn=document.getElementById('dev-'+t);if(btn){btn.classList.toggle('active-btn',devType===t);if(t==='missed')btn.classList.toggle('missed-btn',true);if(t==='skipped')btn.classList.toggle('skip-btn',true);}});
-  if(dev&&dev.note){document.getElementById('dev-note-area').style.display='block';const ni=document.getElementById('dev-note-text');if(ni)ni.value=dev.note;}else{document.getElementById('dev-note-area').style.display='none';}
 }
 
 export function renderStatusGrid(ds){
@@ -118,6 +119,19 @@ export function renderStatusGrid(ds){
   ].map(c=>`<div class="status-card ${c.status}"><div class="status-card-label">${c.label}</div><div class="status-card-icon">${c.icon}</div><div class="status-card-val">${c.val}</div><div class="status-card-sub">${c.sub}</div></div>`).join('');
 }
 
+// ---------------------------------------------------------------------------
+// DEVIATION NOTES ARE DEPRECATED.
+//
+// The note input and its Save Note handler were removed: nothing writes
+// `deviations[date].note` any more. The tray is buttons only, which is what
+// §1.1 asks for — a deviation should cost one tap, not a tap and a sentence.
+//
+// The FIELD ITSELF IS NOT DELETED. §1.4 makes the schema additive-only, so
+// every note already stored stays stored and still renders on the prescription
+// card in training.js (escaped). Do not add a migration that strips it.
+//
+// The Fasting Fail note (§7.1) is a different control and stays.
+// ---------------------------------------------------------------------------
 export function setDeviation(type){
   const d=db();d.deviations=d.deviations||{};const current=d.deviations[selectedDate]||{};
   if(current.type===type)delete d.deviations[selectedDate];else d.deviations[selectedDate]={...current,type,timestamp:new Date().toISOString()};
@@ -126,8 +140,4 @@ export function setDeviation(type){
 
 export function toggleSwapArea(){const el=document.getElementById('dev-swap-area');el.style.display=el.style.display==='block'?'none':'block';}
 
-export function toggleNoteArea(){const el=document.getElementById('dev-note-area');el.style.display=el.style.display==='block'?'none':'block';}
-
 export function saveSwap(){const d=db();d.deviations=d.deviations||{};const swap=document.getElementById('dev-swap-select').value;d.deviations[selectedDate]={...d.deviations[selectedDate],type:'swapped',swap,timestamp:new Date().toISOString()};save(d);document.getElementById('dev-swap-area').style.display='none';renderHomeDayContent();buildDayStrip();}
-
-export function saveNote(){const d=db();d.deviations=d.deviations||{};const note=document.getElementById('dev-note-text').value;d.deviations[selectedDate]={...d.deviations[selectedDate],note,timestamp:new Date().toISOString()};save(d);document.getElementById('dev-note-area').style.display='none';renderPrescription(selectedDate);}

@@ -33,3 +33,17 @@ export function dateStr(dt){return dt.getFullYear()+'-'+pad(dt.getMonth()+1)+'-'
 export function today(){return dateStr(new Date());}
 
 export function addDays(dt,n){const d=new Date(dt);d.setDate(d.getDate()+n);return d;}
+
+// ---------------------------------------------------------------------------
+// HTML escaping for stored free text.
+//
+// Every renderer in this app builds markup as a template string and assigns it
+// to innerHTML, so any stored text dropped into one is parsed as HTML. Notes
+// are the only free text the app has ever written, and they went in raw.
+//
+// Deviation notes are deprecated — nothing writes them any more — but existing
+// notes are still stored and still rendered on the prescription card, so they
+// still have to be escaped on the way out. Lives here rather than in a page so
+// there is exactly one copy.
+// ---------------------------------------------------------------------------
+export function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}

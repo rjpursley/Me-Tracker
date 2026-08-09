@@ -18,7 +18,7 @@ import { db, save, exportData, importData } from './store.js';
 
 import {
   renderHome, renderHomeDayContent, buildDayStrip, selectDay,
-  setDeviation, toggleSwapArea, toggleNoteArea, saveSwap, saveNote
+  setDeviation, toggleSwapArea, saveSwap
 } from './pages/home.js';
 import { renderCalendar, setCalView, getCalView } from './pages/calendar.js';
 import { renderHealth, saveBodyHeight, logBodyMeasurement } from './pages/health.js';
@@ -87,9 +87,7 @@ window.showPage=showPage;
 window.selectDay=selectDay;
 window.setDeviation=setDeviation;
 window.toggleSwapArea=toggleSwapArea;
-window.toggleNoteArea=toggleNoteArea;
 window.saveSwap=saveSwap;
-window.saveNote=saveNote;
 
 window.setCalView=setCalView;
 window.setLogType=setLogType;
