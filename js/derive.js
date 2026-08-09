@@ -128,6 +128,84 @@ export function exerciseProgress(ds){
   return{touched:log.touched,checked:names.filter(n=>log.checked.includes(n)).length,total:names.length};
 }
 
+// ---------------------------------------------------------------------------
+// WHAT COUNTS AS A STARTED API ACTIVITY — ARCHITECTURE.md §9.5.
+// READ THIS BEFORE CHANGING THE FUNCTION BELOW.
+//
+// ONLY A DELIBERATELY STARTED, TRACKED EXERCISE SESSION COUNTS. A run, a ride,
+// a session the user actively began in the health app. **The deliberate start
+// IS the signal** — it is the user saying "this was training".
+//
+// ELEVATED HEART RATE ALONE NEVER COUNTS. Not a brisk walk, not stairs, not a
+// stressful meeting, not mowing the lawn.
+//
+// THERE IS NO DURATION THRESHOLD AND NO HEART-RATE THRESHOLD, and adding one is
+// not an improvement. A future session will be tempted to "fix" this by
+// accepting, say, 20 minutes above 120bpm — that is exactly the drift this
+// comment exists to stop. A threshold makes the app guess at intent; the start
+// button already recorded it. A 6-minute deliberate session counts. An hour of
+// accidentally-elevated HR does not.
+// ---------------------------------------------------------------------------
+
+// Was a tracked activity STARTED on this date?
+//
+// TODO(server): implement against Google Health (§6) when the Alienware server
+// task lands — the same task that builds server/google_health.py. It should ask
+// for sessions/activities with an explicit start, NOT for heart-rate samples.
+//
+// Returns false unconditionally for now. This is a deliberate stub, not an
+// oversight: there is no data source (§3 has no server yet), and inventing
+// sample activity would put a fake number into a health console. Because it is
+// always false today, paused days score 0 for training. That is expected and
+// accepted — do not "fix" it with a neutral or excluded state.
+export function hasStartedActivity(ds){
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// TRAINING SCORE — ARCHITECTURE.md §9.5.
+//
+// REST DAYS ARE UNAFFECTED by checkboxes, pause and API activity. They keep the
+// original schedule-fallback behaviour entirely.
+//
+// PROGRAM PAUSED (non-rest days):
+//   checkboxes ignored entirely. Started activity = 100, otherwise 0.
+//
+// PROGRAM ACTIVE (non-rest days):
+//   never touched -> assume the session happened; schedule fallback, unchanged.
+//   touched       -> (checked / total) * 100, plus 50 for a started activity,
+//                    capped at 100.
+//
+// The untouched vs touched-but-empty pair is the subtle one. Both render as a
+// card with no ticks, but the first scores by the fallback and the second
+// scores 0. That is the whole point of storing `touched` separately.
+// ---------------------------------------------------------------------------
+
+// The original category-table scoring, unchanged. Still the rule for rest days
+// and for untouched active days.
+function scheduleFallbackScore(ds,isRestDay){
+  const w=getWorkoutForDate(ds);
+  if(!w)return isRestDay?80:0;
+  const t=w.type;
+  if(t==='Resistance'||t==='HIIT')return 100;
+  if(t==='Zone 2'||t==='Bodyweight')return 85;
+  if(t==='Wtd Walk')return 70;
+  if(t==='Mobility')return 60;
+  if(t==='Active Rest')return isRestDay?80:60;
+  return 60;
+}
+
+export function calcTrainingScore(ds){
+  ds=ds||today();
+  const isRestDay=new Date(ds+'T12:00:00').getDay()===0;
+  if(getScheduleForDate(ds).rest)return scheduleFallbackScore(ds,isRestDay);
+  if(isPaused(ds))return hasStartedActivity(ds)?100:0;
+  const p=exerciseProgress(ds);
+  if(!p.touched)return scheduleFallbackScore(ds,isRestDay);
+  const boxes=p.total?Math.round((p.checked/p.total)*100):0;
+  return Math.min(100,boxes+(hasStartedActivity(ds)?50:0));
+}
+
 // §7.1 — did the fast break on this date? Stored additively under
 // d.fastDeviations{date} as {broke:true, note:''}. Absence means it held.
 export function fastBroken(ds){
@@ -136,7 +214,7 @@ export function fastBroken(ds){
 }
 
 export function calcScore(ds){
-  ds=ds||today();const d=db();const dow=new Date(ds+'T12:00:00').getDay();const isRestDay=(dow===0);const tgts=d.targets||{};
+  ds=ds||today();const d=db();const tgts=d.targets||{};
   // FASTING DEFAULTS TO COMPLIANT — §1.1 per-pillar defaults, §7.1 binary.
   //
   // An unlogged day scores 100. Only a fastDeviations record marking the day
@@ -153,7 +231,10 @@ export function calcScore(ds){
   // timer, the phase bar and the hormone indices.
   const fastScore=fastBroken(ds)?0:100;
   const sl=getSleepForDate(ds);const sleepGoal=+(tgts.sleep)||8;const sleepScore=Math.min(100,Math.round((Math.min(100,(+(sl.hours)/sleepGoal)*100))*.7+((+(sl.quality)/5)*100)*.3));
-  const w=getWorkoutForDate(ds);let trainingScore=0;if(w){const t=w.type;if(t==='Resistance'||t==='HIIT')trainingScore=100;else if(t==='Zone 2'||t==='Bodyweight')trainingScore=85;else if(t==='Wtd Walk')trainingScore=70;else if(t==='Mobility')trainingScore=60;else if(t==='Active Rest')trainingScore=isRestDay?80:60;else trainingScore=60;}else{trainingScore=isRestDay?80:0;}
+  // Training moved out to calcTrainingScore() (§9.5) — checkboxes, pause and
+  // API activity. The old category table lives on inside it as the fallback
+  // for rest days and for days that were never touched.
+  const trainingScore=calcTrainingScore(ds);
   const meals=d.meals.filter(m=>m.date===ds);const ts=meals.reduce((a,m)=>a+(+m.sugar||0),0);const tp=meals.reduce((a,m)=>a+(+m.protein||0),0);const protGoal=+(tgts.protein)||180;let dietScore=100;if(ts>0&&ts<=10)dietScore=Math.max(70,100-(ts/10)*30);else if(ts>10&&ts<=25)dietScore=Math.max(40,70-((ts-10)/15)*30);else if(ts>25)dietScore=10;if(tp>=protGoal)dietScore=Math.min(100,dietScore+10);dietScore=Math.round(dietScore);
   return{total:Math.round(fastScore*.25+sleepScore*.25+trainingScore*.25+dietScore*.25),fast:fastScore,sleep:sleepScore,training:trainingScore,diet:dietScore};
 }
