@@ -314,11 +314,15 @@
     </div>
     <div class="form-row"><div class="form-label">Sleep goal (hours/night)</div><input type="number" id="ft-sleep" placeholder="e.g. 8" step="0.5" onchange="saveTargets()"></div>
     <div class="form-row"><div class="form-label">Protein target (g)</div><input type="number" id="ft-protein" placeholder="e.g. 180" onchange="saveTargets()"></div>
-    <div class="form-label" style="margin-top:18px;color:var(--accent)">Training Maxes — 85% of current 1RM</div>
-    <div class="form-row" style="margin-top:8px"><div class="form-label">Back Squat TM (lbs)</div><input type="number" id="ft-tm-squat" placeholder="e.g. 315" onchange="saveTargets()"></div>
-    <div class="form-row"><div class="form-label">Overhead Press TM (lbs)</div><input type="number" id="ft-tm-ohp" placeholder="e.g. 135" onchange="saveTargets()"></div>
-    <div class="form-row"><div class="form-label">Deadlift TM (lbs)</div><input type="number" id="ft-tm-dl" placeholder="e.g. 405" onchange="saveTargets()"></div>
-    <div class="form-row"><div class="form-label">Bench Press TM (lbs)</div><input type="number" id="ft-tm-bench" placeholder="e.g. 225" onchange="saveTargets()"></div>
+    <!-- LEGACY (§10.1): Training Max is now DERIVED from a tested 1RM entered
+         on the Records page — TM = 1RM x 0.85. These inputs are the old direct
+         entry, kept because §1.4 forbids deleting targets.tm_*. A lift with a
+         1RM logged has its input disabled, because editing it would do nothing:
+         the 1RM wins. A lift with no 1RM yet stays editable so nothing breaks.
+         Rendered by renderLegacyTMs() in log.js. -->
+    <div class="form-label" style="margin-top:18px;color:var(--accent)">Training Maxes</div>
+    <div class="form-note" style="margin-bottom:8px">Derived from your tested 1RM (TM = 1RM × 0.85). Enter 1RMs on the Records page, reached from Training.</div>
+    <div id="legacy-tm-card"></div>
   </div>
 </div>
 

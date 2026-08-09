@@ -128,6 +128,7 @@ document.getElementById('import-file-input').addEventListener('change', handleIm
   if(!d.body){d.body={};changed=true;}
   if(!Array.isArray(d.programPauses)){d.programPauses=[];changed=true;}
   if(!d.exerciseLogs||typeof d.exerciseLogs!=='object'||Array.isArray(d.exerciseLogs)){d.exerciseLogs={};changed=true;}
+  if(!d.oneRepMaxes||typeof d.oneRepMaxes!=='object'||Array.isArray(d.oneRepMaxes)){d.oneRepMaxes={};changed=true;}
   if(changed)save(d);
 })();
 

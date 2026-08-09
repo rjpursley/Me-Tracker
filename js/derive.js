@@ -85,9 +85,96 @@ export function programWeek(ds){
 
 export function round5(v){return Math.round(v/5)*5;}
 
+// ---------------------------------------------------------------------------
+// 1RM -> TRAINING MAX — ARCHITECTURE.md §10.1.
+//
+// ############ READ THIS BEFORE TOUCHING ANY PERCENTAGE MATH ############
+//
+// Ryan enters a tested ONE-REP MAX. The program is written against a TRAINING
+// MAX, and TM IS ALREADY 85% OF 1RM:
+//
+//     TM = 1RM * 0.85
+//
+// EVERY PRESCRIBED WEIGHT IN THE PROGRAM IS A PERCENTAGE OF TM, NEVER OF 1RM.
+// PROGRESSION[].pct and SPEED_PCT are TM percentages. mainLiftRx() below is the
+// ONLY place they are applied, and it must be fed a TM.
+//
+// THE FAILURE MODE: if a percentage is ever applied to a 1RM instead of a TM,
+// every working weight jumps by 1/0.85 — about 18%. Week 11 is 95%, so a 405lb
+// deadlift 1RM would prescribe 385lb instead of 325lb. THAT IS AN INJURY, NOT
+// A ROUNDING ERROR.
+//
+// The mirror-image bug is double-scaling: multiplying by 0.85 here AND again
+// somewhere downstream, which silently makes every session 15% too light and
+// stalls the program. Apply the factor exactly once, here.
+//
+// If you are adding a new lift or a new percentage, the rule is unchanged:
+// derive the TM through trainingMax() and multiply that. Never reach for the
+// raw 1RM.
+// ---------------------------------------------------------------------------
+export const TM_PERCENT_OF_1RM=0.85;
+
+// The four main lifts (§10.1). `tmKey` is the legacy targets key, kept so old
+// data keeps working; `key` is the 1RM history key.
+export const MAIN_LIFTS=[
+  {key:'squat',tmKey:'tm_squat',name:'Back Squat'},
+  {key:'ohp',  tmKey:'tm_ohp',  name:'Overhead Press'},
+  {key:'dl',   tmKey:'tm_dl',   name:'Deadlift'},
+  {key:'bench',tmKey:'tm_bench',name:'Bench Press'}
+];
+
+// Every logged 1RM for a lift, oldest first. Malformed rows are ignored rather
+// than repaired (§1.4).
+export function oneRMHistory(liftKey){
+  const d=db();const list=(d.oneRepMaxes||{})[liftKey];
+  if(!Array.isArray(list))return[];
+  return list.filter(r=>r&&r.date&&+r.lbs>0)
+             .slice()
+             .sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+}
+
+// The current 1RM for a lift: the entry with the newest date. Sort is stable,
+// so two entries on the same date resolve to the one added later.
+export function latestOneRM(liftKey){
+  const h=oneRMHistory(liftKey);
+  return h.length?h[h.length-1]:null;
+}
+
+// {tm, source, oneRM, date} for one lift, by its LEGACY tmKey.
+//
+//   source '1rm'    -> derived from a logged 1RM (the intended path)
+//   source 'legacy' -> no 1RM yet, falling back to the old targets.tm_* value
+//   source 'none'   -> nothing known; tm is 0 and the UI must say "set 1RM"
+//
+// tm is deliberately NOT rounded here. round5() is applied once, to the final
+// working weight, exactly as it was before 1RM existed.
+export function trainingMaxInfo(tmKey){
+  const lift=MAIN_LIFTS.find(l=>l.tmKey===tmKey);
+  const rm=lift?latestOneRM(lift.key):null;
+  if(rm)return{tm:+rm.lbs*TM_PERCENT_OF_1RM,source:'1rm',oneRM:+rm.lbs,date:rm.date};
+  const legacy=+((db().targets||{})[tmKey])||0;
+  if(legacy>0)return{tm:legacy,source:'legacy',oneRM:null,date:null};
+  return{tm:0,source:'none',oneRM:null,date:null};
+}
+
+// The Training Max to feed percentage math. THIS is what mainLiftRx multiplies.
+export function trainingMax(tmKey){return trainingMaxInfo(tmKey).tm;}
+
+// Per-lift summary for the PR page and the legacy targets card: which lifts are
+// on a real 1RM and which are still riding a legacy TM.
+export function mainLiftStatus(){
+  return MAIN_LIFTS.map(l=>{
+    const info=trainingMaxInfo(l.tmKey);
+    return{key:l.key,tmKey:l.tmKey,name:l.name,tm:info.tm,source:info.source,oneRM:info.oneRM,date:info.date,
+           history:oneRMHistory(l.key)};
+  });
+}
+
 export function mainLiftRx(sched,ds){
   if(!sched||!sched.tmKey)return null;
-  const wk=programWeek(ds),p=PROGRESSION[wk-1];const tm=+((db().targets||{})[sched.tmKey])||0;
+  // TM, never 1RM — see the block comment above. trainingMax() has already
+  // applied the 0.85; do not apply it again here.
+  const wk=programWeek(ds),p=PROGRESSION[wk-1];const tm=trainingMax(sched.tmKey);
   if(sched.speed)return{week:wk,phase:p.phase,setsReps:sched.speedSetsReps,pctLabel:SPEED_PCT[0]+'–'+SPEED_PCT[1]+'%',
     weight:tm?round5(tm*SPEED_PCT[0]/100)+'–'+round5(tm*SPEED_PCT[1]/100)+' lbs':'set TM',rest:'90 sec',objective:'Speed & acceleration — flat % all 12 weeks'};
   return{week:wk,phase:p.phase,setsReps:p.setsReps,pctLabel:p.pct+'%',weight:tm?round5(tm*p.pct/100)+' lbs':'set TM',rest:p.rest,objective:p.objective};
@@ -287,14 +374,11 @@ export function latestWaist(){
 // rolling average, matching what the page displays. ratio is null when either
 // the TM or the bodyweight is missing — never a fabricated number.
 export function relativeStrength(){
-  const d=db();const tg=d.targets||{};const bw=rollingBodyweight().avg;
-  return[
-    {key:'tm_squat',name:'Back Squat'},
-    {key:'tm_ohp',  name:'Overhead Press'},
-    {key:'tm_dl',   name:'Deadlift'},
-    {key:'tm_bench',name:'Bench Press'}
-  ].map(l=>{
-    const tm=+tg[l.key]||0;
+  const bw=rollingBodyweight().avg;
+  // Uses the same derived TM as the prescription card, so the two can never
+  // disagree about how strong Ryan currently is.
+  return MAIN_LIFTS.map(l=>{
+    const tm=trainingMax(l.tmKey);
     return{name:l.name,tm,bodyweight:bw,ratio:(tm>0&&bw>0)?Math.round((tm/bw)*100)/100:null};
   });
 }

@@ -37,7 +37,15 @@ const DB_KEY = 'metracker_v2';
 // Exercises are stored BY NAME, not by index, so reordering schedule.js cannot
 // silently re-point a tick at a different movement. Names are also readable in
 // an exported backup.
-export function init(){return{fasts:[],workouts:[],sleeps:[],meals:[],hrs:[],targets:{},activeFast:null,deviations:{},fastDeviations:{},body:{},programPauses:[],exerciseLogs:{}};}
+// oneRepMaxes is an OBJECT keyed by lift ('squat','ohp','dl','bench'), each an
+// APPEND-ONLY array of {lbs, date} — tested maxes Ryan logged himself (§10.1).
+// A new entry is pushed; an old one is never overwritten, so the history stays
+// readable as progress over time.
+//
+// THE STORED NUMBER IS THE 1RM, NOT THE TRAINING MAX. Training Max is derived
+// at render time as 1RM * 0.85 (§1.3, §10.1). The legacy targets.tm_* values
+// are kept as a fallback for lifts with no 1RM yet and are never deleted (§1.4).
+export function init(){return{fasts:[],workouts:[],sleeps:[],meals:[],hrs:[],targets:{},activeFast:null,deviations:{},fastDeviations:{},body:{},programPauses:[],exerciseLogs:{},oneRepMaxes:{}};}
 export function db(){try{return JSON.parse(localStorage.getItem(DB_KEY))||init();}catch(e){return init();}}
 export function save(d){localStorage.setItem(DB_KEY,JSON.stringify(d));}
 

@@ -12,8 +12,49 @@
 
 import { db, save } from '../store.js';
 import { today } from '../util.js';
+import { mainLiftStatus } from '../derive.js';
 import { startFastTimer } from './fasting.js';
 import { renderHome } from './home.js';
+
+// ---------------------------------------------------------------------------
+// The legacy Training Max card — ARCHITECTURE.md §10.1.
+//
+// TM is now DERIVED from a tested 1RM (TM = 1RM * 0.85), entered on the Records
+// page. These direct-entry inputs are the old way, kept because §1.4 forbids
+// deleting targets.tm_*.
+//
+// A LIFT WITH A 1RM RENDERS AS TEXT WITH NO INPUT AT ALL. That is deliberate
+// and load-bearing: saveTargets() below writes every tm_* input it can find, so
+// leaving a disabled input on screen showing the DERIVED TM would let a save
+// overwrite the legacy stored value with a derived one. No element, no write.
+//
+// A lift with no 1RM keeps its editable input, so old data keeps working and
+// the card doubles as the list of lifts still needing a 1RM.
+// ---------------------------------------------------------------------------
+export function renderLegacyTMs(){
+  const el=document.getElementById('legacy-tm-card');
+  if(!el)return;
+  const tgts=db().targets||{};
+  el.innerHTML=mainLiftStatus().map(l=>{
+    const inputId='ft-'+l.tmKey.replace('_','-');
+    if(l.source==='1rm'){
+      return `<div class="form-row is-retired">`+
+        `<div class="form-label">${l.name} TM (lbs) <span class="tag-inactive">from 1RM</span></div>`+
+        `<div class="target-row"><span class="target-label">Training Max</span><span class="target-val">${Math.round(l.tm*10)/10} lb</span></div>`+
+        `<div class="form-note">1RM ${l.oneRM} lb set ${l.date} → TM ${Math.round(l.tm*10)/10} lb. Update it on the Records page.</div>`+
+      `</div>`;
+    }
+    const val=tgts[l.tmKey]!=null?String(tgts[l.tmKey]):'';
+    const note=l.source==='legacy'
+      ? 'No 1RM logged yet — still using this typed TM. Add a tested 1RM on the Records page and it will take over.'
+      : 'No 1RM and no TM. The prescription card will read "set TM" until one exists.';
+    return `<div class="form-row">`+
+      `<div class="form-label">${l.name} TM (lbs) <span class="tag-inactive">needs 1RM</span></div>`+
+      `<input type="number" id="${inputId}" placeholder="e.g. 315" value="${val}" onchange="saveTargets()">`+
+      `<div class="form-note">${note}</div>`+
+    `</div>`;
+  }).join('');
+}
 
 // ---------------------------------------------------------------------------
 // DEPRECATED: targets.daily — the "Daily fast goal (hours)" field.
@@ -32,7 +73,10 @@ import { renderHome } from './home.js';
 // again, that is a conversation with Ryan, not a reconnection of a dead wire.
 // ---------------------------------------------------------------------------
 export function initLogForms(){const d=db(),tgts=d.targets||{},ts=today();['fast-date','workout-date','sleep-date','meal-date','hr-date'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=ts;});if(tgts.daily)document.getElementById('ft-daily').value=tgts.daily;if(tgts.sleep)document.getElementById('ft-sleep').value=tgts.sleep;if(tgts.protein)document.getElementById('ft-protein').value=tgts.protein;
-  Object.entries({tm_squat:'ft-tm-squat',tm_ohp:'ft-tm-ohp',tm_dl:'ft-tm-dl',tm_bench:'ft-tm-bench'}).forEach(([k,id])=>{const el=document.getElementById(id);if(el&&tgts[k])el.value=tgts[k];});if(d.activeFast){document.getElementById('fast-active-display').style.display='block';document.getElementById('fast-start-btn-wrap').style.display='none';document.getElementById('fast-stop-btn-wrap').style.display='block';startFastTimer();}}
+  // renderLegacyTMs() owns the four TM rows and their values now — it decides
+  // per lift whether there is an input at all. Do not also set them here.
+  renderLegacyTMs();
+  if(d.activeFast){document.getElementById('fast-active-display').style.display='block';document.getElementById('fast-start-btn-wrap').style.display='none';document.getElementById('fast-stop-btn-wrap').style.display='block';startFastTimer();}}
 
 export function setLogType(t,btn){document.querySelectorAll('[id^=form-]').forEach(f=>f.style.display='none');document.querySelectorAll('.toggle-row .toggle-btn').forEach(b=>b.classList.remove('active'));document.getElementById('form-'+t).style.display='block';if(btn)btn.classList.add('active');}
 
