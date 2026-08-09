@@ -171,6 +171,7 @@ Me-Tracker/
 │       ├── vitals.js       # Sleep / HR / Steps
 │       ├── fasting.js
 │       ├── health.js       # Health Status
+│       ├── prs.js          # Personal Records. Tested 1RMs for the four main lifts
 │       ├── calendar.js     # Drawer's Calendar page. Exists today, so its code needs a home
 │       └── log.js          # Drawer's Log Entry page. Same reason; keeps one screen in one file
 │
@@ -219,6 +220,14 @@ days — suppression was chosen deliberately.
 
 The drawer is unchanged. The score box is an additional entry point, not a
 replacement.
+
+**One deliberate third level: Training → Personal Records** (§10.1). It is the
+only one, and it was a choice between two rules. The drawer was the natural home
+for a rarely-used logging page, but §11 protects drawer structure; 1RMs are
+training data, so they sit behind Training. Logging a tested max happens roughly
+once per 12-week cycle, so burying it one level deeper costs nothing daily.
+**This is not a licence to nest further.** If a third level is ever wanted
+again, that is a conversation with Ryan.
 
 Vitals keeps **3 days of history maximum** on screen. Longer ranges exist only
 as graphs and averages, not as scrollable detail.
@@ -444,10 +453,21 @@ scores 80).
 
 | Case | Score |
 |---|---|
+| **Marked `missed`** | **0 — outranks everything below** |
 | Never touched | assume the session happened — schedule fallback, unchanged |
 | Touched | `(checked / total) * 100` |
 | Started API activity that day | **+50** |
 | — | **capped at 100** |
+
+**A `missed` deviation forces the pillar to 0 regardless of checkbox state.**
+Saying "I missed this session" is a direct statement about the day; ticks are
+just the residue of tapping through a card. Without this rule, marking a day
+Missed *and* ticking every box scored 100, which is nonsense.
+
+This applies to **`missed` only**. The other deviation types are unchanged:
+`swapped` still scores by the category swapped to, and
+`completed` / `skipped` / `makeup` do not override the boxes. An untouched
+missed day already scored 0 through the fallback, so that case did not move.
 
 Worked examples on a 12-exercise day: all boxes = 100. Touched with zero boxes
 and no activity = 0. Half the boxes, no activity = 50. Half the boxes plus an
@@ -490,16 +510,16 @@ expected and accepted. Do not build a neutral or excluded state to hide it.
 
 ## 10. Health Status
 
-- **Manual:** height, bodyweight, waist circumference.
+- **Manual:** height, bodyweight, waist circumference, tested 1RMs (§10.1).
 - **Auto from API:** body fat %, VO2 max, HRV.
+- **Derived:** 7-day rolling bodyweight trend, Training Max (§10.1), relative
+  strength (each Training Max ÷ bodyweight).
 
 **VO2 max is available from the Versa 2.** Fitbit calls it **Cardio Fitness
 Score**, which is why a search for "VO2 max" in their docs comes up empty — the
 metric is there under a marketing name. Keep it as a trackable field awaiting
 sync. It renders as an em-dash under "Awaiting Sync" until §6 lands. Do not drop
 it on the assumption the hardware cannot produce it.
-- **Derived:** 7-day rolling bodyweight trend, relative strength (each Training
-  Max ÷ bodyweight).
 
 **Bodyweight displays as the 7-day rolling average, not the daily value.** Daily
 weight is mostly water and produces misleading noise.
@@ -507,6 +527,77 @@ weight is mostly water and produces misleading noise.
 Hormone indices (HGH, Testosterone, Cortisol Pressure) are **behavioral
 correlations, not medical claims**, and must always be labeled as such. Never
 present a clinical value.
+
+### 10.1 1RM, Training Max, and the Personal Records page
+
+#### The number Ryan enters is a 1RM. The number the program runs on is a TM.
+
+```
+TM = 1RM × 0.85          (TM_PERCENT_OF_1RM in derive.js)
+```
+
+**1RM is stored. TM is derived at render time** (§1.3) — it is never written to
+`metracker_v2`.
+
+#### Every prescribed weight is a percentage OF TM, never of 1RM
+
+`PROGRESSION[].pct` and `SPEED_PCT` in `schedule.js` are **TM percentages**.
+`mainLiftRx()` in `derive.js` is the **only** place they are applied, and it is
+fed `trainingMax()`.
+
+**THIS IS THE FAILURE MODE TO AVOID.** If a percentage is ever applied to a raw
+1RM, every working weight jumps by `1/0.85` — about **18%**. Worked example: a
+400 lb squat 1RM gives a 340 lb TM. Week 11 prescribes 95%:
+
+| | Calculation | Prescribed |
+|---|---|---|
+| Correct — from TM | `round5(340 × 0.95)` | **325 lb** |
+| Wrong — from 1RM | `round5(400 × 0.95)` | 380 lb |
+
+That 55 lb gap is an injury, not a rounding error.
+
+The mirror-image bug is **double-scaling**: applying 0.85 here *and* again
+downstream, which makes every session 15% too light and quietly stalls the
+program. **Apply the factor exactly once**, in `trainingMaxInfo()`.
+
+TM is deliberately left **unrounded**; `round5()` is applied once, to the final
+working weight, exactly as it was before 1RM existed.
+
+#### Legacy Training Maxes
+
+The old `targets.tm_*` values are **never deleted** (§1.4). Resolution order per
+lift:
+
+1. A logged 1RM exists → `TM = latest 1RM × 0.85`. Source `'1rm'`.
+2. No 1RM, but a legacy `tm_*` → use that typed TM as-is. Source `'legacy'`.
+3. Neither → TM is 0 and the card reads "set TM". Source `'none'`.
+
+The Log page's Training Max card shows which lifts are still on a legacy value.
+**A lift driven by a 1RM renders there as text with no input at all** — that is
+load-bearing, not cosmetic: `saveTargets()` writes every `tm_*` input it can
+find, so leaving a disabled input showing the *derived* TM would let a save
+overwrite the stored legacy value with a derived one. No element, no write.
+
+#### The Personal Records page
+
+`js/pages/prs.js`, reached from a nav row on the **Training page** — not the
+drawer, because §11 protects drawer structure and 1RMs are training data.
+
+- **Scope is the four main lifts only:** back squat, overhead press, deadlift,
+  bench press. Not assistance work, not accessories.
+- **Every value is a tested 1RM Ryan logged himself.**
+- **DO NOT ADD REP-MAX ESTIMATION.** No Epley, no Brzycki, no "5 × 275 means
+  your max is about 310". Decided explicitly: the big four get tested and
+  logged. An estimated max would silently drive every prescribed weight in the
+  program through TM, and §1.7 does not let an estimate wear the same clothes as
+  a measurement.
+- **Stored as `d.oneRepMaxes{}`**, keyed by lift (`squat`, `ohp`, `dl`,
+  `bench`), each an **append-only** array of `{lbs, date}`.
+- **Entries append; they never overwrite.** The history is the point — progress
+  across twelve weeks is the thing worth seeing.
+- **"Current" is the newest entry by date**, not by insertion order, so a
+  backdated entry lands in the history without displacing a more recent max.
+- Dates come from `today()` in `util.js`, which is local (§12).
 
 ---
 

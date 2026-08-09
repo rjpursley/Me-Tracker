@@ -225,7 +225,9 @@
 .pr-stat-unit{font-family:var(--font-mono);font-size:10px;color:var(--muted)}
 .pr-note{margin-top:10px;font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--muted)}
 .pr-entry{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;margin-top:12px;align-items:center}
-.pr-entry input{margin:0}
+/* 44pt minimum (§1.5). The global input padding lands at 40px, which is under
+   it — raise it here rather than change every form in the app. */
+.pr-entry input{margin:0;min-height:44px}
 .pr-save{width:auto;min-height:44px;padding:12px 18px}
 .pr-hist-head{margin-top:14px;padding-top:10px;border-top:1px solid var(--border);font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted)}
 .pr-hist-row{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:7px 0;font-family:var(--font-mono);font-size:12px;border-bottom:1px solid var(--border)}
