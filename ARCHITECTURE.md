@@ -129,29 +129,131 @@ confidence as a barcode lookup or a scale reading.
 **The app is served from the Alienware over Tailscale.** GitHub is version
 control and off-site backup only. It is not the host.
 
+**The real address, for real** (this replaced an earlier `alienware.<tailnet>`
+placeholder that never matched the actual machine):
+
+```
+Machine:    Alienware R5, Tailscale hostname desktop-1g38tar
+Tailnet:    tail865703.ts.net
+Tailscale IP: 100.112.223.16
+URL:        https://desktop-1g38tar.tail865703.ts.net
+Server:     server/app.py, bound to 127.0.0.1:8123 — loopback only
+```
+
 - Serve with `tailscale serve` — **not** Funnel. Funnel exposes to the public
   internet, which defeats the point. Serve gives HTTPS with a valid certificate
-  at `https://alienware.<tailnet>.ts.net`, which iOS Safari needs for a secure
-  context.
+  at the URL above, which iOS Safari needs for a secure context.
 - Client and API are same-origin. **No CORS, no preflight, no proxy shim.**
 - No deploy step. Edit, refresh the phone.
 - If Tailscale is off or the machine is down, the app is unreachable. Accepted.
 
 ### 2.1 The localStorage origin trap — read before any hosting change
-localStorage is scoped to the origin. Data saved under `rjpursley.github.io` is
-**invisible** from `alienware.<tailnet>.ts.net`. Not deleted — unreachable.
 
-Therefore **export/import must exist before any origin change**:
-- Export: dump `metracker_v2` to a downloadable JSON file.
-- Import: load that file back.
+localStorage is scoped to the **origin** — scheme + hostname + port, exactly.
+Three different-looking addresses for the same machine are three different,
+non-communicating storage buckets:
 
-This doubles as the backup against iOS evicting site data from
-infrequently-visited sites, which it does. Build it early; it is cheap.
+| Address | Origin |
+|---|---|
+| `http://127.0.0.1:8123` | local testing only |
+| `http://100.112.223.16:8123` | the raw Tailscale IP |
+| `https://desktop-1g38tar.tail865703.ts.net` | **the real one, used day to day** |
+
+**Data saved under one of these is invisible from the other two. Not
+deleted — unreachable**, sitting in a browser storage bucket keyed to an
+origin nobody is loading any more. This bit Ryan once already with
+`rjpursley.github.io` vs. the Tailscale hostname; it will bite again with
+these three if they're not treated as genuinely different places.
+
+**Before ever switching which address you load the app from: Export first.**
+The drawer's Export Backup writes `metracker_v2` to a downloadable JSON file;
+Import Backup reads one back in. This doubles as the backup against iOS
+evicting site data from infrequently-visited sites, which it does.
+
+**Rule of thumb: always use `https://desktop-1g38tar.tail865703.ts.net` on the
+phone, every time, for real use.** The other two addresses are for testing
+from the Alienware itself.
 
 ### 2.2 The PIN gate
 Keep it. Its job changed: it now guards against someone picking up an unlocked
 phone, not against someone finding a public URL. It was never real security and
 is not claimed to be.
+
+### 2.3 Running the server — for a future session with no memory of this one
+
+Everything below assumes you're sitting at the Alienware (or connected to it).
+This is written for six months from now, having forgotten all of this.
+
+**Is it running right now?**
+```
+Invoke-RestMethod http://127.0.0.1:8123/api/health
+```
+A JSON reply (`status: ok`, a timestamp, `secrets_readable`) means yes. A
+connection error means the server is not running — see "Start it by hand"
+below. This only checks the LOCAL port; it says nothing about whether
+Tailscale is currently exposing it (see the serve check further down).
+
+**Start it by hand** (works whether or not it's set to start at boot):
+```
+powershell -File "C:\Users\Ryan\Desktop\Me-Tracker\server\start-server.ps1"
+```
+Leave that window open — it runs in the foreground and blocks for as long as
+the server does. Closing the window stops the server. For it to survive you
+closing the window, it needs to be running via the scheduled task instead
+(next section) — start it through Task Scheduler
+(`Start-ScheduledTask -TaskName "Me-Tracker Server"`), not by hand, if you
+want it to keep running after you walk away.
+
+**Restart it** — find and stop whatever's using port 8123, then start it
+again:
+```
+Get-NetTCPConnection -LocalPort 8123 | Select-Object OwningProcess
+Stop-Process -Id <that number> -Force
+powershell -File "C:\Users\Ryan\Desktop\Me-Tracker\server\start-server.ps1"
+```
+Or, if it's running as the scheduled task:
+```
+Stop-ScheduledTask -TaskName "Me-Tracker Server"
+Start-ScheduledTask -TaskName "Me-Tracker Server"
+```
+
+**Check the logs** if something's wrong —
+`server\logs\server.log` (normal output) and `server\logs\server.err.log`
+(startup messages and errors; uvicorn logs its normal "server started" lines
+here too, so a few lines in this file on their own are not a problem).
+
+**Starts automatically at boot, no login required**, via a Windows Scheduled
+Task named "Me-Tracker Server" that runs as the built-in SYSTEM account
+(chosen specifically because it needs no stored password — see the comment
+in `server/register-scheduled-task.ps1`). One-time setup, only if it isn't
+already registered:
+```
+# From an elevated PowerShell window — right-click PowerShell, "Run as
+# administrator" — this specific step does not work from a normal window:
+powershell -File "C:\Users\Ryan\Desktop\Me-Tracker\server\register-scheduled-task.ps1"
+```
+Confirm it's there: `Get-ScheduledTask -TaskName "Me-Tracker Server"`.
+Remove it entirely: `Unregister-ScheduledTask -TaskName "Me-Tracker Server" -Confirm:$false`.
+
+**Is Tailscale actually exposing it to the phone?**
+```
+tailscale serve status
+```
+Should show port 8123 mapped to `https://desktop-1g38tar.tail865703.ts.net`.
+If it says "No serve config", run `server/tailscale-serve.ps1` — this is
+NOT tied to the boot task or the Python server; it's a separate, one-time
+Tailscale-side setting that (unlike the scheduled task) persists on its own
+and does not need re-running after a reboot.
+
+**If `tailscale serve` or `tailscale cert` complains that this account
+doesn't support getting TLS certs**, that's not a bug — HTTPS Certificates
+needs to be turned on for the tailnet first, in the
+[Tailscale admin console](https://login.tailscale.com/admin/dns), under DNS
+→ HTTPS Certificates. That's a one-time toggle only a tailnet admin (Ryan)
+can flip; nothing on the Alienware side can work around it. Do not fall back
+to plain HTTP as a workaround — iOS Safari needs the secure context HTTPS
+provides, and the whole reason `serve` (not `funnel`) is used is to get that
+without exposing anything to the public internet.
 
 ---
 
@@ -189,11 +291,16 @@ Me-Tracker/
 │       └── log.js          # Drawer's Log Entry page. Same reason; keeps one screen in one file
 │
 ├── server/                 # Runs on the Alienware, also serves the client
-│   ├── app.py              # FastAPI. Binds the Tailscale interface only
-│   ├── google_health.py    # OAuth refresh, paginated pulls, aggregation
-│   ├── vision.py           # Ollama minicpm-v job queue
-│   ├── barcode.py          # Open Food Facts lookup
-│   └── requirements.txt
+│   ├── app.py              # FastAPI. Binds 127.0.0.1:8123 ONLY — see §2
+│   ├── requirements.txt    # Pinned via pip freeze — see §2.3
+│   ├── start-server.ps1    # What Task Scheduler (or you, by hand) runs
+│   ├── register-scheduled-task.ps1  # One-time, needs an elevated window
+│   ├── tailscale-serve.ps1 # One-time Tailscale-side exposure — see §2.3
+│   ├── .venv/               # gitignored — not committed, recreate from requirements.txt
+│   ├── logs/                # gitignored — server.log / server.err.log
+│   ├── google_health.py    # NOT YET BUILT — OAuth refresh, paginated pulls, aggregation
+│   ├── vision.py           # NOT YET BUILT — Ollama minicpm-v job queue
+│   └── barcode.py          # NOT YET BUILT — Open Food Facts lookup
 │
 └── archive/                # Superseded files. Never read these as current.
 ```
