@@ -237,6 +237,24 @@
 .pr-hist-tm{color:var(--muted)}
 .pr-hist-cur{margin-left:auto;padding:1px 7px;border-radius:6px;border:1px solid var(--accent5);color:var(--accent5);font-size:9.5px;letter-spacing:.06em}
 
+/* Editable supplements (ARCHITECTURE.md §8.1). Row controls are 44px to clear
+   the tap minimum; the delete sits last so a mis-tap lands on a reorder. */
+.supp-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)}
+.supp-row:last-child{border-bottom:none}
+.supp-icon{font-size:20px;flex-shrink:0}
+.supp-body{flex:1;min-width:0}
+.supp-name{font-size:14px;font-weight:600}
+.supp-detail{font-size:12px;color:var(--muted);font-family:var(--font-mono);margin-top:2px}
+.supp-btn{width:36px;min-height:44px;flex-shrink:0;border:1px solid var(--border);border-radius:9px;background:var(--surface2);color:var(--muted);font-size:15px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.supp-btn:active{background:var(--surface3)}
+.supp-btn[disabled]{opacity:.3;cursor:default}
+.supp-btn.supp-del{color:var(--danger)}
+.supp-add{margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px}
+.supp-add input{min-height:44px}
+
+/* Macro consistency chart legend swatch */
+.lg-swatch{display:inline-block;width:10px;height:3px;border-radius:2px;vertical-align:middle;margin-right:4px}
+
 /* Deviation tray */
 .deviation-tray{margin-top:12px}
 .deviation-tray-label{font-size:11px;font-family:var(--font-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px}

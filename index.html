@@ -228,29 +228,50 @@
 
 <div class="page" id="page-diet">
   <div class="section-title">Today's Macros</div>
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+  <!-- Four across on a 2x2 grid: three-across would put each card near 110px
+       wide on a 393pt phone (§1.5). -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
     <div class="card" style="text-align:center;padding:12px"><div class="card-title" style="margin-bottom:4px">Protein</div><div class="stat-big" id="today-protein" style="font-size:26px;color:var(--accent)">0</div><div class="stat-sub">g</div><div class="progress-bar"><div class="progress-fill" id="protein-bar" style="width:0%;background:var(--accent)"></div></div></div>
     <div class="card" style="text-align:center;padding:12px"><div class="card-title" style="margin-bottom:4px">Fat</div><div class="stat-big" id="today-fat" style="font-size:26px;color:var(--accent3)">0</div><div class="stat-sub">g</div><div class="progress-bar"><div class="progress-fill" id="fat-bar" style="width:0%;background:var(--accent3)"></div></div></div>
+    <div class="card" style="text-align:center;padding:12px"><div class="card-title" style="margin-bottom:4px">Carbs</div><div class="stat-big" id="today-carbs" style="font-size:26px;color:var(--accent2)">0</div><div class="stat-sub">g</div><div class="progress-bar"><div class="progress-fill" id="carbs-bar" style="width:0%;background:var(--accent2)"></div></div></div>
     <div class="card" style="text-align:center;padding:12px"><div class="card-title" style="margin-bottom:4px">Sugar</div><div class="stat-big" id="today-sugar" style="font-size:26px;color:var(--danger)">0</div><div class="stat-sub">g</div><div class="progress-bar"><div class="progress-fill" id="sugar-bar" style="width:0%;background:var(--danger)"></div></div></div>
   </div>
   <div id="sugar-damage-display"></div>
   <div class="section-title">Daily Supplements</div>
+  <!-- USER-EDITABLE (§8.1). Seeded once from the three that used to be
+       hardcoded here; after that the list is Ryan's data in d.supplements.
+       Do not hardcode entries in this markup again. -->
   <div class="card">
     <div class="card-title">Standard Practice — No Scoring Impact</div>
-    <div style="display:flex;flex-direction:column;gap:10px">
-      <div style="display:flex;align-items:center;gap:12px;font-size:14px"><span style="font-size:20px">🧂</span><div><div style="font-weight:600">Himalayan Salt</div><div style="font-size:12px;color:var(--muted);font-family:var(--font-mono)">In water, daily</div></div></div>
-      <div style="display:flex;align-items:center;gap:12px;font-size:14px"><span style="font-size:20px">⚡</span><div><div style="font-weight:600">CoQ-10</div><div style="font-size:12px;color:var(--muted);font-family:var(--font-mono)">Cellular energy</div></div></div>
-      <div style="display:flex;align-items:center;gap:12px;font-size:14px"><span style="font-size:20px">🧠</span><div><div style="font-weight:600">Magnesium Threonate</div><div style="font-size:12px;color:var(--muted);font-family:var(--font-mono)">Sleep + cognition</div></div></div>
+    <div id="supplement-list"></div>
+    <div class="supp-add">
+      <input type="text" id="supp-name" placeholder="Supplement name">
+      <input type="text" id="supp-detail" placeholder="Note (optional) — e.g. with breakfast">
+      <button class="btn btn-secondary" onclick="addSupplement()">Add supplement</button>
     </div>
   </div>
   <div class="section-title">Macro Targets</div>
   <div class="card">
     <div class="form-row"><div class="form-label">Daily protein target (g)</div><input type="number" id="target-protein" placeholder="e.g. 180" onchange="saveTargets()"></div>
     <div class="form-row"><div class="form-label">Daily fat target (g)</div><input type="number" id="target-fat" placeholder="e.g. 80" onchange="saveTargets()"></div>
+    <div class="form-row"><div class="form-label">Daily carb target (g)</div><input type="number" id="target-carbs" placeholder="e.g. 200" onchange="saveTargets()"></div>
     <div class="form-row"><div class="form-label">Max sugar per day (g)</div><input type="number" id="target-sugar" placeholder="e.g. 10" onchange="saveTargets()"></div>
   </div>
-  <div class="section-title">Meal History</div>
-  <div class="card" id="meal-history"><div style="text-align:center;color:var(--muted);font-size:13px;padding:10px 0;font-family:var(--font-mono)">No meals logged</div></div>
+  <div class="section-title">Macro Consistency</div>
+  <div id="macro-chart-wrap">
+    <button class="btn btn-secondary" id="macro-chart-btn" onclick="toggleMacroChart()">Show macro consistency graph</button>
+    <div class="card" id="macro-chart-card" style="display:none;margin-top:10px">
+      <div class="card-title" id="macro-chart-title">Last 30 days</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px;font-size:11px;font-family:var(--font-mono);color:var(--muted)">
+        <span><span class="lg-swatch" style="background:var(--accent)"></span>Protein</span>
+        <span><span class="lg-swatch" style="background:var(--accent3)"></span>Fat</span>
+        <span><span class="lg-swatch" style="background:var(--accent2)"></span>Carbs</span>
+        <span><span class="lg-swatch" style="background:var(--danger)"></span>Sugar</span>
+      </div>
+      <div class="chart-wrap"><canvas id="macro-chart"></canvas></div>
+      <div class="form-note" id="macro-chart-note"></div>
+    </div>
+  </div>
 </div>
 
 <div class="page" id="page-log">

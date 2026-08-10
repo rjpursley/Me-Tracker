@@ -14,7 +14,7 @@
 // split explicitly was not allowed to make.
 // ---------------------------------------------------------------------------
 
-import { db, save, exportData, importData } from './store.js';
+import { db, save, exportData, importData, seedSupplements } from './store.js';
 
 import {
   renderHome, renderHomeDayContent, buildDayStrip, selectDay,
@@ -23,7 +23,7 @@ import {
 import { renderCalendar, setCalView, getCalView } from './pages/calendar.js';
 import { renderHealth, saveBodyHeight, logBodyMeasurement } from './pages/health.js';
 import { renderBody, logSleep, logHR } from './pages/vitals.js';
-import { renderDiet, logMeal } from './pages/dietary.js';
+import { renderDiet, logMeal, addSupplement, deleteSupplement, moveSupplement, toggleMacroChart } from './pages/dietary.js';
 import { initLogForms, setLogType, logWorkout, saveTargets } from './pages/log.js';
 import { logFast, startActiveFast, stopActiveFast, renderFastingPage, toggleFastFail, saveFastFailNote } from './pages/fasting.js';
 import { renderTrainingPage, openPauseGate, closePauseGate, pauseGateKey, pauseGateBack, toggleExercise } from './pages/training.js';
@@ -104,6 +104,10 @@ window.pauseGateKey=pauseGateKey;
 window.pauseGateBack=pauseGateBack;
 window.toggleExercise=toggleExercise;
 window.logOneRM=logOneRM;
+window.addSupplement=addSupplement;
+window.deleteSupplement=deleteSupplement;
+window.moveSupplement=moveSupplement;
+window.toggleMacroChart=toggleMacroChart;
 
 window.toggleFastFail=toggleFastFail;
 window.saveFastFailNote=saveFastFailNote;
@@ -132,6 +136,9 @@ document.getElementById('import-file-input').addEventListener('change', handleIm
   if(!Array.isArray(d.programPauses)){d.programPauses=[];changed=true;}
   if(!d.exerciseLogs||typeof d.exerciseLogs!=='object'||Array.isArray(d.exerciseLogs)){d.exerciseLogs={};changed=true;}
   if(!d.oneRepMaxes||typeof d.oneRepMaxes!=='object'||Array.isArray(d.oneRepMaxes)){d.oneRepMaxes={};changed=true;}
+  // SEED ONCE (§8.1). Only when the key is absent — an existing empty array
+  // means Ryan deleted them all, and re-seeding would bring them back.
+  if(!Array.isArray(d.supplements)){d.supplements=seedSupplements();changed=true;}
   if(changed)save(d);
 })();
 

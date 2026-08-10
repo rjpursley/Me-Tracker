@@ -45,7 +45,24 @@ const DB_KEY = 'metracker_v2';
 // THE STORED NUMBER IS THE 1RM, NOT THE TRAINING MAX. Training Max is derived
 // at render time as 1RM * 0.85 (§1.3, §10.1). The legacy targets.tm_* values
 // are kept as a fallback for lifts with no 1RM yet and are never deleted (§1.4).
-export function init(){return{fasts:[],workouts:[],sleeps:[],meals:[],hrs:[],targets:{},activeFast:null,deviations:{},fastDeviations:{},body:{},programPauses:[],exerciseLogs:{},oneRepMaxes:{}};}
+// supplements is a USER-EDITABLE array of {name, detail, icon} (§8.1).
+//
+// These three used to be hardcoded rows in index.html. They are SEED DATA now:
+// a brand-new store starts with them, and the app.js guard backfills them onto
+// a store written before the key existed.
+//
+// THE SEED RUNS ONLY WHEN THE KEY IS ABSENT. An existing empty array is a valid
+// state meaning "Ryan deleted them all" — re-seeding would resurrect entries he
+// removed on purpose. Each call returns fresh copies so no two stores share an
+// object reference.
+export const SEED_SUPPLEMENTS=[
+  {name:'Himalayan Salt',      detail:'In water, daily',   icon:'🧂'},
+  {name:'CoQ-10',              detail:'Cellular energy',   icon:'⚡'},
+  {name:'Magnesium Threonate', detail:'Sleep + cognition', icon:'🧠'}
+];
+export function seedSupplements(){return SEED_SUPPLEMENTS.map(s=>({...s}));}
+
+export function init(){return{fasts:[],workouts:[],sleeps:[],meals:[],hrs:[],targets:{},activeFast:null,deviations:{},fastDeviations:{},body:{},programPauses:[],exerciseLogs:{},oneRepMaxes:{},supplements:seedSupplements()};}
 export function db(){try{return JSON.parse(localStorage.getItem(DB_KEY))||init();}catch(e){return init();}}
 export function save(d){localStorage.setItem(DB_KEY,JSON.stringify(d));}
 
