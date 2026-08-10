@@ -91,8 +91,8 @@ export function saveFastFailNote(){
 export function renderFastingStatus(ds,containerId){
   const d=db();const isToday=ds===today();const todayFasts=d.fasts.filter(f=>f.date===ds);
   // The planned fast for this date comes from fastPlan() in derive.js (§7),
-  // which owns the protocol. schedule.js's per-weekday fastLabel described the
-  // OLD protocol and is no longer read here.
+  // which owns the protocol. schedule.js used to carry a per-weekday fastLabel
+  // describing the OLD protocol; it has since been removed there.
   const plan=fastPlan(ds);
   let icon='⏱',val=plan.headline,sub=plan.detail,color='var(--accent2)';
   if(plan.kind!=='daily')icon='🌙';

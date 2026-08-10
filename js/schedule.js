@@ -28,13 +28,15 @@ export const PROGRESSION=[
 // Days 4 & 5 are dynamic/speed days: flat 60-70% TM across all 12 weeks.
 export const SPEED_PCT=[60,70];
 
-// NOTE: the per-day `fastLabel` strings below describe the OLD fasting protocol
-// (18:6 daily, 36hr Fri–Sun) and are NO LONGER READ. The protocol moved to
-// fastPlan() in derive.js (§7) because the 48hr deload depends on the program
-// week, which a static per-weekday string cannot express. Left in place rather
-// than deleted so this data file keeps one shape; do not wire them back up.
+// NO fastLabel FIELD HERE. A per-weekday `fastLabel` string used to describe
+// the fasting protocol (18:6 daily, 36hr Fri–Sun) and was removed once that
+// protocol changed: the current one (§7) has a 48hr deload that depends on the
+// program week, which a static per-weekday string cannot express. It moved to
+// fastPlan() in derive.js. Removed rather than left as dead data with a
+// deprecation marker, so there is nothing here for a future session to
+// mistake for the current protocol. See ARCHITECTURE.md §7 for what runs now.
 export const SCHEDULE={
-  1:{session:'Max Effort Lower (Squat)',category:'Resistance',fastLabel:'18:6 window',tmKey:'tm_squat',mainLift:'Barbell Back Squat',exercises:[
+  1:{session:'Max Effort Lower (Squat)',category:'Resistance',tmKey:'tm_squat',mainLift:'Barbell Back Squat',exercises:[
     {name:'Goblet Squat',equip:'Kettlebell / dumbbell',detail:'x 10 reps · 3-second pause at bottom',block:'Warm-Up — 2 Rounds'},
     {name:'Hanging Leg Raise',equip:'Pull-up bar',detail:'x 10 reps',block:'Warm-Up — 2 Rounds'},
     {name:'Kettlebell / Steel Mace Swing',equip:'Kettlebell or mace',detail:'x 15 reps',block:'Warm-Up — 2 Rounds'},
@@ -48,7 +50,7 @@ export const SCHEDULE={
     {name:'Clean & Press',equip:'Kettlebell / dumbbell',detail:'5 reps every minute',block:'Conditioning Finisher — 10-Min EMOM'},
     {name:'Burpees',equip:'Bodyweight',detail:'8–10 reps every minute · rest remainder of minute',block:'Conditioning Finisher — 10-Min EMOM'}
   ]},
-  2:{session:'Max Effort Upper (OHP)',category:'Resistance',fastLabel:'18:6 window',tmKey:'tm_ohp',mainLift:'Overhead Barbell Press',exercises:[
+  2:{session:'Max Effort Upper (OHP)',category:'Resistance',tmKey:'tm_ohp',mainLift:'Overhead Barbell Press',exercises:[
     {name:'Band Pull-Apart',equip:'Resistance band',detail:'x 20 reps',block:'Warm-Up — 2 Rounds'},
     {name:'Scapular Pull-up',equip:'Pull-up bar',detail:'x 10 reps',block:'Warm-Up — 2 Rounds'},
     {name:'Bear Crawl',equip:'Bodyweight',detail:'x 50 feet',block:'Warm-Up — 2 Rounds'},
@@ -64,7 +66,7 @@ export const SCHEDULE={
     {name:'Push-up',equip:'Bodyweight',detail:'x 10 reps',block:'Conditioning Finisher — 8-Min AMRAP'},
     {name:'Ring Row',equip:'Rings / bar',detail:'x 10 reps (or inverted rows)',block:'Conditioning Finisher — 8-Min AMRAP'}
   ]},
-  3:{session:'Active Recovery / Zone 2',category:'Zone 2',fastLabel:'18:6 window',exercises:[
+  3:{session:'Active Recovery / Zone 2',category:'Zone 2',exercises:[
     {name:'Steady-State Zone 2',equip:'Ruck / row / bike / incline walk',detail:'30–45 min · conversational pace, no gasping',block:'Aerobic Base'},
     {name:"World's Greatest Stretch",equip:'Bodyweight',detail:'x 5 reps per side',block:'Mobility & Thoracic Flow — 15 Min'},
     {name:'Couch Stretch',equip:'Wall / bench',detail:'x 60 seconds per side',block:'Mobility & Thoracic Flow — 15 Min'},
@@ -72,7 +74,7 @@ export const SCHEDULE={
     {name:'Dead Hang',equip:'Pull-up bar',detail:'x max time',block:'Core & Grip — 3 Sets'},
     {name:'Suitcase Hold',equip:'Heavy dumbbell / kettlebell',detail:'x 45 seconds per side',block:'Core & Grip — 3 Sets'}
   ]},
-  4:{session:'Dynamic Speed Lower (Deadlift)',category:'Resistance',fastLabel:'18:6 window',tmKey:'tm_dl',mainLift:'Deadlift',speed:true,speedSetsReps:'5 sets x 3 reps',exercises:[
+  4:{session:'Dynamic Speed Lower (Deadlift)',category:'Resistance',tmKey:'tm_dl',mainLift:'Deadlift',speed:true,speedSetsReps:'5 sets x 3 reps',exercises:[
     {name:'Single-Leg Glute Bridge',equip:'Bodyweight',detail:'x 10 reps per side',block:'Warm-Up — 2 Rounds'},
     {name:'Band Good Morning',equip:'Resistance band',detail:'x 15 reps',block:'Warm-Up — 2 Rounds'},
     {name:'Birddog',equip:'Bodyweight',detail:'x 8 reps per side',block:'Warm-Up — 2 Rounds'},
@@ -85,7 +87,7 @@ export const SCHEDULE={
     {name:'Heavy Farmers Carry',equip:'Dumbbells / handles',detail:'x 100 feet · rest 90 sec between rounds',block:'Volume Triplet — 3 Rounds'},
     {name:'Death by Kettlebell Swings',equip:'Kettlebell',detail:'Min 1: 10 swings, +2 reps every minute until failure',block:'Conditioning Finisher'}
   ]},
-  5:{session:'Dynamic Speed Upper (Bench)',category:'Resistance',fastLabel:'18:6 / fast begins after dinner',tmKey:'tm_bench',mainLift:'Barbell Bench Press',speed:true,speedSetsReps:'5 sets x 3–5 reps',exercises:[
+  5:{session:'Dynamic Speed Upper (Bench)',category:'Resistance',tmKey:'tm_bench',mainLift:'Barbell Bench Press',speed:true,speedSetsReps:'5 sets x 3–5 reps',exercises:[
     {name:'Push-up to Downward Dog',equip:'Bodyweight',detail:'x 8 reps',block:'Warm-Up — 2 Rounds'},
     {name:'Cuban Rotation',equip:'Light dumbbells',detail:'x 12 reps',block:'Warm-Up — 2 Rounds'},
     {name:'Band Dislocate',equip:'Resistance band',detail:'x 15 reps',block:'Warm-Up — 2 Rounds'},
@@ -101,7 +103,7 @@ export const SCHEDULE={
     {name:'Dumbbell Goblet Squat',equip:'Dumbbell',detail:'30 reps',block:'Conditioning Finisher — 10-Min Chipper'},
     {name:'Burpee Over Dumbbell',equip:'Bodyweight + dumbbell',detail:'20 reps · for time',block:'Conditioning Finisher — 10-Min Chipper'}
   ]},
-  6:{session:'Strongman / GPP Carries',category:'Bodyweight',fastLabel:'Fast active (hrs 12–18)',exercises:[
+  6:{session:'Strongman / GPP Carries',category:'Bodyweight',exercises:[
     {name:'Heavy Farmers Walk',equip:'Dumbbells / handles',detail:'x 100 feet',block:'Loaded Carry Circuit — 4 Rounds'},
     {name:'Bear-Hug Carry',equip:'Sandbag / keg / med-ball',detail:'x 100 feet',block:'Loaded Carry Circuit — 4 Rounds'},
     {name:"Overhead Waiter's Walk",equip:'Kettlebell / dumbbell',detail:'x 50 feet right / 50 feet left',block:'Loaded Carry Circuit — 4 Rounds'},
@@ -110,7 +112,7 @@ export const SCHEDULE={
     {name:'Sledgehammer Tire Strikes',equip:'Sledgehammer or steel mace',detail:'x 20 reps per side',block:'Trunk & GPP Finisher — 3 Sets'},
     {name:'Light Sled Drag / Walk',equip:'Sled or bodyweight',detail:'x 5 minutes continuous',block:'Trunk & GPP Finisher — 3 Sets'}
   ]},
-  0:{session:'Full Rest',category:'Active Rest',fastLabel:'Fast breaks this morning',exercises:null,rest:true}
+  0:{session:'Full Rest',category:'Active Rest',exercises:null,rest:true}
 };
 
 // Category -> colour lookups used for inline styles on generated markup.
