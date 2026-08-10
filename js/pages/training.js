@@ -17,15 +17,31 @@ import { today, esc } from '../util.js';
 import { getScheduleForDate, CATEGORY_COLORS, CATEGORY_BORDER, CATEGORY_COLOR_TEXT, PROGRESSION } from '../schedule.js';
 import { programWeek, mainLiftRx, openPause, pausedDays, isPaused, exerciseLog, exerciseProgress } from '../derive.js';
 import { renderVitalsHeader } from '../components/vitals-header.js';
-import { renderHome } from './home.js';
+import { renderHome, getSelectedDate, setDeviation, saveSwap } from './home.js';
 
-// The Training page reached from the score box (§4). Currently the vitals
-// header, the program pause control and today's prescription; §9 lists what
-// else belongs here once built.
+// The Training page reached from the score box (§4). Vitals header, the
+// program pause control, today's (or the selected) prescription, and the
+// deviation control; §9 lists what else belongs here once built.
 export function renderTrainingPage(){
   renderVitalsHeader('vitals-header-training');
   renderProgramPause();
-  renderPrescription(today(),'training-rx-container');
+  const ds=getSelectedDate();
+  updateTrainingSectionLabel(ds);
+  renderPrescription(ds,'training-rx-container');
+  renderDeviationTray();
+}
+
+// Mirrors renderHomeDayContent()'s label in home.js: "Today's Prescription"
+// when the selected date is today, the day name + date otherwise. Without
+// this the section title would keep reading "Today's" for a past day pulled
+// up via Home's day strip.
+function updateTrainingSectionLabel(ds){
+  const el=document.getElementById('training-rx-section-label');
+  if(!el)return;
+  const isToday=ds===today();
+  const dt=new Date(ds+'T12:00:00');
+  const dayNames=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  el.textContent=isToday?"Today's Prescription":dayNames[dt.getDay()]+' — '+dt.toLocaleDateString('en-US',{month:'short',day:'numeric'});
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +223,82 @@ export function toggleExercise(ds,idx){
   // score box and the status grid, all of which move when a box is ticked.
   if(document.getElementById('page-training').classList.contains('active'))renderTrainingPage();
   else renderHome();
+}
+
+// ---------------------------------------------------------------------------
+// Deviation control — RESTORED here, on the Training page (§1.1, §9.5).
+//
+// It used to live in a tray on the Home page. A prior session removed that
+// tray as UI cleanup without giving the write path a new home, which left
+// d.deviations with no way to be set by tapping anything — an open gap
+// flagged explicitly in ARCHITECTURE.md. This is that fix. It lives here,
+// next to the exercise checkboxes, because this is where Ryan already is
+// when recording what actually happened in a session.
+//
+// SAME TYPES, SAME STORED SHAPE. setDeviation() and saveSwap() are the exact
+// functions home.js already has — imported and called directly below, not
+// reimplemented. No note input: notes are deprecated (see the comment above
+// renderPrescription).
+//
+// OPERATES ON getSelectedDate(), NOT today(). That is the same "selected
+// date" the Home day strip sets and the same date renderPrescription() (and
+// therefore the checkboxes) is now rendered against on this page — see
+// renderTrainingPage() above. Marking a day Missed and looking at that same
+// day's checkboxes are always talking about the same date, and retroactive
+// marking works exactly like retroactive ticking: pick a day on Home's
+// strip, then act on it from here.
+// ---------------------------------------------------------------------------
+
+const DEV_TYPES=[
+  {type:'completed',icon:'✓',label:'Completed',cls:''},
+  {type:'missed',icon:'✗',label:'Missed',cls:' missed-btn'},
+  {type:'swapped',icon:'↔',label:'Swapped',cls:''},
+  {type:'makeup',icon:'⟳',label:'Make-up',cls:''},
+  {type:'skipped',icon:'⏭',label:'Planned Skip',cls:' skip-btn'}
+];
+
+const SWAP_OPTIONS=['Resistance','Zone 2','Bodyweight','Wtd Walk','HIIT','Mobility','Other'];
+
+// Open only right after Swapped is tapped ON, not on every re-render — a
+// checkbox tick elsewhere on the page must not reopen a panel Ryan closed.
+let swapAreaOpen=false;
+
+function renderDeviationTray(){
+  const el=document.getElementById('training-deviation-tray');
+  if(!el)return;
+  const ds=getSelectedDate();
+  const dev=(db().deviations||{})[ds];
+  const devType=dev&&dev.type;
+  const btns=DEV_TYPES.map(d=>`<button class="dev-btn${d.cls}${devType===d.type?' active-btn':''}" onclick="trainingSetDeviation('${d.type}')"><span class="dev-icon">${d.icon}</span><span class="dev-label">${d.label}</span></button>`).join('');
+  let swapHtml='';
+  if(devType==='swapped'&&swapAreaOpen){
+    const opts=SWAP_OPTIONS.map(o=>`<option value="${o}"${dev.swap===o?' selected':''}>${o}</option>`).join('');
+    swapHtml=`<div style="margin-top:8px"><div class="form-label">What did you do instead?</div><select id="training-dev-swap-select">${opts}</select><button class="btn btn-primary" style="margin-top:8px" onclick="trainingSaveSwap()">Save Swap</button></div>`;
+  }
+  el.innerHTML=`<div class="deviation-tray-label">Log a Deviation</div><div class="dev-btn-grid">${btns}</div>${swapHtml}`;
+}
+
+// Wraps setDeviation(): that function only knows how to redraw Home's own
+// containers (§ its own comment), so this also refreshes the Training page's
+// prescription card and the tray itself. Toggle-off (tapping the already-
+// active button) is setDeviation()'s existing behaviour, unchanged here — it
+// clears the deviation, which is what "clearing returns the day to the
+// checkbox ratio" means in the verification notes.
+export function trainingSetDeviation(type){
+  const ds=getSelectedDate();
+  const wasActive=(((db().deviations||{})[ds])||{}).type===type;
+  setDeviation(type);
+  swapAreaOpen=(type==='swapped'&&!wasActive);
+  renderPrescription(ds,'training-rx-container');
+  renderDeviationTray();
+}
+
+export function trainingSaveSwap(){
+  const sel=document.getElementById('training-dev-swap-select');
+  saveSwap(sel?sel.value:'Other');
+  swapAreaOpen=false;
+  renderPrescription(getSelectedDate(),'training-rx-container');
+  renderDeviationTray();
 }
 
 // containerId lets the same prescription card mount on Home and on the

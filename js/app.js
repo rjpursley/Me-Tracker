@@ -26,7 +26,7 @@ import { renderBody, logSleep, logHR } from './pages/vitals.js';
 import { renderDiet, logMeal, addSupplement, deleteSupplement, moveSupplement, toggleMacroChart } from './pages/dietary.js';
 import { initLogForms, setLogType, logWorkout, saveTargets } from './pages/log.js';
 import { logFast, startActiveFast, stopActiveFast, renderFastingPage, toggleFastFail, saveFastFailNote } from './pages/fasting.js';
-import { renderTrainingPage, openPauseGate, closePauseGate, pauseGateKey, pauseGateBack, toggleExercise } from './pages/training.js';
+import { renderTrainingPage, openPauseGate, closePauseGate, pauseGateKey, pauseGateBack, toggleExercise, trainingSetDeviation, trainingSaveSwap } from './pages/training.js';
 import { renderPRs, logOneRM } from './pages/prs.js';
 
 // --- Drawer + navigation (moved verbatim from index.html) ------------------
@@ -87,10 +87,12 @@ window.closeDrawer=closeDrawer;
 window.showPage=showPage;
 
 window.selectDay=selectDay;
+// setDeviation() and saveSwap() are home.js's, exposed here per this file's
+// general policy. The actual onclick targets for the deviation control are
+// trainingSetDeviation() / trainingSaveSwap() below — training.js calls these
+// two directly (imported, not via window) and wraps them so the Training
+// page's own containers refresh too.
 window.setDeviation=setDeviation;
-// The Home deviation tray was removed (§4 cleanup). These stay exposed as the
-// intact write path for d.deviations — see the flagged gap in home.js. Nothing
-// in the UI calls them today.
 window.saveSwap=saveSwap;
 
 window.setCalView=setCalView;
@@ -105,6 +107,8 @@ window.closePauseGate=closePauseGate;
 window.pauseGateKey=pauseGateKey;
 window.pauseGateBack=pauseGateBack;
 window.toggleExercise=toggleExercise;
+window.trainingSetDeviation=trainingSetDeviation;
+window.trainingSaveSwap=trainingSaveSwap;
 window.logOneRM=logOneRM;
 window.addSupplement=addSupplement;
 window.deleteSupplement=deleteSupplement;

@@ -83,10 +83,9 @@
   <div id="fasting-status-container"></div>
   <!-- The "Log a Deviation" tray and the "Today's Status" grid were removed
        from this page. THE STORED DATA IS UNTOUCHED (§1.4): d.deviations still
-       exists, still renders on the prescription card, and a 'missed' deviation
-       still forces the training pillar to 0 (§9.5).
-       See the note above setDeviation() in home.js — removing the tray left no
-       UI anywhere that WRITES a deviation. Flagged, not silently accepted. -->
+       exists and still renders on the prescription card.
+       The deviation control itself now lives on the Training page, alongside
+       the exercise checkboxes — see #training-deviation-tray below. -->
 </div>
 
 <div class="page" id="page-training">
@@ -99,8 +98,10 @@
   <div class="score-box" style="margin-top:12px">
     <button class="score-row" onclick="showPage('prs','Personal Records')"><span class="score-row-label">Personal Records</span><span class="score-row-chev">›</span></button>
   </div>
-  <div class="section-title">Today's Prescription</div>
+  <div class="section-title" id="training-rx-section-label">Today's Prescription</div>
   <div id="training-rx-container"></div>
+  <div class="section-title">Log a Deviation</div>
+  <div id="training-deviation-tray"></div>
 </div>
 
 <div class="page" id="page-prs">
