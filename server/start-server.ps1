@@ -1,0 +1,66 @@
+# -----------------------------------------------------------------------------
+# server\start-server.ps1 — Launches the Me-Tracker server. What the boot
+# task actually runs (see register-scheduled-task.ps1).
+#
+# Also runnable by hand for a manual restart: right-click > Run with
+# PowerShell, or `powershell -File server\start-server.ps1` from a terminal.
+# Blocks for as long as the server runs — that's deliberate, see the bottom.
+# -----------------------------------------------------------------------------
+
+$ErrorActionPreference = "Stop"
+$serverDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# -----------------------------------------------------------------------------
+# WHY THIS ENV VAR IS SET EXPLICITLY, NOT LEFT TO THE DEFAULT:
+#
+# The boot task runs this as NT AUTHORITY\SYSTEM (see register-scheduled-
+# task.ps1 — SYSTEM needs no stored password, which is what makes "no login
+# required" possible at all on Windows). SYSTEM's own home directory is
+# C:\WINDOWS\system32\config\systemprofile, NOT C:\Users\Ryan. Left alone,
+# app.py's Path.home()/'.metracker' would resolve there instead — a folder
+# that doesn't exist — and secrets_readable() would silently report false
+# even though the real secrets are sitting exactly where they should be.
+#
+# METRACKER_SECRETS_DIR exists in app.py precisely for cases like this
+# (ARCHITECTURE.md §3). Setting it here, in the launcher, is the sanctioned
+# place for an environment-specific override — the alternative would be
+# hardcoding the username inside app.py itself, which §3 explicitly says
+# not to do.
+# -----------------------------------------------------------------------------
+$env:METRACKER_SECRETS_DIR = "C:\Users\Ryan\.metracker"
+
+# Log to files — this runs with no console attached once Task Scheduler
+# starts it at boot, so stdout/stderr would otherwise vanish.
+$logDir = Join-Path $serverDir "logs"
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+$outLog = Join-Path $logDir "server.log"
+$errLog = Join-Path $logDir "server.err.log"
+
+$pythonExe = Join-Path $serverDir ".venv\Scripts\python.exe"
+$appPy = Join-Path $serverDir "app.py"
+
+if (-not (Test-Path $pythonExe)) {
+    throw "Virtual environment not found at $pythonExe. Run: python -m venv server\.venv ; server\.venv\Scripts\python.exe -m pip install -r server\requirements.txt"
+}
+
+# -----------------------------------------------------------------------------
+# Start-Process, not `& $pythonExe ...` with a PowerShell stream redirect.
+#
+# uvicorn logs its normal "Started server process" / "Application startup
+# complete" lines to STDERR, which is ordinary for Python's logging module —
+# not a failure. With $ErrorActionPreference = "Stop" (needed above, for
+# Test-Path/throw to actually stop the script on a real problem),
+# PowerShell's native-command stream redirect (`*>>`, `2>&1`, etc.) converts
+# ANY stderr line from an external program into a terminating error. The
+# server would start, immediately log its first INFO line, and PowerShell
+# would kill the whole script right there — which is exactly what happened
+# during testing before this was fixed. Start-Process redirects at the OS
+# level and is not subject to that behaviour.
+#
+# -Wait keeps this script (and therefore the scheduled task) "running" for
+# as long as the server is — the correct shape for an AtStartup task that IS
+# the service, rather than a launcher that fires and forgets.
+# -----------------------------------------------------------------------------
+Start-Process -FilePath $pythonExe -ArgumentList $appPy -WorkingDirectory $serverDir `
+    -RedirectStandardOutput $outLog -RedirectStandardError $errLog `
+    -NoNewWindow -Wait
