@@ -41,6 +41,9 @@
 /* Bars */
 .progress-bar{height:6px;background:var(--surface3);border-radius:3px;overflow:hidden;margin:8px 0}
 .progress-fill{height:100%;border-radius:3px;transition:width .5s ease}
+/* No target to measure against (§8.2) — a flat neutral line, distinct from a
+   coloured bar sitting at real 0% progress. Existing token, no new colour. */
+.progress-fill.is-unset{background:var(--border)}
 
 /* Status grid */
 .status-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}

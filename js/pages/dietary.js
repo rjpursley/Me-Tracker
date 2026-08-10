@@ -31,7 +31,18 @@ export function renderDiet(){
   const meals=d.meals.filter(m=>m.date===t);
   const sum=k=>meals.reduce((a,m)=>a+(+m[k]||0),0);
   const tp=sum('protein'),tf=sum('fat'),tc=sum('carbs'),ts=sum('sugar');
-  const tgts=d.targets||{},pG=+(tgts.protein)||180,fG=+(tgts.fat)||80,cG=+(tgts.carbs)||200,sG=+(tgts.sugar)||10;
+  const tgts=d.targets||{},pG=+(tgts.protein)||180,fG=+(tgts.fat)||80,sG=+(tgts.sugar)||10;
+  // Carbs has NO hardcoded fallback (§8.2) — 200 was an invented placeholder
+  // with no basis, added the same day the carbs card was. Protein (180), fat
+  // (80) and sugar (10) are the app's original, long-standing defaults and are
+  // deliberately left alone; swapping them for derived values wasn't asked for
+  // and would change established behaviour for existing users.
+  //
+  // If Ryan hasn't set a carb target, fall back to the derived suggestion
+  // instead. If even that can't be computed — no bodyweight logged — the bar
+  // renders as unset rather than dividing by a number nobody chose.
+  const carbsTargetSet=tgts.carbs!=null&&tgts.carbs!==''&&+tgts.carbs>0;
+  const cG=carbsTargetSet?+tgts.carbs:macroSuggestions().carbs;
 
   document.getElementById('today-protein').textContent=Math.round(tp);
   document.getElementById('today-fat').textContent=Math.round(tf);
@@ -39,7 +50,9 @@ export function renderDiet(){
   document.getElementById('today-sugar').textContent=Math.round(ts);
   document.getElementById('protein-bar').style.width=Math.min(100,(tp/pG)*100)+'%';
   document.getElementById('fat-bar').style.width=Math.min(100,(tf/fG)*100)+'%';
-  document.getElementById('carbs-bar').style.width=Math.min(100,(tc/cG)*100)+'%';
+  const carbsBar=document.getElementById('carbs-bar');
+  if(cG>0){carbsBar.style.width=Math.min(100,(tc/cG)*100)+'%';carbsBar.classList.remove('is-unset');}
+  else{carbsBar.style.width='100%';carbsBar.classList.add('is-unset');}
   document.getElementById('sugar-bar').style.width=Math.min(100,(ts/sG)*100)+'%';
 
   ['protein','fat','carbs','sugar'].forEach(k=>{
