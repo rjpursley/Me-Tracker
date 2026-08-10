@@ -180,6 +180,86 @@ export function mainLiftRx(sched,ds){
   return{week:wk,phase:p.phase,setsReps:p.setsReps,pctLabel:p.pct+'%',weight:tm?round5(tm*p.pct/100)+' lbs':'set TM',rest:p.rest,objective:p.objective};
 }
 
+// ---------------------------------------------------------------------------
+// FASTING PROTOCOL — ARCHITECTURE.md §7.
+//
+// This is the SCHEDULE only. The timer and the phase engine (calcFastHrs,
+// getPhase) are untouched and stay untouched (§11) — this block answers
+// "what fast is planned on this date", nothing more.
+//
+//   Daily      18:6, eating window 12:30–18:30 local.
+//   Weekly     24hr, Saturday 18:30 -> Sunday 18:30.
+//   Deload     48hr, Friday 18:30 -> Sunday 18:30, PROGRAM WEEKS 4 AND 8 ONLY.
+//
+// NO EXTENDED FAST IN WEEK 12. Week 12 is the test week — you never test a 1RM
+// off a fast. Week 12 keeps the weekly 24hr and gets no 48hr. The check below
+// is written explicitly even though 12 is not in DELOAD_WEEKS, so the rule is
+// visible in code rather than an accident of the array's contents.
+//
+// The quarterly 60–72hr fast was REMOVED. Do not reintroduce it.
+//
+// PAUSED: while the program is dormant there IS NO PROGRAM WEEK (§9.1), so
+// "is this week 4?" has no answer. In that state the weekly 24hr runs and the
+// 48hr never does. Handled explicitly below — it must not throw and must not
+// silently pick a week.
+// ---------------------------------------------------------------------------
+export const FASTING_PROTOCOL={
+  eatOpen:'12:30',
+  eatClose:'18:30',
+  weeklyHours:24,   // Sat 18:30 -> Sun 18:30
+  deloadHours:48,   // Fri 18:30 -> Sun 18:30
+  DELOAD_WEEKS:[4,8],
+  TEST_WEEK:12
+};
+
+// Is a 48hr deload fast scheduled for the week containing this date?
+//
+// PROGRAM_START is a Monday, so a week runs Mon..Sun — which means the Friday,
+// Saturday and Sunday of one 48hr window all share the same program week. No
+// window straddles a week boundary.
+export function isDeloadFastWeek(ds){
+  if(isPaused(ds))return false;                       // no program week while dormant
+  const wk=programWeek(ds);
+  if(wk===FASTING_PROTOCOL.TEST_WEEK)return false;    // never test a 1RM off a fast
+  return FASTING_PROTOCOL.DELOAD_WEEKS.includes(wk);
+}
+
+// What fast is planned on this calendar date?
+//
+// Returns {kind, protocol, headline, detail, week, paused} where kind is
+// 'daily' | 'weekly24' | 'deload48'. Purely derived (§1.3); writes nothing.
+export function fastPlan(ds){
+  ds=ds||today();
+  const dow=new Date(ds+'T12:00:00').getDay();        // 0 Sun .. 6 Sat
+  const paused=isPaused(ds);
+  const week=paused?null:programWeek(ds);
+  const deload=isDeloadFastWeek(ds);
+  const daily={
+    kind:'daily',
+    protocol:'18:6 · eat '+FASTING_PROTOCOL.eatOpen+'–'+FASTING_PROTOCOL.eatClose,
+    headline:'18:6 Window',
+    detail:'Eat '+FASTING_PROTOCOL.eatOpen+'–'+FASTING_PROTOCOL.eatClose+' · fast the rest',
+    week,paused
+  };
+
+  if(deload&&(dow===5||dow===6||dow===0)){
+    const label='48hr deload · Fri '+FASTING_PROTOCOL.eatClose+' → Sun '+FASTING_PROTOCOL.eatClose;
+    return{kind:'deload48',protocol:label,headline:'48hr Deload Fast',week,paused,
+      detail:dow===5?'Begins '+FASTING_PROTOCOL.eatClose+' tonight — week '+week+' deload'
+            :dow===6?'Fast active · day 1 of 2'
+            :'Breaks '+FASTING_PROTOCOL.eatClose+' today'};
+  }
+
+  if(dow===6||dow===0){
+    const label='24hr weekly · Sat '+FASTING_PROTOCOL.eatClose+' → Sun '+FASTING_PROTOCOL.eatClose;
+    return{kind:'weekly24',protocol:label,headline:'24hr Fast Window',week,paused,
+      detail:dow===6?'Begins '+FASTING_PROTOCOL.eatClose+' tonight'
+                    :'Breaks '+FASTING_PROTOCOL.eatClose+' today'};
+  }
+
+  return daily;
+}
+
 export function calcFastHrs(fast){if(!fast||!fast.start)return 0;const s=new Date((fast.date||today())+'T'+fast.start);if(isNaN(s))return 0;return Math.max(0,((fast.end?new Date((fast.date||today())+'T'+fast.end):new Date())-s)/3600000);}
 
 // ARCHITECTURE.md §1.1 — silence = compliance. An unlogged day falls back to a

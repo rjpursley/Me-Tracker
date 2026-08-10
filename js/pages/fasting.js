@@ -1,17 +1,19 @@
 // ---------------------------------------------------------------------------
 // pages/fasting.js — Fasting status bar, live timer, and the fast log form.
 //
-// ARCHITECTURE.md §7 and §11: the fasting timer and phase logic are NOT to be
-// touched without explicit instruction. Everything below is moved verbatim
-// from index.html — no thresholds, phases or wording changed.
+// ARCHITECTURE.md §7 and §11: the fasting TIMER and PHASE logic are NOT to be
+// touched without explicit instruction — calcFastHrs(), getPhase(), the phase
+// bar and startFastTimer() below are all unchanged.
+//
+// The PROTOCOL (which fast is scheduled on which day) is a separate thing and
+// lives in fastPlan() in derive.js. The status bar reads it from there.
 //
 // BUILT (§7.1): the Fasting Fail button, below.
 // ---------------------------------------------------------------------------
 
 import { db, save } from '../store.js';
 import { today, pad, esc } from '../util.js';
-import { calcFastHrs, getPhase, fastBroken } from '../derive.js';
-import { getScheduleForDate } from '../schedule.js';
+import { calcFastHrs, getPhase, fastBroken, fastPlan } from '../derive.js';
 import { renderHome } from './home.js';
 
 let activeFastInterval=null;
@@ -87,14 +89,19 @@ export function saveFastFailNote(){
 
 // containerId lets the same status bar mount on Home and on the Fasting page.
 export function renderFastingStatus(ds,containerId){
-  const d=db();const isToday=ds===today();const todayFasts=d.fasts.filter(f=>f.date===ds);let icon='⏱',val='18:6 Window',sub='No fast logged — silence = on track',color='var(--accent2)';const dow=new Date(ds+'T12:00:00').getDay();const is36=(dow===5||dow===6||dow===0);
+  const d=db();const isToday=ds===today();const todayFasts=d.fasts.filter(f=>f.date===ds);
+  // The planned fast for this date comes from fastPlan() in derive.js (§7),
+  // which owns the protocol. schedule.js's per-weekday fastLabel described the
+  // OLD protocol and is no longer read here.
+  const plan=fastPlan(ds);
+  let icon='⏱',val=plan.headline,sub=plan.detail,color='var(--accent2)';
+  if(plan.kind!=='daily')icon='🌙';
   // A broken fast (§7.1) outranks everything else on the bar, so the status
   // never reads "on track" directly above a day marked broken.
   if(fastBroken(ds)){icon='✕';val='Fast broken';sub='Scored 0 for fasting';color='var(--danger)';}
   else if(isToday&&d.activeFast){const hrs=calcFastHrs({start:d.activeFast.start,date:d.activeFast.date});icon='🔥';val=hrs.toFixed(1)+'h active';sub=d.activeFast.type+' · running now';color='var(--accent)';}
   else if(todayFasts.length){const hrs=Math.max(...todayFasts.map(calcFastHrs));val=hrs.toFixed(1)+'h';sub=todayFasts[todayFasts.length-1].type+' · logged';color='var(--accent5)';icon='✓';}
-  else if(is36){icon='🌙';val='36hr Fast Window';sub=dow===5?'Begins after dinner tonight':dow===6?'Fast active day 1':'Breaks this morning';}
-  document.getElementById(containerId||'fasting-status-container').innerHTML=`<div class="fast-status-bar" style="border-color:rgba(79,216,196,.25);background:rgba(79,216,196,.04)"><div class="fast-status-icon">${icon}</div><div class="fast-status-info"><div class="fast-status-label">Fasting · ${getScheduleForDate(ds).fastLabel}</div><div class="fast-status-val" style="color:${color}">${val}</div><div class="fast-status-sub">${sub}</div></div></div>`;
+  document.getElementById(containerId||'fasting-status-container').innerHTML=`<div class="fast-status-bar" style="border-color:rgba(79,216,196,.25);background:rgba(79,216,196,.04)"><div class="fast-status-icon">${icon}</div><div class="fast-status-info"><div class="fast-status-label">Fasting · ${plan.protocol}</div><div class="fast-status-val" style="color:${color}">${val}</div><div class="fast-status-sub">${sub}</div></div></div>`;
 }
 
 export function logFast(){const d=db(),start=document.getElementById('fast-start').value;if(!start){alert('Please enter a start time');return;}d.fasts.push({type:document.getElementById('fast-type').value,start,end:document.getElementById('fast-end').value,date:document.getElementById('fast-date').value||today()});save(d);alert('Fast logged!');renderHome();}

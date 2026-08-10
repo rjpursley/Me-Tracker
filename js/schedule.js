@@ -28,6 +28,11 @@ export const PROGRESSION=[
 // Days 4 & 5 are dynamic/speed days: flat 60-70% TM across all 12 weeks.
 export const SPEED_PCT=[60,70];
 
+// NOTE: the per-day `fastLabel` strings below describe the OLD fasting protocol
+// (18:6 daily, 36hr Fri–Sun) and are NO LONGER READ. The protocol moved to
+// fastPlan() in derive.js (§7) because the 48hr deload depends on the program
+// week, which a static per-weekday string cannot express. Left in place rather
+// than deleted so this data file keeps one shape; do not wire them back up.
 export const SCHEDULE={
   1:{session:'Max Effort Lower (Squat)',category:'Resistance',fastLabel:'18:6 window',tmKey:'tm_squat',mainLift:'Barbell Back Squat',exercises:[
     {name:'Goblet Squat',equip:'Kettlebell / dumbbell',detail:'x 10 reps · 3-second pause at bottom',block:'Warm-Up — 2 Rounds'},
