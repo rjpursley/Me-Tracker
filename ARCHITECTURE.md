@@ -74,10 +74,18 @@ accomplished — and once a day has been touched at all, it is scored on the
 ticks. This exception does not extend to fasting, sleep, or diet.
 
 **Deviation notes are deprecated.** The free-text note on a training deviation
-is no longer written: the note input was removed from the tray, which is buttons
-only. Notes already in storage are **preserved and still rendered** — §1.4
-forbids deleting the field. The Fasting Fail note (§7.1) is a different control
-and stays.
+is no longer written. Notes already in storage are **preserved and still
+rendered** — §1.4 forbids deleting the field. The Fasting Fail note (§7.1) is a
+different control and stays.
+
+**⚠ OPEN GAP — nothing in the UI writes a deviation.** The "Log a Deviation"
+tray was removed from the Home page, and it was the only control that wrote
+`d.deviations`; `calendar.js` merely reads them. The stored data, the
+prescription-card rendering and the `missed → training scores 0` rule (§9.5) all
+still work, and `setDeviation()` / `saveSwap()` survive in `home.js` as the
+intact write path — but **nothing calls them**. A deviation control needs a new
+home. This is a known gap, not a design decision; do not delete those functions
+on the assumption they are dead code.
 
 ### 1.2 localStorage is the source of truth
 `metracker_v2` in the browser holds everything the app scores from. The server
@@ -298,8 +306,45 @@ not a bug.
 
 ## 7. Fasting
 
-Protocol is hardcoded: **18:6 daily, 36hr Fri–Sun, quarterly 60–72hr.**
-Timer and phase logic are not to be touched without explicit instruction.
+**The protocol below replaced the original 18:6 / 36hr Fri–Sun / quarterly
+60–72hr scheme. The quarterly 60–72hr fast was removed entirely — do not
+reintroduce it.**
+
+| Fast | When | Window |
+|---|---|---|
+| Daily 18:6 | every day | eat **12:30–18:30** local, fast the rest |
+| Weekly 24hr | every Saturday | **Sat 18:30 → Sun 18:30** |
+| Deload 48hr | **program weeks 4 and 8 only** | **Fri 18:30 → Sun 18:30** |
+
+**No extended fast in week 12.** Week 12 is the test week, and you never test a
+1RM off a fast. Week 12 keeps the weekly 24hr and gets no 48hr. The check is
+written explicitly in `isDeloadFastWeek()` even though 12 is not in
+`DELOAD_WEEKS`, so the rule is visible in code rather than an accident of the
+array's contents.
+
+**Paused: the weekly 24hr runs, the 48hr never does.** While the program is
+dormant there is no program week (§9.1), so "is this week 4?" has no answer.
+`isDeloadFastWeek()` returns `false` when paused and `fastPlan()` reports
+`week: null`. It must not throw and must not silently pick a week.
+
+`PROGRAM_START` is a Monday, so a program week runs Mon–Sun — the Friday,
+Saturday and Sunday of one 48hr window always share the same program week. No
+window straddles a boundary.
+
+### 7.0 Where the protocol lives
+The schedule is `fastPlan(date)` in `derive.js`, returning
+`{kind, protocol, headline, detail, week, paused}` with `kind` one of
+`daily` / `weekly24` / `deload48`. It is pure derivation (§1.3).
+
+**The timer and phase engine are a separate thing and remain protected (§11).**
+`calcFastHrs()`, `getPhase()`, the phase bar and `startFastTimer()` are
+untouched. Changing *which fast is scheduled* is not the same as changing *how
+a running fast is measured*; do not confuse the two.
+
+`schedule.js` still carries per-weekday `fastLabel` strings describing the OLD
+protocol. **They are no longer read** — a static per-weekday string cannot
+express a fast that depends on the program week. Left in place so the data file
+keeps one shape; do not wire them back up.
 
 ### 7.1 Fasting Fail button
 A deviation control, matching the missed-workout pattern. Silence means the fast
@@ -343,6 +388,69 @@ button that would contend for VRAM.
 
 Plate estimates use a 3D-printed fiducial of known width **and height**, shot at
 an angle so height projects into the frame.
+
+### 8.1 Supplements are user-editable
+
+**This supersedes the "Supplement list" line in §11.** The list is Ryan's data,
+not a constant: add, delete and reorder all live on the Dietary page.
+
+- Stored as `d.supplements` — an array of `{name, detail, icon}`.
+- The original three (Himalayan salt, CoQ-10, Magnesium Threonate) are now
+  `SEED_SUPPLEMENTS` in `store.js`, which owns the schema and its defaults.
+- **The seed applies only when the key is ABSENT.** An existing empty array is a
+  valid state meaning "Ryan deleted them all"; re-seeding would resurrect
+  entries he removed on purpose.
+- Still **unscored** — a checklist, not a pillar. Do not wire it into scoring.
+- Do not hardcode supplements in `index.html` again.
+
+### 8.2 Suggested macro targets
+
+Under each Macro Target input the Dietary page shows a suggested value derived
+from bodyweight:
+
+```
+protein  = bodyweight × 1.0 g
+calories = bodyweight × 15            (maintenance baseline)
+fat      = 25% of calories ÷ 9
+carbs    = remainder after protein and fat
+sugar    = 10% of calories ÷ 4        (a ceiling, not a goal)
+```
+
+Worked at a 200 lb rolling bodyweight: 3000 kcal → protein **200 g**, fat
+**83 g**, carbs **363 g**, sugar **75 g max**.
+
+- **SUGGESTIONS, NOT AUTOFILL.** Nothing writes to `d.targets`. Ryan's entered
+  value always wins, and the suggestion renders beside it either way.
+- **Bodyweight is the 7-day rolling average** (§10), never the latest daily
+  reading — daily weight is mostly water, and a target that swung with
+  yesterday's salt would be noise.
+- **No bodyweight means no suggestion.** Every field renders `—`. Do not
+  substitute a default weight: a macro target invented from a number Ryan never
+  entered is worse than a blank.
+
+#### Resting HR and waist do not feed these — decided explicitly
+
+Both are available and both are tempting. **They are progress indicators, not
+nutrition inputs.** Wiring them in would move suggested protein because Ryan
+slept badly or measured his waist after a large meal — the number would drift
+for reasons that have nothing to do with what he should eat, and he would stop
+trusting it. Training load enters through bodyweight and the ×15 multiplier
+only. Activity-adjusted calories would be a conversation with Ryan, not a quiet
+edit.
+
+### 8.3 Macro consistency graph
+
+The Dietary page's old "Meal History" list is replaced by a single button that
+opens a 30-day macro graph (protein / fat / carbs / sugar). A list answered
+"what did I eat"; the question that matters is "am I hitting the same numbers
+day after day".
+
+**Days with no meals logged are gaps, not zeroes.** An unlogged day is not a
+zero-protein day, and the card says so under the chart.
+
+Chart.js colour literals are the documented §1.6 exception — canvas cannot
+resolve `var()`. They stay confined to the chart config; the on-page legend uses
+real tokens.
 
 ---
 
@@ -606,9 +714,13 @@ drawer, because §11 protects drawer structure and 1RMs are training data.
 - PIN gate logic
 - Drawer structure
 - `metracker_v2` schema (additive keys only)
-- Fasting timer and phase logic
+- **Fasting timer and phase logic** — `calcFastHrs()`, `getPhase()`,
+  `startFastTimer()`. The *protocol* (§7) is a separate thing and has been
+  changed; the engine that measures a running fast has not.
 - Scoring weights — 25% each: fasting, sleep, training, diet
-- Supplement list — Himalayan salt, CoQ-10, Magnesium Threonate
+- ~~Supplement list — Himalayan salt, CoQ-10, Magnesium Threonate~~
+  **Superseded by §8.1: the supplement list is user-editable data now.** The
+  three names above are seed values, not constants.
 
 ---
 
