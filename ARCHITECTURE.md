@@ -78,14 +78,19 @@ is no longer written. Notes already in storage are **preserved and still
 rendered** — §1.4 forbids deleting the field. The Fasting Fail note (§7.1) is a
 different control and stays.
 
-**⚠ OPEN GAP — nothing in the UI writes a deviation.** The "Log a Deviation"
-tray was removed from the Home page, and it was the only control that wrote
-`d.deviations`; `calendar.js` merely reads them. The stored data, the
-prescription-card rendering and the `missed → training scores 0` rule (§9.5) all
-still work, and `setDeviation()` / `saveSwap()` survive in `home.js` as the
-intact write path — but **nothing calls them**. A deviation control needs a new
-home. This is a known gap, not a design decision; do not delete those functions
-on the assumption they are dead code.
+**The deviation control lives on the Training page, next to the exercise
+checkboxes — not on Home.** The "Log a Deviation" tray was removed from Home in
+one session and restored here in the next, because that is where Ryan already
+is when recording what actually happened in a session. It is **the only UI in
+the app that writes `d.deviations`** — `calendar.js` only reads them, and Home
+carries no deviation control of any kind. `setDeviation()` and `saveSwap()`
+still live in `home.js` (they redraw Home's own containers when called), but
+Training's `trainingSetDeviation()` / `trainingSaveSwap()` are what's actually
+wired to a tap, calling those two directly and then refreshing Training's own
+prescription card and tray. Same five types, same stored shape, no note input.
+It operates on `getSelectedDate()` — the Home day strip's selection — so
+retroactive marking works the same way retroactive checkbox ticking does: pick
+a day on Home's strip, then act on it from Training.
 
 ### 1.2 localStorage is the source of truth
 `metracker_v2` in the browser holds everything the app scores from. The server
@@ -341,10 +346,10 @@ The schedule is `fastPlan(date)` in `derive.js`, returning
 untouched. Changing *which fast is scheduled* is not the same as changing *how
 a running fast is measured*; do not confuse the two.
 
-`schedule.js` still carries per-weekday `fastLabel` strings describing the OLD
-protocol. **They are no longer read** — a static per-weekday string cannot
-express a fast that depends on the program week. Left in place so the data file
-keeps one shape; do not wire them back up.
+`schedule.js` used to carry a per-weekday `fastLabel` string describing the OLD
+protocol — a static per-weekday string cannot express a fast that depends on
+the program week, so it went unread once `fastPlan()` took over and was later
+removed entirely rather than left as dead data. Do not add it back.
 
 ### 7.1 Fasting Fail button
 A deviation control, matching the missed-workout pattern. Silence means the fast
@@ -457,8 +462,9 @@ real tokens.
 ## 9. Training page
 
 **Status: description, not specification** — except where marked. The page
-renders, top to bottom: the live vitals header, the program pause card, and
-today's prescription card with a checkbox per exercise.
+renders, top to bottom: the live vitals header, the program pause card, the
+prescription card (today's, or the selected day's — see §9.6) with a checkbox
+per exercise, and the deviation control (§9.6).
 
 **Training scoring is defined in §9.5.** That section is the authority; if the
 code disagrees with it, the code is wrong.
@@ -527,11 +533,13 @@ finisher), matching `{name, equip, detail, block}` in `schedule.js`.
 
 - **Retroactive ticking is allowed with no time limit.** Any date the app can
   render a prescription card for can be edited.
-- The checkboxes live **inside the shared prescription card**, so they appear on
-  the Training page (today) and on the Home page (whichever day the strip has
-  selected). The Home day strip *is* the date picker for retroactive edits — do
-  not build a second one. The click handler is given the date the card was
-  rendered for, never `today()`.
+- The checkboxes live **inside the shared prescription card**, which appears on
+  both Home and the Training page. Both now render whichever date the Home day
+  strip has selected — Training switched from a hardcoded `today()` to
+  `getSelectedDate()` when the deviation control needed the same date the
+  checkboxes already use (§9.6). The Home day strip *is* the date picker for
+  retroactive edits — do not build a second one. The click handler is given the
+  date the card was rendered for, never `today()`.
 - **Stored as `d.exerciseLogs{}`**, keyed by date:
   `{ touched: true, checked: ["Goblet Squat", ...] }`
 - Exercises are stored **by name, not by index**, so reordering `schedule.js`
@@ -613,6 +621,37 @@ sessions/activities with an explicit start, **not** heart-rate samples.
 
 Because it is always false today, **paused days score 0 for training**. That is
 expected and accepted. Do not build a neutral or excluded state to hide it.
+
+### 9.6 Deviation control — built, lives here
+
+**This is the only UI in the app that writes `d.deviations`.** It sits on the
+Training page, alongside the exercise checkboxes — not on Home. `calendar.js`
+only reads deviations; it has no control of its own, and neither does Home.
+
+- Same five types as before it moved — `completed`, `missed`, `swapped`,
+  `makeup`, `skipped` — and the same stored shape:
+  `d.deviations[date] = {type, swap?, timestamp}`. No note input; deviation
+  notes are deprecated (§1.1).
+- `setDeviation()` and `saveSwap()` still live in `home.js` and are called
+  directly, unmodified, from `pages/training.js` — they were already correct
+  and there was no reason to duplicate them. They only know how to redraw
+  Home's own containers, though, so `trainingSetDeviation()` /
+  `trainingSaveSwap()` wrap them to also refresh Training's prescription card
+  and the tray itself.
+- Tapping the already-active type clears the deviation (existing toggle
+  behaviour in `setDeviation()`, unchanged) — a day marked Missed returns to
+  its checkbox ratio, or to the schedule fallback if it was never touched.
+- **Operates on `getSelectedDate()`, the same "selected date" the Home day
+  strip sets and the checkboxes already render against** (§9.4). Retroactive
+  marking works exactly like retroactive ticking: pick a day on Home's strip,
+  then act on it from Training. Setting a deviation on one date does not touch
+  any other date's score.
+
+*History, so the record stays straight:* the tray originally lived on Home. A
+session that cleaned up the Home page removed it without giving the write path
+anywhere else to live, which meant nothing in the app could set a deviation by
+tapping — flagged at the time as an open gap, not a design decision. This
+section replaces that gap note now that the control has a home.
 
 ---
 
