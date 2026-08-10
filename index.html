@@ -81,27 +81,12 @@
   <div id="rx-container"></div>
   <div class="section-title">Fasting</div>
   <div id="fasting-status-container"></div>
-  <div class="deviation-tray">
-    <div class="deviation-tray-label">Log a Deviation</div>
-    <div class="dev-btn-grid">
-      <button class="dev-btn" id="dev-completed" onclick="setDeviation('completed')"><span class="dev-icon">✓</span><span class="dev-label">Completed</span></button>
-      <button class="dev-btn missed-btn" id="dev-missed" onclick="setDeviation('missed')"><span class="dev-icon">✗</span><span class="dev-label">Missed</span></button>
-      <button class="dev-btn" id="dev-swapped" onclick="setDeviation('swapped');toggleSwapArea()"><span class="dev-icon">↔</span><span class="dev-label">Swapped</span></button>
-      <button class="dev-btn" id="dev-makeup" onclick="setDeviation('makeup')"><span class="dev-icon">⟳</span><span class="dev-label">Make-up</span></button>
-      <button class="dev-btn skip-btn" id="dev-skipped" onclick="setDeviation('skipped')"><span class="dev-icon">⏭</span><span class="dev-label">Planned Skip</span></button>
-    </div>
-    <div class="dev-swap-area" id="dev-swap-area">
-      <div class="form-label">What did you do instead?</div>
-      <select id="dev-swap-select">
-        <option value="Resistance">Resistance Training</option><option value="Zone 2">Zone 2 Cardio</option>
-        <option value="Bodyweight">Bodyweight + Sandbag</option><option value="Wtd Walk">Weighted Walk</option>
-        <option value="HIIT">HIIT</option><option value="Mobility">Mobility / Stretching</option><option value="Other">Other</option>
-      </select>
-      <button class="btn btn-primary" style="margin-top:8px" onclick="saveSwap()">Save Swap</button>
-    </div>
-  </div>
-  <div class="section-title">Today's Status</div>
-  <div class="status-grid" id="status-grid"></div>
+  <!-- The "Log a Deviation" tray and the "Today's Status" grid were removed
+       from this page. THE STORED DATA IS UNTOUCHED (§1.4): d.deviations still
+       exists, still renders on the prescription card, and a 'missed' deviation
+       still forces the training pillar to 0 (§9.5).
+       See the note above setDeviation() in home.js — removing the tray left no
+       UI anywhere that WRITES a deviation. Flagged, not silently accepted. -->
 </div>
 
 <div class="page" id="page-training">
@@ -119,6 +104,9 @@
 </div>
 
 <div class="page" id="page-prs">
+  <!-- Records is the one deliberate third nav level (§4), so it needs a way
+       back up. Returns to Training, which is where it is reached from. -->
+  <button class="back-btn" onclick="showPage('training','Training')"><span class="back-chev">‹</span>Training</button>
   <div class="section-title">Personal Records — Main Lifts</div>
   <div id="pr-container"></div>
 </div>

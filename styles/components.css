@@ -255,6 +255,11 @@
 /* Macro consistency chart legend swatch */
 .lg-swatch{display:inline-block;width:10px;height:3px;border-radius:2px;vertical-align:middle;margin-right:4px}
 
+/* Back button for the one third-level page, Records (§4). 44pt tap target. */
+.back-btn{display:inline-flex;align-items:center;gap:4px;min-height:44px;margin:0 0 2px;padding:8px 14px 8px 8px;border:none;border-radius:10px;background:none;color:var(--muted);font-family:var(--font-mono);font-size:13px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.back-btn:active{background:var(--surface2)}
+.back-chev{font-size:20px;line-height:1}
+
 /* Deviation tray */
 .deviation-tray{margin-top:12px}
 .deviation-tray-label{font-size:11px;font-family:var(--font-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px}

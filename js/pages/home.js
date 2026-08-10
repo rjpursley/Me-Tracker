@@ -15,7 +15,7 @@
 
 import { db, save } from '../store.js';
 import { today, dateStr, addDays } from '../util.js';
-import { calcScore, sc, getSleepForDate, getWorkoutForDate, consistencyRows, WEEK_WINDOW_DAYS, MONTH_WINDOW_DAYS } from '../derive.js';
+import { calcScore, sc, consistencyRows, WEEK_WINDOW_DAYS, MONTH_WINDOW_DAYS } from '../derive.js';
 import { getScheduleForDate, WCOLORS } from '../schedule.js';
 import { renderPrescription } from './training.js';
 import { renderFastingStatus } from './fasting.js';
@@ -47,7 +47,7 @@ export function renderHomeDayContent(){
   const score=calcScore(ds);
   document.getElementById('top-score').textContent=score.total||'—';
   renderScoreBox();
-  renderPrescription(ds);renderFastingStatus(ds);renderDeviationState(ds);renderStatusGrid(ds);
+  renderPrescription(ds);renderFastingStatus(ds);
 }
 
 // ---------------------------------------------------------------------------
@@ -99,45 +99,33 @@ export function renderScoreBox(){
   document.getElementById('score-box').innerHTML=html;
 }
 
-// The note input was removed (see the deprecation note above setDeviation), so
-// there is no longer a note area to show or hide here.
-export function renderDeviationState(ds){
-  const d=db();const dev=d.deviations&&d.deviations[ds];const devType=dev&&dev.type;
-  ['completed','missed','swapped','makeup','skipped'].forEach(t=>{const btn=document.getElementById('dev-'+t);if(btn){btn.classList.toggle('active-btn',devType===t);if(t==='missed')btn.classList.toggle('missed-btn',true);if(t==='skipped')btn.classList.toggle('skip-btn',true);}});
-}
-
-export function renderStatusGrid(ds){
-  const d=db();const sched=getScheduleForDate(ds);const w=getWorkoutForDate(ds);const sl=getSleepForDate(ds);const meals=d.meals.filter(m=>m.date===ds);
-  const tp=Math.round(meals.reduce((a,m)=>a+(+m.protein||0),0)),ts=Math.round(meals.reduce((a,m)=>a+(+m.sugar||0),0));
-  const slHrs=+(sl&&sl.hours)||0;const sleepGoal=+(d.targets&&d.targets.sleep)||8;const sugarGoal=+(d.targets&&d.targets.sugar)||10;const protGoal=+(d.targets&&d.targets.protein)||180;
-  const sleepSub=sl&&sl._default?`~${slHrs}h assumed · Fitbit pending`:`Quality ${sl.quality}/5${sl.deep?' · '+sl.deep+'h deep':''}`;
-  document.getElementById('status-grid').innerHTML=[
-    {label:'Session',icon:'🏋️',val:w?w.type:sched.rest?'Active Rest':'Planned',sub:sched.session,status:w?'good':'neutral'},
-    {label:'Sleep',icon:'😴',val:slHrs.toFixed(1)+'h',sub:sleepSub,status:slHrs>=sleepGoal?'good':slHrs>=6?'warn':'bad'},
-    {label:'Protein',icon:'🥩',val:tp+'g',sub:'of '+protGoal+'g target',status:tp>=protGoal?'good':tp>protGoal*.5?'warn':'bad'},
-    {label:'Sugar',icon:'🚫',val:ts+'g',sub:ts===0?'Clean — no impact':ts<=sugarGoal?'Under limit':'Over limit!',status:ts===0?'good':ts<=sugarGoal?'warn':'bad'}
-  ].map(c=>`<div class="status-card ${c.status}"><div class="status-card-label">${c.label}</div><div class="status-card-icon">${c.icon}</div><div class="status-card-val">${c.val}</div><div class="status-card-sub">${c.sub}</div></div>`).join('');
-}
-
 // ---------------------------------------------------------------------------
-// DEVIATION NOTES ARE DEPRECATED.
+// THE DEVIATION TRAY AND THE STATUS GRID WERE REMOVED FROM THE HOME PAGE.
 //
-// The note input and its Save Note handler were removed: nothing writes
-// `deviations[date].note` any more. The tray is buttons only, which is what
-// §1.1 asks for — a deviation should cost one tap, not a tap and a sentence.
+// Their renderers went with them — renderDeviationState() drew button states
+// for buttons that no longer exist, and renderStatusGrid() drew a card that no
+// longer has a mount point.
 //
-// The FIELD ITSELF IS NOT DELETED. §1.4 makes the schema additive-only, so
-// every note already stored stays stored and still renders on the prescription
-// card in training.js (escaped). Do not add a migration that strips it.
+// THE STORED DATA IS UNTOUCHED (§1.4). d.deviations still exists, every
+// recorded deviation still renders on the prescription card in training.js,
+// and a 'missed' deviation still forces the training pillar to 0 (§9.5).
 //
-// The Fasting Fail note (§7.1) is a different control and stays.
+// ############ KNOWN GAP, FLAGGED DELIBERATELY ############
+// The tray was the ONLY UI in the app that WROTE a deviation — calendar.js
+// merely reads them. With it gone there is now no way to record a missed,
+// swapped, completed, skipped or make-up day by tapping. setDeviation() and
+// saveSwap() are kept below as the intact write path so the capability is not
+// lost, but nothing calls them until a deviation control is given a new home.
+// Do not delete them, and do not assume the gap is intentional design.
 // ---------------------------------------------------------------------------
 export function setDeviation(type){
   const d=db();d.deviations=d.deviations||{};const current=d.deviations[selectedDate]||{};
   if(current.type===type)delete d.deviations[selectedDate];else d.deviations[selectedDate]={...current,type,timestamp:new Date().toISOString()};
-  save(d);renderDeviationState(selectedDate);renderPrescription(selectedDate);buildDayStrip();renderStatusGrid(selectedDate);
+  save(d);renderPrescription(selectedDate);buildDayStrip();
 }
 
-export function toggleSwapArea(){const el=document.getElementById('dev-swap-area');el.style.display=el.style.display==='block'?'none':'block';}
-
-export function saveSwap(){const d=db();d.deviations=d.deviations||{};const swap=document.getElementById('dev-swap-select').value;d.deviations[selectedDate]={...d.deviations[selectedDate],type:'swapped',swap,timestamp:new Date().toISOString()};save(d);document.getElementById('dev-swap-area').style.display='none';renderHomeDayContent();buildDayStrip();}
+export function saveSwap(swap){
+  const d=db();d.deviations=d.deviations||{};
+  d.deviations[selectedDate]={...d.deviations[selectedDate],type:'swapped',swap,timestamp:new Date().toISOString()};
+  save(d);renderHomeDayContent();buildDayStrip();
+}

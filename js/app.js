@@ -18,7 +18,7 @@ import { db, save, exportData, importData, seedSupplements } from './store.js';
 
 import {
   renderHome, renderHomeDayContent, buildDayStrip, selectDay,
-  setDeviation, toggleSwapArea, saveSwap
+  setDeviation, saveSwap
 } from './pages/home.js';
 import { renderCalendar, setCalView, getCalView } from './pages/calendar.js';
 import { renderHealth, saveBodyHeight, logBodyMeasurement } from './pages/health.js';
@@ -88,7 +88,9 @@ window.showPage=showPage;
 
 window.selectDay=selectDay;
 window.setDeviation=setDeviation;
-window.toggleSwapArea=toggleSwapArea;
+// The Home deviation tray was removed (§4 cleanup). These stay exposed as the
+// intact write path for d.deviations — see the flagged gap in home.js. Nothing
+// in the UI calls them today.
 window.saveSwap=saveSwap;
 
 window.setCalView=setCalView;
