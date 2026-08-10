@@ -32,3 +32,8 @@ select option{background:var(--surface2)}
 .form-row.is-retired input{cursor:not-allowed}
 .tag-inactive{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted);font-size:9px;letter-spacing:.08em}
 .form-note{margin-top:5px;font-family:var(--font-mono);font-size:10.5px;line-height:1.5;color:var(--muted)}
+
+/* Suggested macro target shown under its input (§8.2). Deliberately quiet —
+   it is a suggestion, and the entered value is the one that counts. */
+.macro-suggest{margin-top:5px;font-family:var(--font-mono);font-size:11px;color:var(--accent2)}
+.macro-suggest.is-unknown{color:var(--muted)}

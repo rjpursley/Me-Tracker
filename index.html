@@ -252,10 +252,11 @@
   </div>
   <div class="section-title">Macro Targets</div>
   <div class="card">
-    <div class="form-row"><div class="form-label">Daily protein target (g)</div><input type="number" id="target-protein" placeholder="e.g. 180" onchange="saveTargets()"></div>
-    <div class="form-row"><div class="form-label">Daily fat target (g)</div><input type="number" id="target-fat" placeholder="e.g. 80" onchange="saveTargets()"></div>
-    <div class="form-row"><div class="form-label">Daily carb target (g)</div><input type="number" id="target-carbs" placeholder="e.g. 200" onchange="saveTargets()"></div>
-    <div class="form-row"><div class="form-label">Max sugar per day (g)</div><input type="number" id="target-sugar" placeholder="e.g. 10" onchange="saveTargets()"></div>
+    <div class="form-row"><div class="form-label">Daily protein target (g)</div><input type="number" id="target-protein" placeholder="e.g. 180" onchange="saveTargets()"><div class="macro-suggest" id="suggest-protein"></div></div>
+    <div class="form-row"><div class="form-label">Daily fat target (g)</div><input type="number" id="target-fat" placeholder="e.g. 80" onchange="saveTargets()"><div class="macro-suggest" id="suggest-fat"></div></div>
+    <div class="form-row"><div class="form-label">Daily carb target (g)</div><input type="number" id="target-carbs" placeholder="e.g. 200" onchange="saveTargets()"><div class="macro-suggest" id="suggest-carbs"></div></div>
+    <div class="form-row"><div class="form-label">Max sugar per day (g)</div><input type="number" id="target-sugar" placeholder="e.g. 10" onchange="saveTargets()"><div class="macro-suggest" id="suggest-sugar"></div></div>
+    <div class="form-note" id="suggest-basis"></div>
   </div>
   <div class="section-title">Macro Consistency</div>
   <div id="macro-chart-wrap">

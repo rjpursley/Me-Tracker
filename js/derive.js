@@ -461,6 +461,68 @@ export function rollingBodyweight(){
   return{avg,count:win.length,latest:sorted[0]};
 }
 
+// ---------------------------------------------------------------------------
+// SUGGESTED MACRO TARGETS — ARCHITECTURE.md §8.2.
+//
+// SUGGESTIONS, NOT AUTOFILL. These render next to the target inputs; nothing
+// here writes to d.targets. Ryan's entered value always wins.
+//
+//   protein  = bodyweight * 1.0 g
+//   calories = bodyweight * 15          (maintenance baseline)
+//   fat      = 25% of calories / 9
+//   carbs    = remainder after protein and fat
+//   sugar    = 10% of calories / 4      (a ceiling, not a goal)
+//
+// BODYWEIGHT IS THE 7-DAY ROLLING AVERAGE (§10), never the latest daily
+// reading — daily weight is mostly water, and a suggestion that swung with
+// yesterday's salt would be noise.
+//
+// NO BODYWEIGHT MEANS NO SUGGESTION. Every field returns null and the UI shows
+// "—". Do not substitute a default weight: a macro target invented from a
+// number Ryan never entered is worse than a blank.
+//
+// ############ DO NOT WIRE RESTING HR OR WAIST INTO THESE ############
+// Both are available (dailyRestingHeartRate via §6, latestWaist() above) and
+// both are tempting. They are PROGRESS INDICATORS, NOT NUTRITION INPUTS.
+// Feeding them in would make the suggested protein move because Ryan slept
+// badly or measured his waist after a large meal — the number would drift for
+// reasons that have nothing to do with what he should eat, and he would stop
+// trusting it. Training load enters through bodyweight and the 15x multiplier
+// only. If a future session wants activity-adjusted calories, that is a
+// conversation with Ryan, not a quiet edit here.
+// ---------------------------------------------------------------------------
+export const MACRO_FORMULA={
+  proteinPerLb:1.0,
+  caloriesPerLb:15,
+  fatPctOfCalories:0.25,
+  sugarPctOfCalories:0.10,
+  kcalPerGramProtein:4,
+  kcalPerGramCarb:4,
+  kcalPerGramFat:9
+};
+
+// {bodyweight, calories, protein, fat, carbs, sugar} — every value null when no
+// bodyweight has been logged inside the rolling window.
+export function macroSuggestions(){
+  const bw=rollingBodyweight().avg;
+  if(bw==null||!(bw>0))return{bodyweight:null,calories:null,protein:null,fat:null,carbs:null,sugar:null};
+  const F=MACRO_FORMULA;
+  const calories=bw*F.caloriesPerLb;
+  const protein=bw*F.proteinPerLb;
+  const fat=(calories*F.fatPctOfCalories)/F.kcalPerGramFat;
+  // Carbs are whatever is left once protein and fat are paid for.
+  const carbs=(calories-(protein*F.kcalPerGramProtein)-(fat*F.kcalPerGramFat))/F.kcalPerGramCarb;
+  const sugar=(calories*F.sugarPctOfCalories)/F.kcalPerGramCarb;
+  return{
+    bodyweight:Math.round(bw*10)/10,
+    calories:Math.round(calories),
+    protein:Math.round(protein),
+    fat:Math.round(fat),
+    carbs:Math.max(0,Math.round(carbs)),
+    sugar:Math.round(sugar)
+  };
+}
+
 // Most recent waist measurement, or null.
 export function latestWaist(){
   const d=db();

@@ -20,6 +20,7 @@
 
 import { db, save } from '../store.js';
 import { today, dateStr, addDays, esc } from '../util.js';
+import { macroSuggestions } from '../derive.js';
 import { renderHome } from './home.js';
 
 let macroChartInstance=null;
@@ -45,6 +46,7 @@ export function renderDiet(){
     const el=document.getElementById('target-'+k);
     if(el&&tgts[k])el.value=tgts[k];
   });
+  renderMacroSuggestions();
   renderSupplements();
 
   let sdClass,sdIcon,sdMsg;
@@ -55,6 +57,31 @@ export function renderDiet(){
   document.getElementById('sugar-damage-display').innerHTML=`<div class="sugar-damage ${sdClass}"><span class="sd-icon">${sdIcon}</span><span>${sdMsg}</span></div>`;
 
   if(macroChartOpen)renderMacroChart();
+}
+
+// ---------------------------------------------------------------------------
+// Derived macro targets — ARCHITECTURE.md §8.2.
+//
+// SUGGESTIONS, NOT AUTOFILL. Nothing here writes to d.targets; Ryan's entered
+// value always wins. The formulas and the reasoning about what must NOT feed
+// them (resting HR, waist) live in macroSuggestions() in derive.js (§1.3).
+// ---------------------------------------------------------------------------
+function renderMacroSuggestions(){
+  const s=macroSuggestions();
+  const put=(k,val,unit)=>{
+    const el=document.getElementById('suggest-'+k);
+    if(!el)return;
+    el.textContent=val==null?'Suggested: —':'Suggested: '+val+unit;
+    el.classList.toggle('is-unknown',val==null);
+  };
+  put('protein',s.protein,'g');
+  put('fat',s.fat,'g');
+  put('carbs',s.carbs,'g');
+  put('sugar',s.sugar,'g max');
+  const basis=document.getElementById('suggest-basis');
+  if(basis)basis.textContent=s.bodyweight==null
+    ? 'Suggestions need a bodyweight. Log one on the Health page — nothing is assumed.'
+    : `From a ${s.bodyweight} lb 7-day rolling bodyweight and a ${s.calories} kcal maintenance baseline. Suggestions only — your entered target always wins.`;
 }
 
 // ---------------------------------------------------------------------------
