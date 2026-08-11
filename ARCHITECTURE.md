@@ -217,10 +217,16 @@ Stop-ScheduledTask -TaskName "Me-Tracker Server"
 Start-ScheduledTask -TaskName "Me-Tracker Server"
 ```
 
-**Check the logs** if something's wrong —
-`server\logs\server.log` (normal output) and `server\logs\server.err.log`
-(startup messages and errors; uvicorn logs its normal "server started" lines
-here too, so a few lines in this file on their own are not a problem).
+**Check the logs** if something's wrong — three files in `server\logs\`:
+- `boot.log` — **check this one first.** One line per attempt to start the
+  server (invoked / waiting on the venv / launched / exited), written by
+  `start-server.ps1` itself before anything else happens. This is the file
+  that would have shown "nothing was ever attempted" during the 2026-08
+  incident below, if it had existed at the time.
+- `server.log` — normal output.
+- `server.err.log` — startup messages and errors; uvicorn logs its normal
+  "server started" lines here too, so a few lines in this file on their own
+  are not a problem.
 
 **Starts automatically at boot, no login required**, via a Windows Scheduled
 Task named "Me-Tracker Server" that runs as the built-in SYSTEM account
@@ -254,6 +260,75 @@ can flip; nothing on the Alienware side can work around it. Do not fall back
 to plain HTTP as a workaround — iOS Safari needs the secure context HTTPS
 provides, and the whole reason `serve` (not `funnel`) is used is to get that
 without exposing anything to the public internet.
+
+### 2.4 The 2026-08 "server dead after reboot" incident
+
+**Symptom:** after a reboot, port 8123 was closed and the app was unreachable.
+`Get-ScheduledTaskInfo` showed `LastRunTime` stuck at `11/30/1999` — Windows'
+sentinel for "this task has never once fired" — not a crash after starting.
+The Task Scheduler operational log (the thing that would normally record a
+boot trigger firing) was **disabled** on this machine, so there was no
+record of what happened at that boot, and no way to confirm the exact
+mechanism.
+
+**What was fixed, without being able to prove which part was the original
+cause:**
+
+1. **Enabled the TaskScheduler/Operational event log** (`wevtutil sl
+   Microsoft-Windows-TaskScheduler/Operational /e:true`) so any future boot
+   leaves real evidence instead of nothing.
+2. **Added a 30-second delay to the boot trigger** in
+   `register-scheduled-task.ps1`. A bare `AtStartup` trigger fires the
+   instant the Task Scheduler engine itself comes up, which is earlier than
+   some systems are fully ready for. This machine also has **Fast Startup
+   (hiberboot) turned on** (`HiberbootEnabled = 1`), which is a
+   Microsoft-documented source of unreliable `AtStartup` trigger firing,
+   because a plain "Shut down" is a hybrid shutdown that resumes the kernel
+   session rather than performing a genuine boot. The delay is the standard
+   mitigation. Disabling Fast Startup entirely (Control Panel → Power
+   Options → "Choose what the power buttons do" → uncheck "Turn on fast
+   startup") would remove that variable altogether, but that's a Windows
+   power setting, not something this repo can flip — it's Ryan's call if
+   the delay alone isn't enough.
+3. **Added a retry loop and a dedicated `boot.log`** to `start-server.ps1`
+   (§2.3 above). Before this, a transient miss (venv not yet visible on
+   disk, antivirus still scanning it) threw immediately and left **zero**
+   evidence anywhere that the task had even tried. Now it retries for up to
+   a minute and logs every attempt, success or failure.
+4. **Found and fixed an unrelated, real bug introduced while writing this
+   fix, not the original cause:** editing `start-server.ps1` and
+   `register-scheduled-task.ps1` stripped their UTF-8 byte-order mark. A
+   `.ps1` file with no BOM is read using Windows' default codepage
+   (`cp1252` on this machine), not UTF-8. One of the new log lines had an
+   em dash inside an actual string (not a comment); under `cp1252` its
+   bytes decode into a Unicode "smart quote" character, which PowerShell's
+   parser treats as a real string terminator — silently corrupting the
+   whole script into something that fails to parse at all. Caught before
+   it shipped by decoding the files exactly as a BOM-less script would be
+   read and re-parsing them; both files now carry an explicit UTF-8 BOM
+   again and the em dash was removed from the one string that had it.
+   **Lesson for future edits to these two files: keep a UTF-8 BOM on them,
+   and keep punctuation like em dashes out of actual string literals (they're
+   fine in `#` comments).**
+
+**What was verified live, without a reboot:** the server was already running
+at the time of this fix (started earlier via `Start-ScheduledTask`, not by
+this fix), and `/api/health` returned `secrets_readable: true` — confirming
+the `METRACKER_SECRETS_DIR` override in `start-server.ps1` really does work
+correctly when the process is actually running as SYSTEM, which is the part
+of §2.3's design most worth doubting. NTFS permissions on
+`C:\Users\Ryan\.metracker` were also checked and already grant SYSTEM full
+control, so that was never the problem.
+
+**What was NOT verified: an actual reboot.** Everything above is confirmed
+by reading logs, checking permissions, and running the updated
+`start-server.ps1` by hand — not by restarting the machine and watching it
+come back on its own. The one-time step below still needs to be run once
+(elevated) for the new boot delay to take effect, and then the real test is
+a genuine restart with nobody touching the keyboard afterward: port 8123
+listening, the phone able to load `https://desktop-1g38tar.tail865703.ts.net`,
+and `/api/health` showing `secrets_readable: true` — with `boot.log` showing
+what happened either way.
 
 ---
 
@@ -297,7 +372,7 @@ Me-Tracker/
 │   ├── register-scheduled-task.ps1  # One-time, needs an elevated window
 │   ├── tailscale-serve.ps1 # One-time Tailscale-side exposure — see §2.3
 │   ├── .venv/               # gitignored — not committed, recreate from requirements.txt
-│   ├── logs/                # gitignored — server.log / server.err.log
+│   ├── logs/                # gitignored — boot.log / server.log / server.err.log
 │   ├── google_health.py    # NOT YET BUILT — OAuth refresh, paginated pulls, aggregation
 │   ├── vision.py           # NOT YET BUILT — Ollama minicpm-v job queue
 │   └── barcode.py          # NOT YET BUILT — Open Food Facts lookup

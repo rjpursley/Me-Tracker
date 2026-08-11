@@ -1,4 +1,4 @@
-# -----------------------------------------------------------------------------
+﻿# -----------------------------------------------------------------------------
 # server\register-scheduled-task.ps1 — Make the server start at boot, with
 # nobody logged in. Run this ONCE.
 #
@@ -34,7 +34,27 @@ if (-not (Test-Path $scriptPath)) {
 $action = New-ScheduledTaskAction -Execute "powershell.exe" `
     -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
 
+# -----------------------------------------------------------------------------
+# 30-second delay on the boot trigger.
+#
+# A bare AtStartup trigger fires the instant Task Scheduler's own engine
+# comes up, which is very early — before this machine has necessarily
+# finished settling (disk, profile, antivirus scanning the venv the first
+# time it's touched after boot). This machine also has Fast Startup
+# (hiberboot) enabled, which is a documented source of unreliable
+# AtStartup-trigger firing on Windows: a plain "Shut down" is a hybrid
+# shutdown that resumes the kernel session rather than performing a full
+# boot, and boot triggers can be inconsistent across that resume. A real
+# incident already happened: the task's LastRunTime showed it had never
+# fired at all after a reboot. This delay does not fix Fast Startup itself
+# (that's a separate, optional hardening step — see ARCHITECTURE.md) but it
+# gives the Task Scheduler engine and the rest of the system breathing room
+# before evaluating the trigger, which is the standard mitigation. Combined
+# with StartWhenAvailable below and the retry loop now in start-server.ps1,
+# a missed or early trigger has two more chances to still succeed.
+# -----------------------------------------------------------------------------
 $trigger = New-ScheduledTaskTrigger -AtStartup
+$trigger.Delay = "PT30S"
 
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 
@@ -78,3 +98,6 @@ Write-Host "  Get-ScheduledTask -TaskName `"$taskName`" | Get-ScheduledTaskInfo"
 Write-Host ""
 Write-Host "To remove it entirely:"
 Write-Host "  Unregister-ScheduledTask -TaskName `"$taskName`" -Confirm:`$false"
+Write-Host ""
+Write-Host "Every startup attempt (success or failure) is now logged to:"
+Write-Host "  server\logs\boot.log"
