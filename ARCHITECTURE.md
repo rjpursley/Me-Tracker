@@ -632,9 +632,54 @@ for a single day (8,475 samples), and a forced credential failure left the
 daily store byte-for-byte unchanged. See the 2026-08-11 session's commit
 for the exact figures.
 
----
+### 6.7 Day-boundary bucketing — civil day, never UTC
 
-## 7. Fasting
+**A second bug, found right after §6.6's fix:** syncing one date alone and
+syncing a range containing that date produced different totals for it —
+13809 vs 14306 steps for the same day. Root cause: `_bucket_by_day()`
+decided which day a point belonged to by calling `.date()` on its raw UTC
+timestamp. A step or HR-zone interval starting in the Eastern evening has a
+UTC timestamp after midnight the *next* UTC day, so `.date()` filed it a day
+late — and *which* points crossed that boundary depended on the query
+window, since a single-civil-day query and a wide-range query pull
+different sets of them. Same family of bug as the `toISOString()`/local-date
+issue this project has already been bitten by once (§12), now on the server.
+
+**THE BOUNDARY RULE: a data point belongs to whatever local civil day
+Google's own API already computed for it** — the identical concept the
+query filter is built on (§6.6), so bucketing can never disagree with what
+was fetched. Confirmed by inspecting live responses (not assumed from the
+schema): `steps`, `heart_rate`, `weight`, `body_fat`, and
+`time_in_heart_rate_zone` all carry a `civilStartTime`/`civilEndTime`/
+`civilTime` field with this precomputed date. `exercise` and `sleep` do
+**not** get it populated despite the schema declaring it available — for
+those two only, the local date is computed manually from the UTC time plus
+its `startUtcOffset`/`endUtcOffset`, never from the bare UTC timestamp.
+`sleep` still buckets by its **end** time (the wake day), matching how it's
+filtered (§6.6).
+
+Verified: single-day and range syncs of the same date now produce
+byte-identical totals. Do not "simplify" `_bucket_by_day()` back to a plain
+`.date()` call on a UTC timestamp — that is this exact bug returning.
+
+### 6.8 Backfill scope — 2026-05-17 onward, not full history
+
+Google Health actually holds data back to **2021-07-30**, with steady
+day-by-day coverage through 2024-08, then a ~20-month gap with nothing at
+all, then it resumes 2026-05-17 (with a couple of shorter internal gaps —
+late May, and late June through 2026-07-29 — matching "Fitbit stopped
+pushing in late June and has now resumed").
+
+**The 2026-08-11 backfill deliberately covers only 2026-05-17 through
+today**, not the full 2021+ history. Pulling ~3 years of 5-second
+heart-rate samples at scale (391,835 rows for the ~87-day window that WAS
+pulled, across 394 pages) would mean tens of thousands of pages and a
+multi-hour run for data this app has no use for — it aggregates to daily
+summaries and never needed 2021 in the first place. This was a judgment
+call, not an instruction followed to the letter (the request said "the
+earliest date Google Health has"); if the full history is ever wanted, sync
+from `2021-07-30` explicitly rather than assuming today's default range
+covers it.
 
 **The protocol below replaced the original 18:6 / 36hr Fri–Sun / quarterly
 60–72hr scheme. The quarterly 60–72hr fast was removed entirely — do not
