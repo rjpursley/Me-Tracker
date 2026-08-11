@@ -470,18 +470,49 @@ def _numeric(block, candidates):
     return None
 
 
-def _local_date_str(ts):
-    """RFC-3339 timestamp string -> local calendar date string. Returns None
-    for anything that isn't a parseable string — including, notably, a raw
-    dict passed by mistake (a bug this function guards against but does not
-    silently paper over: the caller drops that data point instead)."""
-    if not ts or not isinstance(ts, str):
+def _parse_utc_offset_seconds(offset_str):
+    """Google's `google-duration` format for a UTC offset: a signed number
+    of seconds followed by 's', e.g. "-14400s" for Eastern Daylight Time.
+    Returns None for anything else rather than guessing a sign or unit."""
+    if not isinstance(offset_str, str) or not offset_str.endswith('s'):
         return None
     try:
-        dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        return float(offset_str[:-1])
     except ValueError:
         return None
-    return dt.date().isoformat()
+
+
+def _local_date_from_utc(ts, offset_str):
+    """UTC timestamp + its UTC offset -> LOCAL calendar date.
+
+    THIS IS A FALLBACK, NOT THE PREFERRED PATH — see _civil_date_from_interval
+    / _civil_date_from_sample_time below, which use Google's OWN precomputed
+    local date wherever the API actually supplies one. This function exists
+    only for the two types (`exercise`, `sleep`) where, confirmed by
+    inspecting live API responses rather than assumed from the schema, it
+    does not: SessionTimeInterval declares civilStartTime/civilEndTime as
+    available fields, but the live API leaves them unset for both types.
+
+    Returns None (never a bare UTC date) if the offset is missing — a
+    dropped data point is the correct failure mode here, not a UTC-bucketed
+    one. THIS WAS THE 2026-08-11 BUG: computing `.date()` directly off a UTC
+    timestamp with no offset applied. A step or heart-rate-zone interval
+    starting at 22:30 Eastern has a UTC startTime of 02:30 the NEXT calendar
+    day — `.date()` on that UTC value silently filed it a day late, and the
+    size of the error changed with the query window because a single-civil-
+    day query and a multi-day range query hit different sets of these
+    boundary-crossing points. Do not reintroduce a `.date()` call on a raw
+    UTC timestamp anywhere in this file."""
+    if not isinstance(ts, str):
+        return None
+    try:
+        utc_dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    offset_seconds = _parse_utc_offset_seconds(offset_str)
+    if offset_seconds is None:
+        return None
+    return (utc_dt + timedelta(seconds=offset_seconds)).date().isoformat()
 
 
 def _date_obj_to_str(date_obj):
@@ -500,6 +531,49 @@ def _date_obj_to_str(date_obj):
         return None
 
 
+def _civil_date_from_interval(interval, which):
+    """THE BOUNDARY RULE for interval/session-shaped types (steps, exercise,
+    time_in_heart_rate_zone, sleep): a data point belongs to whatever LOCAL
+    CIVIL DAY Google itself already computed for it — civilStartTime.date
+    or civilEndTime.date, per `which` ('start' or 'end') — because that is
+    the exact same concept the query filter is already built on
+    (civil_start_time / civil_end_time). Bucketing can then never disagree
+    with what was actually fetched, regardless of the query window's size.
+
+    Falls back to computing the local date manually from the plain UTC
+    start/end time plus its startUtcOffset/endUtcOffset ONLY when Google's
+    civil field is absent — confirmed by inspecting live responses (not
+    assumed) to be the case for `exercise` and `sleep` specifically. Never
+    falls back to a bare UTC date with no offset applied; see
+    _local_date_from_utc()'s docstring for why that was the bug."""
+    if not isinstance(interval, dict):
+        return None
+    civil_key = 'civilStartTime' if which == 'start' else 'civilEndTime'
+    civil = interval.get(civil_key)
+    if isinstance(civil, dict):
+        day = _date_obj_to_str(civil.get('date'))
+        if day is not None:
+            return day
+    ts_key = 'startTime' if which == 'start' else 'endTime'
+    offset_key = 'startUtcOffset' if which == 'start' else 'endUtcOffset'
+    return _local_date_from_utc(interval.get(ts_key), interval.get(offset_key))
+
+
+def _civil_date_from_sample_time(sample_time):
+    """Same rule as _civil_date_from_interval(), for sample-shaped types
+    (heart_rate, weight, body_fat): prefer sampleTime.civilTime.date —
+    confirmed present in live responses for all three — falling back to
+    physicalTime + utcOffset only if it's ever absent."""
+    if not isinstance(sample_time, dict):
+        return None
+    civil = sample_time.get('civilTime')
+    if isinstance(civil, dict):
+        day = _date_obj_to_str(civil.get('date'))
+        if day is not None:
+            return day
+    return _local_date_from_utc(sample_time.get('physicalTime'), sample_time.get('utcOffset'))
+
+
 def _interval_minutes(interval):
     """Minutes between an ObservationTimeInterval/SessionTimeInterval's
     startTime and endTime. Used where the API gives a span but no explicit
@@ -516,18 +590,38 @@ def _interval_minutes(interval):
 
 
 def _bucket_by_day(points, data_type_key):
-    """Groups dataPoints by LOCAL calendar date (ARCHITECTURE.md §12 — a day
-    is a local-calendar concept, not a UTC one). WHERE the date comes from
-    depends on the type's shape (FILTER_CATEGORY):
-      - 'daily'  -> the value block's own `date` object
-      - 'sample' -> value.sampleTime.physicalTime
-      - 'sleep'  -> value.interval.endTime — the WAKE day, matching how
-                    Google itself recommends filtering sleep (§ module
-                    docstring)
-      - 'interval' (steps, time_in_heart_rate_zone, exercise) -> value.interval.startTime
-    Any point whose date can't be determined is dropped rather than guessed
-    into a day — silently mis-bucketed health data is worse than a data
-    point that's simply missing that sync."""
+    """Groups dataPoints by LOCAL CIVIL DATE (ARCHITECTURE.md §12 — a day is
+    a local-calendar concept, not a UTC one; Ryan is Eastern).
+
+    THE BOUNDARY RULE, fixed 2026-08-11 after single-day and range syncs of
+    the same date produced different totals (steps 13809 vs 14306; a step or
+    HR-zone interval starting in the local evening has a UTC startTime after
+    midnight the NEXT UTC day, and the two sync paths hit different sets of
+    these boundary points): A DATA POINT BELONGS TO WHATEVER LOCAL CIVIL DAY
+    GOOGLE ITSELF COMPUTED FOR IT — the exact same civil day the query
+    filter (_build_filter) already scoped the request by, so bucketing can
+    never disagree with what was actually fetched, no matter how wide or
+    narrow the query window was. Where Google's own civil field is absent
+    (`exercise`, `sleep` — confirmed by inspecting live responses, not
+    assumed), the local day is computed manually from the UTC time plus its
+    UTC offset — never from the bare UTC timestamp alone. See
+    _civil_date_from_interval() / _civil_date_from_sample_time() /
+    _local_date_from_utc() for the mechanics.
+
+      - 'daily'    -> the value block's own `date` object (already local —
+                      Google's daily-summary types carry no timestamp at all)
+      - 'sample'   -> _civil_date_from_sample_time(value.sampleTime)
+      - 'sleep'    -> _civil_date_from_interval(value.interval, 'end') — the
+                      WAKE day, matching how Google itself recommends
+                      filtering sleep (§ module docstring)
+      - 'interval' (steps, time_in_heart_rate_zone, exercise) ->
+                      _civil_date_from_interval(value.interval, 'start')
+
+    Any point whose local day can't be determined is dropped rather than
+    guessed into one — silently mis-bucketed health data is worse than a
+    data point that's simply missing that sync. DO NOT "SIMPLIFY" THIS BACK
+    to `datetime.fromisoformat(ts).date()` on a raw UTC timestamp — that is
+    precisely the bug this function exists to prevent from coming back."""
     category = FILTER_CATEGORY[data_type_key]
     buckets = {}
     for dp in points:
@@ -537,11 +631,11 @@ def _bucket_by_day(points, data_type_key):
         if category == 'daily':
             day = _date_obj_to_str(block.get('date'))
         elif category == 'sample':
-            day = _local_date_str((block.get('sampleTime') or {}).get('physicalTime'))
+            day = _civil_date_from_sample_time(block.get('sampleTime'))
         elif category == 'sleep':
-            day = _local_date_str((block.get('interval') or {}).get('endTime'))
+            day = _civil_date_from_interval(block.get('interval'), 'end')
         else:
-            day = _local_date_str((block.get('interval') or {}).get('startTime'))
+            day = _civil_date_from_interval(block.get('interval'), 'start')
         if day is None:
             continue
         buckets.setdefault(day, []).append(dp)
