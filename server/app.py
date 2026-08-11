@@ -20,14 +20,17 @@
 # server/start-server.ps1, which is what the boot task actually calls).
 # -----------------------------------------------------------------------------
 
+import asyncio
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import uvicorn
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, FastAPI, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
+import google_health
 
 HOST = "127.0.0.1"
 PORT = 8123
@@ -88,7 +91,100 @@ async def health():
     }
 
 
+# -----------------------------------------------------------------------------
+# Google Health sync — ARCHITECTURE.md §6. All real work lives in
+# google_health.py; these routes are thin wrappers that return its already-
+# aggregated daily summaries (never a raw sample — see that module's
+# docstring) and never anything read from .metracker/ directly.
+#
+# SYNC_RANGE_DAYS controls how many trailing days a sync (manual or nightly)
+# re-pulls, not just "today". Fitbit/Google often finish settling a day's
+# sleep and HRV only once Ryan's phone itself syncs overnight, sometimes past
+# midnight — a sync that only ever asked for "today" could permanently miss a
+# late-settling yesterday. Re-pulling a small trailing window is cheap
+# (aggregate_day() just overwrites that day's summary with whatever is now
+# available) and makes that class of miss self-correcting within days.
+# -----------------------------------------------------------------------------
+SYNC_RANGE_DAYS = 3
+
+
+@api_router.get("/vitals/{day}")
+async def vitals_day(day: str):
+    summary = google_health.get_day(day)
+    if summary is None:
+        return {"date": day, "found": False}
+    return {**summary, "found": True}
+
+
+@api_router.get("/vitals")
+async def vitals_range(from_date: str = Query(..., alias="from"), to_date: str = Query(..., alias="to")):
+    return {"from": from_date, "to": to_date, "days": google_health.get_range(from_date, to_date)}
+
+
+@api_router.post("/sync")
+async def trigger_sync():
+    end = date.today()
+    start = end - timedelta(days=SYNC_RANGE_DAYS - 1)
+    # sync_range() makes real, possibly slow, blocking HTTP calls — run it off
+    # the event loop so a manual sync can't stall /api/health or the static
+    # file routes for whoever else is loading the app at the same moment.
+    return await asyncio.to_thread(google_health.sync_range, start.isoformat(), end.isoformat())
+
+
+@api_router.get("/sync/status")
+async def sync_status():
+    return google_health.last_sync_info()
+
+
 app.include_router(api_router, prefix="/api")
+
+
+# -----------------------------------------------------------------------------
+# Nightly automatic sync — ARCHITECTURE.md §6.
+#
+# 04:15 LOCAL, CHOSEN DELIBERATELY:
+#   - The Ollama vision window (ARCHITECTURE.md §8) runs 20:30-03:55 and
+#     shares the Alienware's GPU/VRAM with a trading bot. 04:15 sits a clean
+#     20 minutes past the end of that window, so a sync never overlaps it.
+#   - Fitbit/Google generally finish settling the previous day's sleep and
+#     HRV only after Ryan's phone itself syncs overnight — running earlier
+#     risks pulling an incomplete "yesterday". 04:15 is late enough that this
+#     has almost always already happened.
+#   - It is well before Ryan is normally awake, so the pull's network burst
+#     is never competing with anything he's actively doing on the app.
+#
+# Every attempt and its outcome is logged to server/logs/sync.log by
+# google_health.py itself — same reasoning as boot.log (ARCHITECTURE.md §2.3):
+# a sync that silently never fires should leave a visible gap in that log,
+# not just an app that quietly never has today's numbers.
+# -----------------------------------------------------------------------------
+NIGHTLY_SYNC_HOUR = 4
+NIGHTLY_SYNC_MINUTE = 15
+
+
+async def _nightly_sync_loop():
+    while True:
+        now = datetime.now()
+        target = now.replace(hour=NIGHTLY_SYNC_HOUR, minute=NIGHTLY_SYNC_MINUTE, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        await asyncio.sleep((target - now).total_seconds())
+        try:
+            end = date.today()
+            start = end - timedelta(days=SYNC_RANGE_DAYS - 1)
+            result = await asyncio.to_thread(google_health.sync_range, start.isoformat(), end.isoformat())
+            google_health.logger.info("nightly sync fired: %s", result)
+        except Exception as e:
+            # A scheduler loop must never die from one bad night — that would
+            # silently turn into "never syncs again until the process
+            # restarts," which is exactly the kind of silent failure §2.3's
+            # boot.log and this file's sync.log both exist to avoid.
+            google_health.logger.error("nightly sync loop raised unexpectedly: %s", e)
+
+
+@app.on_event("startup")
+async def _start_nightly_sync():
+    asyncio.create_task(_nightly_sync_loop())
 
 
 # -----------------------------------------------------------------------------

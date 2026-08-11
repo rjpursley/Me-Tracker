@@ -15,19 +15,22 @@
 // ---------------------------------------------------------------------------
 
 import { db, save, exportData, importData, seedSupplements } from './store.js';
+import { today, dateStr, addDays } from './util.js';
+import { primeVitalsCache } from './api.js';
 
 import {
   renderHome, renderHomeDayContent, buildDayStrip, selectDay,
   setDeviation, saveSwap
 } from './pages/home.js';
 import { renderCalendar, setCalView, getCalView } from './pages/calendar.js';
-import { renderHealth, saveBodyHeight, logBodyMeasurement } from './pages/health.js';
+import { renderHealth, saveBodyHeight, saveBodyAge, logBodyMeasurement } from './pages/health.js';
 import { renderBody, logSleep, logHR } from './pages/vitals.js';
 import { renderDiet, logMeal, addSupplement, deleteSupplement, moveSupplement, toggleMacroChart } from './pages/dietary.js';
 import { initLogForms, setLogType, logWorkout, saveTargets } from './pages/log.js';
 import { logFast, startActiveFast, stopActiveFast, renderFastingPage, toggleFastFail, saveFastFailNote } from './pages/fasting.js';
 import { renderTrainingPage, openPauseGate, closePauseGate, pauseGateKey, pauseGateBack, toggleExercise, trainingSetDeviation, trainingSaveSwap } from './pages/training.js';
 import { renderPRs, logOneRM } from './pages/prs.js';
+import { renderVitalsHeader } from './components/vitals-header.js';
 
 // --- Drawer + navigation (moved verbatim from index.html) ------------------
 
@@ -100,6 +103,7 @@ window.setLogType=setLogType;
 window.saveTargets=saveTargets;
 
 window.saveBodyHeight=saveBodyHeight;
+window.saveBodyAge=saveBodyAge;
 window.logBodyMeasurement=logBodyMeasurement;
 
 window.openPauseGate=openPauseGate;
@@ -154,3 +158,29 @@ document.getElementById('import-file-input').addEventListener('change', handleIm
 })();
 
 renderHome();
+
+// ---------------------------------------------------------------------------
+// Prime the Google Health vitals cache (ARCHITECTURE.md §6) — one range
+// fetch on boot, covering enough trailing days for weeklyRestingHR()'s 7-day
+// window (derive.js) plus the Vitals page's 15-day averages. Every reader
+// (vitals-header.js, derive.js's hasStartedActivity/getSleepForDate) is
+// synchronous against whatever's already cached, so the first paint uses
+// placeholders and this re-renders once the fetch actually resolves — never
+// the other way around, which would mean showing something before knowing
+// whether the server has anything at all (§1.7).
+// ---------------------------------------------------------------------------
+const VITALS_PRIME_DAYS = 15;
+(function primeVitals(){
+  const to = today();
+  const from = dateStr(addDays(new Date(to + 'T12:00:00'), -(VITALS_PRIME_DAYS - 1)));
+  primeVitalsCache(from, to).then(function(){
+    renderVitalsHeader('vitals-header-home');
+    renderVitalsHeader('vitals-header-training');
+    // Home is always mounted; re-render it so a page that loaded before the
+    // fetch resolved (the common case) picks up any activity/sleep data that
+    // changes calcScore()'s output. Training only if it's the active page.
+    renderHome();
+    const trainingPage = document.getElementById('page-training');
+    if(trainingPage && trainingPage.classList.contains('active')) renderTrainingPage();
+  });
+})();

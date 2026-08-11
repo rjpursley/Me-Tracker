@@ -17,6 +17,7 @@
 import { today, dateStr, addDays } from './util.js';
 import { db } from './store.js';
 import { PROGRESSION, SPEED_PCT, getScheduleForDate, getHomeScheduleForDate, PROGRAM_START } from './schedule.js';
+import { getCachedVitals } from './api.js';
 
 // ---------------------------------------------------------------------------
 // Consistency-score averaging windows — ARCHITECTURE.md §4.
@@ -308,7 +309,25 @@ export function calcFastHrs(fast){if(!fast||!fast.start)return 0;const s=new Dat
 
 // ARCHITECTURE.md §1.1 — silence = compliance. An unlogged day falls back to a
 // reasonable default rather than scoring as a failure.
-export function getSleepForDate(ds){const d=db();const logged=d.sleeps.find(s=>s.date===ds);if(logged)return logged;return{hours:7,deep:1.2,quality:3,_default:true};}
+//
+// §6: "The API overrides that assumption; it does not compete with it." A
+// manual log (Ryan explicitly entering hours on the Vitals page) always wins
+// if one exists. Where there is no manual log, the API's sleep data fills the
+// gap that used to go straight to the flat 7h assumption; only when NEITHER
+// exists does the 7h/_default fallback still apply. quality is a subjective
+// 1-5 rating the API has no equivalent for, so API-sourced days get the same
+// neutral 3 the old default used — real duration data, neutral quality weight.
+export function getSleepForDate(ds){
+  const d=db();const logged=d.sleeps.find(s=>s.date===ds);
+  if(logged)return logged;
+  const v=getCachedVitals(ds||today());
+  if(v&&v.sleep&&v.sleep.totalMinutes!=null&&v.sleep.totalMinutes>0){
+    const stages=v.sleep.stageMinutes||{};
+    const deepMin=stages.deep??stages.DEEP??stages.Deep??0;
+    return{hours:v.sleep.totalMinutes/60,deep:deepMin/60,quality:3,_fromApi:true};
+  }
+  return{hours:7,deep:1.2,quality:3,_default:true};
+}
 
 export function getWorkoutForDate(ds){const d=db();const dev=d.deviations&&d.deviations[ds];if(dev&&dev.type==='swapped'&&dev.swap)return{type:dev.swap,date:ds,_swapped:true};if(dev&&dev.type==='missed')return null;const logged=d.workouts.find(w=>w.date===ds);if(logged)return logged;const sched=getActiveScheduleForDate(ds);if(sched.rest)return{type:'Active Rest',date:ds,_assumed:true};return{type:sched.category,date:ds,_assumed:true};}
 
@@ -360,17 +379,100 @@ export function exerciseProgress(ds){
 
 // Was a tracked activity STARTED on this date?
 //
-// TODO(server): implement against Google Health (§6) when the Alienware server
-// task lands — the same task that builds server/google_health.py. It should ask
-// for sessions/activities with an explicit start, NOT for heart-rate samples.
+// IMPLEMENTED against server/google_health.py (§6) via api.js's synchronous
+// cache — see getCachedVitals() in api.js. The server's aggregate_day()
+// populates startedActivities[] from the Google Health "exercise" data type
+// ONE ENTRY PER DATAPOINT THAT EXISTS THERE AT ALL — that a session dataPoint
+// exists is itself the deliberate-start signal (see the block comment above,
+// and the matching comment beside startedActivities in
+// server/google_health.py). This function does not, and must not, look at
+// duration or heart-rate fields on those entries — only whether the list is
+// non-empty.
 //
-// Returns false unconditionally for now. This is a deliberate stub, not an
-// oversight: there is no data source (§3 has no server yet), and inventing
-// sample activity would put a fake number into a health console. Because it is
-// always false today, paused days score 0 for training. That is expected and
-// accepted — do not "fix" it with a neutral or excluded state.
+// Returns false whenever nothing is known for the date: the cache hasn't been
+// primed yet, the server is unreachable, or the day really had no started
+// session. All three cases must default to false — inventing a "maybe" state
+// would put a fabricated positive into a health console (§1.7), and a paused
+// day with no known activity scoring 0 is expected and accepted (§9.1/§9.5).
+//
+// ############ DO NOT ADD A DURATION OR HEART-RATE THRESHOLD HERE ############
+// A future session will be tempted to "improve" this by also checking
+// activity.durationMinutes or peakHR on the cached entry. Don't. The rule
+// above this function and in ARCHITECTURE.md §9.5 is explicit: the deliberate
+// start IS the signal, and there is no threshold to add.
 export function hasStartedActivity(ds){
-  return false;
+  const v=getCachedVitals(ds||today());
+  return !!(v&&Array.isArray(v.startedActivities)&&v.startedActivities.length>0);
+}
+
+// ---------------------------------------------------------------------------
+// KARVONEN HEART RATE ZONES — ARCHITECTURE.md §5. DECIDED. Do not substitute
+// a %MHR formula.
+//
+//   maxHR  = 208 - (0.7 * age)              (Tanaka)
+//   HRR    = maxHR - restingHR
+//   zoneLo = restingHR + (HRR * pctLo)
+//   zoneHi = restingHR + (HRR * pctHi)
+//
+// restingHR is NEVER hardcoded (§5) — it is the trailing-7-day average of the
+// API's daily resting HR (weeklyRestingHR() below), so a single rough night's
+// reading can't jerk the live zone around; that is what "recalculated weekly"
+// means here. age has no home elsewhere in the schema, so it is stored
+// additively as d.body.age (Health Status page, next to height) — see
+// getAge(). Either missing means no zone table, never a guessed one.
+// ---------------------------------------------------------------------------
+export const HR_ZONES=[
+  {stage:1,name:'Active Recovery',pctLo:0.50,pctHi:0.60},
+  {stage:2,name:'Aerobic Base',   pctLo:0.60,pctHi:0.70},
+  {stage:3,name:'Tempo',          pctLo:0.70,pctHi:0.80},
+  {stage:4,name:'Threshold',      pctLo:0.80,pctHi:0.90},
+  {stage:5,name:'Peak',           pctLo:0.90,pctHi:1.00}
+];
+
+export function tanakaMaxHR(age){return 208-(0.7*age);}
+
+// The stored age, or null. Additive: d.body.age, alongside d.body.height.
+export function getAge(){
+  const a=+((db().body||{}).age);
+  return a>0?a:null;
+}
+
+// Trailing 7-day average of the API's daily resting HR ending on ds
+// (default today). Null if the API has never supplied one in that window —
+// callers must render "—", never fall back to a guessed number.
+export function weeklyRestingHR(ds){
+  ds=ds||today();
+  const vals=[];
+  for(let i=0;i<7;i++){
+    const day=dateStr(addDays(new Date(ds+'T12:00:00'),-i));
+    const v=getCachedVitals(day);
+    if(v&&+v.restingHR>0)vals.push(+v.restingHR);
+  }
+  if(!vals.length)return null;
+  return Math.round((vals.reduce((a,b)=>a+b,0)/vals.length)*10)/10;
+}
+
+// {maxHR, restingHR, hrr, zones:[{stage,name,lo,hi}]}, or null if age or
+// resting HR is unavailable. Never a zone table built on a guessed number.
+export function karvonenZones(ds){
+  const age=getAge();const rhr=weeklyRestingHR(ds);
+  if(age==null||rhr==null)return null;
+  const mh=tanakaMaxHR(age),hrr=mh-rhr;
+  return{
+    maxHR:mh,restingHR:rhr,hrr,
+    zones:HR_ZONES.map(z=>({stage:z.stage,name:z.name,
+      lo:Math.round(rhr+hrr*z.pctLo),hi:Math.round(rhr+hrr*z.pctHi)}))
+  };
+}
+
+// Which zone a bpm value falls in right now, per karvonenZones(ds). Null if
+// zones can't be computed, or bpm is below Zone 1's floor (resting territory,
+// not an active zone).
+export function currentZone(bpm,ds){
+  const z=karvonenZones(ds);
+  if(!z||!bpm)return null;
+  for(let i=z.zones.length-1;i>=0;i--)if(bpm>=z.zones[i].lo)return{...z.zones[i],zoneCount:z.zones.length};
+  return null;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,20 +1,98 @@
 // ---------------------------------------------------------------------------
 // api.js — Calls to the local server. ALL fetch() lives here.
 //
-// ARCHITECTURE.md §3. This file is intentionally empty right now: the client
-// currently makes no network calls at all, and server/ does not exist yet.
+// ARCHITECTURE.md §3, §6. Client and server are same-origin over Tailscale —
+// no CORS, no proxy shim (§2). The server is a sidecar, not the database
+// (§1.2): it hands back small daily summaries; localStorage stays the
+// source of truth and this file writes nothing to it.
 //
-// It is committed empty on purpose. When Google Health sync, barcode lookup or
-// food vision arrive, their fetch() calls belong HERE and nowhere else. Keeping
-// the file present stops a future session from scattering fetch() through the
-// page modules.
+// EVERYTHING HERE MUST FAIL SOFT. If the server is stopped, unreachable, or
+// returns something unexpected, every function below resolves to null/false/
+// empty rather than throwing — a page rendering off this module must be able
+// to fall back to its placeholder exactly as if no server existed at all
+// (ARCHITECTURE.md §4's vitals header, §1.7: a number with no real source is
+// worse than a placeholder). Nothing in this file may throw past its own
+// boundary.
 //
-// When it is populated, remember:
-//   - Client and server are same-origin over Tailscale (§2). No CORS shim.
-//   - The server is a sidecar, not the database (§1.2). It returns small daily
-//     summaries; localStorage stays the source of truth.
-//   - Always follow nextPageToken (§6). A sync that ignores pagination returns
-//     partial days that look complete.
+// IN-MEMORY CACHE ONLY. vitalsCache below is never written to localStorage —
+// it is a read-through cache of the server's own daily-summary store,
+// rebuilt from the network every page load. This is what lets derive.js's
+// hasStartedActivity() (§9.5) stay a synchronous, pure read: it looks in this
+// cache rather than awaiting a fetch itself, so it can keep behaving like
+// every other derive.js function. If the cache hasn't been primed yet (page
+// just loaded, or the last prime failed), every lookup returns "nothing
+// known" — never a fabricated value.
 // ---------------------------------------------------------------------------
 
 export const API_BASE = '';
+
+// date string -> summary object from GET /api/vitals/{date} (or GET
+// /api/vitals?from&to's days map), or explicitly null once a lookup has come
+// back "no data for this day" so callers can tell "not fetched yet" apart
+// from "fetched, and there's nothing there" if that distinction ever matters.
+let vitalsCache = {};
+let lastPrimeOk = null;      // null = never tried, true/false after the first attempt
+let lastPrimeAt = null;      // Date, when the cache was last successfully refreshed
+
+async function fetchJSON(path){
+  try{
+    const res = await fetch(API_BASE + path, {headers:{'Accept':'application/json'}});
+    if(!res.ok) return null;
+    return await res.json();
+  }catch(e){
+    // Network error, server not running, Tailscale down — all the same to a
+    // caller: there is no data right now. Never throw past this function.
+    return null;
+  }
+}
+
+// Fetches a date range and merges it into the in-memory cache. Called once on
+// app boot (see app.js) and safe to call again any time — e.g. after a
+// manual sync — to pick up freshly-written days.
+export async function primeVitalsCache(fromDate, toDate){
+  const body = await fetchJSON(`/api/vitals?from=${fromDate}&to=${toDate}`);
+  if(!body || typeof body.days !== 'object'){
+    lastPrimeOk = false;
+    return false;
+  }
+  Object.keys(body.days).forEach(d => { vitalsCache[d] = body.days[d]; });
+  lastPrimeOk = true;
+  lastPrimeAt = new Date();
+  return true;
+}
+
+// Synchronous read for derive.js and the UI — never awaits, never fetches.
+// Returns the cached summary for a date, or null if nothing is cached for it
+// (either never synced, or the cache hasn't been primed this page load yet).
+export function getCachedVitals(dateStr){
+  return vitalsCache[dateStr] || null;
+}
+
+export function cacheStatus(){
+  return {primed: lastPrimeOk === true, lastPrimeAt};
+}
+
+// A direct single-day fetch, bypassing the cache — used where a page wants a
+// guaranteed-fresh read rather than whatever primeVitalsCache() last saw.
+// Also updates the cache so later synchronous reads see the same value.
+export async function fetchVitalsDay(dateStr){
+  const body = await fetchJSON(`/api/vitals/${dateStr}`);
+  if(!body) return null;
+  if(body.found === false){ vitalsCache[dateStr] = null; return null; }
+  vitalsCache[dateStr] = body;
+  return body;
+}
+
+// POST /api/sync — a manual sync. Re-primes the cache for the same range
+// afterward so a caller sees the results immediately rather than on next
+// reload. Returns the server's result object (counts/pages/errors) or null on
+// failure; never throws.
+export async function triggerSync(fromDate, toDate){
+  let body = null;
+  try{
+    const res = await fetch(API_BASE + '/api/sync', {method:'POST', headers:{'Accept':'application/json'}});
+    if(res.ok) body = await res.json();
+  }catch(e){ /* server unreachable — nothing to sync, nothing to report */ }
+  if(fromDate && toDate) await primeVitalsCache(fromDate, toDate);
+  return body;
+}

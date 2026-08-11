@@ -27,6 +27,14 @@ venv/
 server/logs/
 
 # ---------------------------------------------------------------------------
+# Google Health sync's server-side cache (ARCHITECTURE.md §6) — Ryan's real
+# health data, aggregated and raw. Machine-local runtime output, not source,
+# and not something to publish to a GitHub repo even though it isn't a secret
+# in the client_secret.json sense.
+# ---------------------------------------------------------------------------
+server/data/
+
+# ---------------------------------------------------------------------------
 # Machine-local editor/tool settings — not part of the project
 # ---------------------------------------------------------------------------
 .claude/settings.local.json

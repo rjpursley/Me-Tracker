@@ -6,20 +6,25 @@
 // banner in index.html is load-bearing — do not remove it, and never present a
 // clinical value.
 //
-// BUILT (§10): manual height / bodyweight / waist entry, the 7-day rolling
-// bodyweight trend, and relative strength (each derived Training Max ÷ the
-// rolling bodyweight — see §10.1, it reads the derived TM, not a stored one).
+// BUILT (§10): manual height / age / bodyweight / waist entry, the 7-day
+// rolling bodyweight trend, and relative strength (each derived Training Max
+// ÷ the rolling bodyweight — see §10.1, it reads the derived TM, not a
+// stored one). Age lives here (d.body.age) because it has no other home in
+// the schema and Karvonen zones (§5, derive.js) need it.
 //
-// NOT YET BUILT (§10): body fat %, VO2 max and HRV. All three come from the
-// Google Health API (§6), which has no server yet, so they render as
-// em-dashes under "Awaiting Sync" — never as zeroes, which would read as a
-// measurement of zero.
+// BUILT (§6, §10): body fat %, VO2 max and HRV now come from the Google
+// Health API via api.js's cache (getCachedVitals()), read for today's date.
+// Still rendered under "Awaiting Sync" with an em-dash whenever the cache has
+// no value for today — never a zero, which would read as a measurement of
+// zero (§1.7) — the section heading stays accurate either way since a field
+// with no synced value really is still "awaiting sync".
 // ---------------------------------------------------------------------------
 
 import { db, save } from '../store.js';
 import { today, dateStr, addDays } from '../util.js';
 import { getSleepForDate, calcFastHrs, getWorkoutForDate, calcHGH, calcTest, calcCortisol, getPhase,
          rollingBodyweight, latestWaist, relativeStrength, BODYWEIGHT_WINDOW_DAYS } from '../derive.js';
+import { getCachedVitals } from '../api.js';
 
 // ---------------------------------------------------------------------------
 // Body composition — ARCHITECTURE.md §10.
@@ -47,15 +52,22 @@ function renderBodySummary(){
     '</div>';
 }
 
-// Body fat %, VO2 max and HRV come from the Google Health API (§10), which does
-// not exist yet. They render as em-dashes labelled "awaiting sync" — never as
-// zeroes, which would read as a measurement of zero.
+// Body fat %, VO2 max and HRV come from the Google Health API (§6) via
+// api.js's cache, read for today's date. Any field the API hasn't supplied a
+// value for yet renders as an em-dash under "Awaiting Sync" — never a zero,
+// which would read as a measurement of zero (§1.7).
 function renderAwaiting(){
-  const items=[{label:'Body Fat',unit:'%'},{label:'VO2 Max',unit:'ml/kg/min'},{label:'HRV',unit:'ms'}];
+  const v=getCachedVitals(today());
+  const items=[
+    {label:'Body Fat', unit:'%',          val: v&&v.bodyFatPct!=null ? v.bodyFatPct : null},
+    {label:'VO2 Max',  unit:'ml/kg/min',  val: v&&v.vo2Max!=null     ? v.vo2Max     : null},
+    {label:'HRV',      unit:'ms',         val: v&&v.hrv!=null        ? v.hrv        : null}
+  ];
+  const anySynced=items.some(i=>i.val!=null);
   document.getElementById('body-awaiting').innerHTML =
     '<div class="awaiting-panel">' +
-    items.map(i=>`<div class="vh-item"><div class="vh-label">${i.label}</div><div class="vh-value">—</div><div class="vh-unit">${i.unit}</div></div>`).join('') +
-    '<div class="vh-note">Awaiting sync — comes from Google Health, not yet connected</div>' +
+    items.map(i=>`<div class="vh-item"><div class="vh-label">${i.label}</div><div class="vh-value"${i.val!=null?' style="color:var(--accent2)"':''}>${i.val!=null?i.val:'—'}</div><div class="vh-unit">${i.unit}</div></div>`).join('') +
+    `<div class="vh-note">${anySynced?'Synced '+v.date:'Awaiting sync — comes from Google Health'}</div>` +
     '</div>';
 }
 
@@ -81,6 +93,17 @@ export function saveBodyHeight(){
   save(d);renderHealth();
 }
 
+// Age has no other home in the schema (§6, §5 in ARCHITECTURE.md) — stored
+// additively as d.body.age, alongside height. Needed for the Karvonen zone's
+// Tanaka maxHR term (derive.js's tanakaMaxHR()/getAge()); with no age on file
+// the live vitals header's Zone value stays a placeholder rather than guess.
+export function saveBodyAge(){
+  const d=db();d.body=d.body||{};
+  const a=document.getElementById('health-age').value;
+  if(a!=='')d.body.age=a;
+  save(d);renderHealth();
+}
+
 export function logBodyMeasurement(){
   const w=document.getElementById('health-weight').value;
   const wa=document.getElementById('health-waist').value;
@@ -101,6 +124,7 @@ export function renderHealth(){
   renderBodySummary();renderAwaiting();renderRelativeStrength();
   const bodyNow=db().body||{};
   const hEl=document.getElementById('health-height');if(hEl&&bodyNow.height)hEl.value=bodyNow.height;
+  const ageEl=document.getElementById('health-age');if(ageEl&&bodyNow.age)ageEl.value=bodyNow.age;
   const dEl=document.getElementById('health-measure-date');if(dEl&&!dEl.value)dEl.value=today();
   const d=db(),t=today();const sl=getSleepForDate(t);const todayFasts=d.fasts.filter(f=>f.date===t);const fastHrs=d.activeFast?calcFastHrs({start:d.activeFast.start,date:d.activeFast.date}):(todayFasts.length?Math.max(...todayFasts.map(calcFastHrs)):0);const w=getWorkoutForDate(t);const meals=d.meals.filter(m=>m.date===t);const sugar=meals.reduce((a,m)=>a+(+m.sugar||0),0);
   const l7=[];for(let i=6;i>=0;i--){const wk=getWorkoutForDate(dateStr(addDays(new Date(),-i)));if(wk)l7.push(wk);}

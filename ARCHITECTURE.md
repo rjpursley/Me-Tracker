@@ -373,7 +373,9 @@ Me-Tracker/
 │   ├── tailscale-serve.ps1 # One-time Tailscale-side exposure — see §2.3
 │   ├── .venv/               # gitignored — not committed, recreate from requirements.txt
 │   ├── logs/                # gitignored — boot.log / server.log / server.err.log
-│   ├── google_health.py    # NOT YET BUILT — OAuth refresh, paginated pulls, aggregation
+│   ├── google_health.py    # BUILT (§6) — OAuth refresh, paginated pulls, aggregation
+│   ├── google_health_auth.py # BUILT (§6.4) — one-time, by-hand consent flow
+│   ├── data/               # gitignored — vitals_daily.json + raw/ (§6)
 │   ├── vision.py           # NOT YET BUILT — Ollama minicpm-v job queue
 │   └── barcode.py          # NOT YET BUILT — Open Food Facts lookup
 │
@@ -425,7 +427,11 @@ once per 12-week cycle, so burying it one level deeper costs nothing daily.
 again, that is a conversation with Ryan.
 
 Vitals keeps **3 days of history maximum** on screen. Longer ranges exist only
-as graphs and averages, not as scrollable detail.
+as graphs and averages, not as scrollable detail. **BUILT:** the Vitals
+page's two scrollable lists (`sleep-history`, `hr-history` in
+`js/pages/vitals.js`) are capped at `HISTORY_DAYS_MAX = 3`; the 15-day chart
+and the three average cards above it are the "graphs and averages" this
+section carves out, and keep their existing 15-day window.
 
 ---
 
@@ -457,37 +463,153 @@ zoneHi = restingHR + (HRR * pctHi)
 **Never hardcoded.** As conditioning improves resting HR falls and zones shift
 down automatically — that shift is itself evidence the program is working.
 
+**BUILT (§6):** `derive.js`'s `weeklyRestingHR()` averages the trailing 7
+days of the API's daily resting HR; `karvonenZones()`/`currentZone()` combine
+that with `tanakaMaxHR(age)`. Age has no other home in the schema and is
+entered on the Health Status page, stored additively as `d.body.age`. Either
+missing means no zone table — never a guessed one.
+
 **Why Karvonen:** plain %MHR put Zone 2 at 106–124 bpm; Karvonen puts it near
 133–144. Training at the lower band builds little aerobic base. If a future
 session "corrects" this back to %MHR, that is drift, not a fix.
 
 ---
 
-## 6. Google Health API
+## 6. Google Health API — BUILT
 
 Replaces the Fitbit Web API (deprecated September 2026). Google OAuth 2.0.
-The Fitbit account is already migrated to Google sign-in. Integration is
-validated and pulling real data.
+The Fitbit account is already migrated to Google sign-in.
 
-**Credentials live in `.metracker/` only.** Three values: client ID, client
-secret, refresh token.
+**Files:** `server/google_health.py` (the sync engine — OAuth refresh,
+pagination, aggregation, the server-side store) and
+`server/google_health_auth.py` (the one-time, by-hand consent flow, see
+§6.4). Endpoints live in `server/app.py`; the client's read path is
+`js/api.js` (fetch + in-memory cache) feeding `js/derive.js`
+(`hasStartedActivity`, `getSleepForDate`, the Karvonen helpers, §5) and
+`js/components/vitals-header.js`.
+
+**Credentials live in `.metracker/` only.** Two files:
+`client_secret.json` (client ID + secret) and `google_refresh_token.json`
+(written by google_health_auth.py, §6.4). Never read, printed, logged, or
+returned by any endpoint — `google_health.py`'s secrets-handling functions
+pull only the two fields needed to build a `Credentials` object in memory.
 
 **Consent screen stays in Testing status** with Ryan as a Test User. This grants
 restricted scopes without the production review queue. Refresh tokens for
-unverified apps expire periodically; re-running consent is expected maintenance,
-not a bug.
+unverified apps expire periodically; re-running consent (§6.4) is expected
+maintenance, not a bug.
 
-### Two rules that silently corrupt data if ignored
+### 6.1 Two rules that silently corrupt data if ignored
 
-1. **Always follow `nextPageToken`.** Responses cap at 5,000 samples; one day of
-   5-second HR is roughly 8,700. A sync that ignores pagination returns partial
-   days that look complete.
+1. **Always follow `nextPageToken`.** Responses cap at a few thousand rows; one
+   day of 5-second HR is roughly 8,700. `fetch_data_points()` in
+   `google_health.py` loops until `nextPageToken` is absent and logs the page
+   count for every pull to `server/logs/sync.log` — so a silent truncation
+   would show up as a suspiciously low page count in that log, not just look
+   like a short day. Verified against a synthetic 8,700-point day (mocked
+   HTTP, not the live API): 9 pages at 1,000/page, all 8,700 points returned.
 
-2. **Aggregate on ingest; the browser gets summaries only.** Store per day:
-   resting HR, minutes per HR zone, workout avg/peak HR, sleep stage totals,
-   steps, weight. Raw intraday samples stay server-side and are discarded after
-   about 7 days. At a few hundred bytes per day this is roughly 100KB/year in
-   localStorage — trivial against the ~5MB budget.
+2. **Aggregate on ingest; the browser gets summaries only.** Per day, the
+   server stores: resting HR, the single latest heart-rate reading (bpm +
+   timestamp — see §6.2 on why this one exception exists), minutes per
+   device-defined HR zone, workout avg/peak HR, sleep stage totals, steps,
+   weight, body fat %, HRV, VO2 max, and the list of started exercise
+   sessions. `GET /api/vitals/*` (§6.3) only ever returns this aggregate.
+   Raw intraday samples are cached server-side under `server/data/raw/` for
+   about 7 days for debugging (`purge_old_raw()`), then deleted, and are
+   never served to the client.
+
+### 6.2 What "live HR" in the vitals header actually means
+
+The header (§4) shows a `Heart Rate` reading, but rule 2 above means the
+browser never receives a raw sample stream — there is no real-time bpm to
+show. The one deliberate exception: `aggregate_day()` reduces each day's raw
+heart-rate pull to a single `latestHR: {bpm, at}` — the most recent sample of
+the day, and nothing else from that series. That is still a small daily-
+summary field, not raw data, and it is only ever as fresh as the last sync
+(nightly, or whenever `POST /api/sync` was last run) — never a live stream.
+If the server has no reading for today, the header shows the em-dash
+placeholder, never a stale number from a previous day (§1.7, §4).
+
+**HR zone minutes (`hrZoneMinutes`) are the device's own zone buckets**,
+passed through under whatever labels the API returns — **not** the app's
+Karvonen zones. The live header's `Zone` value is computed client-side, from
+`latestHR.bpm` + the Karvonen formula (§5) + age; the stored `hrZoneMinutes`
+is a separate, historical field for later graphing. Do not conflate the two.
+
+### 6.3 Endpoints and sync schedule
+
+| Route | Method | Returns |
+|---|---|---|
+| `/api/vitals/{date}` | GET | One day's aggregate, or `{date, found:false}` |
+| `/api/vitals?from=&to=` | GET | `{days: {date: aggregate, ...}}` for a range |
+| `/api/sync` | POST | Triggers a sync of the trailing `SYNC_RANGE_DAYS` (3) days; returns per-type counts/page-counts/errors |
+| `/api/sync/status` | GET | `{lastWriteUtc, daysStored}` — see §6.5 |
+
+**Manual sync re-pulls the last 3 days, not just today**, because Fitbit/
+Google generally only finish settling a day's sleep and HRV once Ryan's phone
+itself syncs overnight — a sync that only ever asked for "today" could
+permanently miss a late-settling yesterday. Re-pulling a small trailing
+window is cheap and makes that class of miss self-correcting within days. The
+nightly automatic sync (`server/app.py`'s `_nightly_sync_loop`) uses the same
+window on the same schedule.
+
+**Nightly sync runs at 04:15 local**, chosen for three reasons:
+- It sits a clean 20 minutes past the end of the Ollama vision window
+  (20:30–03:55, §8), which shares the Alienware's GPU/VRAM with a trading
+  bot — a sync never overlaps that window.
+- It is late enough that Fitbit/Google have almost always finished settling
+  the previous day's sleep and HRV by then.
+- It is well before Ryan is normally awake, so the pull's minute or two of
+  network activity is invisible either way.
+
+### 6.4 Running the consent flow (refresh token missing or expired)
+
+`google_health.py` never attempts this itself — a background service running
+as SYSTEM at boot has no desktop session to show a browser in, and must fail
+with a clear message instead of hanging. When `/api/sync` or the nightly log
+reports "No refresh token on file" or "Google rejected the refresh token",
+run, from a normal logged-in session on the Alienware:
+
+```
+server\.venv\Scripts\python.exe server\google_health_auth.py
+```
+
+Sign in and grant the three requested scopes when the browser opens. It
+writes `.metracker\google_refresh_token.json` and prints confirmation — no
+server restart needed, the next sync just picks it up. If Google doesn't
+issue a fresh refresh token (it can decide a live grant already exists),
+remove Me-Tracker's access at https://myaccount.google.com/permissions and
+run the script again, which forces a fresh consent screen.
+
+### 6.5 Telling whether the last sync succeeded
+
+- `GET /api/sync/status` — `daysStored` should be non-zero and `lastWriteUtc`
+  recent (within the last day, given the nightly schedule).
+- `server/logs/sync.log` — every attempt, manual or nightly, logs its start,
+  the page count and row count per data type, and either what it wrote or
+  exactly what failed (auth, network, an unexpected response shape). Same
+  reasoning as `boot.log` (§2.3): a sync that silently never ran should leave
+  a visible gap here, not just an app with stale numbers.
+- `GET /api/vitals/{today}` returning `found:false` for a day well after it
+  should have synced is the symptom; the log above is where to find why.
+
+### 6.6 Field-name honesty note
+
+Google Health API's public docs (developers.google.com/health, as read while
+building this) confirm the endpoint shapes, pagination parameters
+(`pageSize`/`pageToken`/`nextPageToken`), and the general per-data-type
+`DataPoint` union pattern, but do not fully specify every value field name or
+the exact `filter` grammar for every data type. `google_health.py` is written
+defensively as a result: `_value_block()`/`_numeric()` look for a value under
+a set of plausible field names rather than assuming one is correct,
+`fetch_data_points()` tries two plausible filter grammars (interval-based,
+sample-based) before giving up on a type, and every pull logs the raw shape
+of its first result to `sync.log`. **Treat the log as the source of truth
+over this file if they disagree** — the first real sync against live data is
+the actual test of these guesses, and `sync.log` is where a wrong guess would
+surface (as a 400 that fell back to the other grammar, or as a field that
+`aggregate_day()` couldn't find a value in).
 
 ---
 
@@ -786,10 +908,12 @@ The gate lives in `pages/training.js` because pause and start are the only
 things that use it today. If a second pillar ever needs one, extract it to
 `js/components/` then — not before.
 
-### 9.3 Not yet built
+### 9.3 Built (§6)
 
-- A live data source for the vitals header and for §9.5's activity check. Both
-  wait on the server (§3) and the Google Health sync (§6).
+- The live data source for the vitals header and for §9.5's activity check —
+  server/google_health.py plus js/api.js's cache. Both wait until the cache
+  has actually been primed (an async fetch on app boot, js/app.js) before
+  showing anything other than the placeholder — never a guess in the gap.
 
 ### 9.4 Per-exercise checkboxes — built
 
@@ -902,11 +1026,14 @@ accepting, say, 20 minutes above 120bpm. That is drift. A threshold makes the
 app guess at intent; the start button already recorded it. A 6-minute deliberate
 session counts. An hour of accidentally-elevated HR does not.
 
-**The check is stubbed.** `hasStartedActivity()` in `derive.js` returns `false`
-unconditionally, with a TODO naming the Google Health server task (§6) that will
-implement it. It is deliberately **not** stubbed with sample data — a fabricated
-activity on a health console is worse than no number (§1.7). It should query
-sessions/activities with an explicit start, **not** heart-rate samples.
+**BUILT (§6).** `hasStartedActivity()` in `derive.js` reads
+`getCachedVitals(ds).startedActivities` (js/api.js) — populated server-side by
+`aggregate_day()` in `server/google_health.py` from the Google Health
+`exercise` data type. That a dataPoint exists there at all **is** the
+deliberate-start signal; the function does not, and must not, inspect
+duration or heart-rate fields on those entries. It returns `false` whenever
+nothing is known — cache not yet primed, server unreachable, or genuinely no
+session that day — never a fabricated positive (§1.7).
 
 Because it is always false today, **paused days score 0 for training**. That is
 expected and accepted. Do not build a neutral or excluded state to hide it.
@@ -953,9 +1080,13 @@ section replaces that gap note now that the control has a home.
 
 **VO2 max is available from the Versa 2.** Fitbit calls it **Cardio Fitness
 Score**, which is why a search for "VO2 max" in their docs comes up empty — the
-metric is there under a marketing name. Keep it as a trackable field awaiting
-sync. It renders as an em-dash under "Awaiting Sync" until §6 lands. Do not drop
-it on the assumption the hardware cannot produce it.
+metric is there under a marketing name.
+
+**BUILT (§6).** Body fat %, VO2 max and HRV render from
+`getCachedVitals(today()).bodyFatPct/.vo2Max/.hrv` (Health Status page,
+`renderAwaiting()` in `js/pages/health.js`). Any of the three the API hasn't
+supplied a value for yet still renders as an em-dash under "Awaiting Sync" —
+never a zero, which would read as a measurement of zero (§1.7).
 
 **Bodyweight displays as the 7-day rolling average, not the daily value.** Daily
 weight is mostly water and produces misleading noise.
