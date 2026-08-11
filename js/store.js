@@ -62,7 +62,12 @@ export const SEED_SUPPLEMENTS=[
 ];
 export function seedSupplements(){return SEED_SUPPLEMENTS.map(s=>({...s}));}
 
-export function init(){return{fasts:[],workouts:[],sleeps:[],meals:[],hrs:[],targets:{},activeFast:null,deviations:{},fastDeviations:{},body:{},programPauses:[],exerciseLogs:{},oneRepMaxes:{},supplements:seedSupplements()};}
+// programStart is a STRING (YYYY-MM-DD) once the Alsruhe program has been
+// started, or null before that — a third state distinct from paused. Default
+// is null, not the PROGRAM_START code constant (schedule.js): a fresh store
+// must read as "not started", never as "already running since a hardcoded
+// date". See derive.js's programStart()/isProgramStarted()/programWeek().
+export function init(){return{fasts:[],workouts:[],sleeps:[],meals:[],hrs:[],targets:{},activeFast:null,deviations:{},fastDeviations:{},body:{},programPauses:[],exerciseLogs:{},oneRepMaxes:{},supplements:seedSupplements(),programStart:null};}
 export function db(){try{return JSON.parse(localStorage.getItem(DB_KEY))||init();}catch(e){return init();}}
 export function save(d){localStorage.setItem(DB_KEY,JSON.stringify(d));}
 

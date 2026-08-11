@@ -6,8 +6,12 @@
 // Moved verbatim from index.html. No values changed.
 // ---------------------------------------------------------------------------
 
-// PROGRAM_START is a code constant, not stored data. Edit this one line to
-// re-baseline the 12-week cycle. Must be the Monday the program begins.
+// PROGRAM_START is a code constant, not stored data. It is NO LONGER read as
+// "the" program start date — that is now d.programStart, set by tapping Start
+// on the Training page (ARCHITECTURE.md §9.0). This constant's only remaining
+// job is a last-resort fallback inside derive.js's programWeek() if a stored
+// programStart value is present but malformed, so that function still cannot
+// throw. Do not delete it, and do not read it as a semantic start date again.
 export const PROGRAM_START='2026-08-03';
 
 export const PROGRESSION=[
@@ -123,3 +127,70 @@ export const CATEGORY_BORDER={'Resistance':'rgba(124,106,247,.4)','Zone 2':'rgba
 export const CATEGORY_COLOR_TEXT={'Resistance':'var(--accent)','Zone 2':'var(--accent2)','Bodyweight':'var(--accent3)','Active Rest':'var(--muted)'};
 
 export function getScheduleForDate(ds){return SCHEDULE[new Date(ds+'T12:00:00').getDay()]||SCHEDULE[0];}
+
+// ---------------------------------------------------------------------------
+// HOME_SCHEDULE — the interim home routine, ARCHITECTURE.md §9.0.
+//
+// Ryan trains at home until the gym (and Alsruhe) opens. Active ONLY while
+// the Alsruhe program has not been started — see isProgramStarted() and
+// getActiveScheduleForDate() in derive.js, which is where the Alsruhe-vs-home
+// routing decision actually lives. This file stays "pure data plus the
+// day->session lookup" for both schedules; it does not know which one is
+// currently in effect.
+//
+// FIXED LOADS, NOT PERCENTAGES. No tmKey, no mainLift, no exercise carries
+// `main:true`. These exercises must never be routed through trainingMax() /
+// mainLiftRx() — the whole point of a fixed sandbag/kettlebell/gada routine is
+// that the load does not move with a Training Max that does not exist for it.
+//
+// Same {name, equip, detail, block} shape as SCHEDULE, so it goes through the
+// exact same prescription card, checkbox storage (d.exerciseLogs, by name)
+// and scoring (calcTrainingScore) with no special-casing.
+//
+// Source: "Simple Workout Routine.rtf" in the repo root. Equipment on hand:
+// 65lb heavy sandbag, ~42-45lb medium sandbag, 50lb kettlebell, 10-25lb gada
+// club, pull-up bar.
+//
+// When Alsruhe starts, the app switches to it (getActiveScheduleForDate()).
+// This stays in the code for later reuse — do not delete it once Alsruhe is
+// running.
+// ---------------------------------------------------------------------------
+export const HOME_SCHEDULE={
+  1:{session:'Upper Pull & Horizontal Push',category:'Bodyweight',exercises:[
+    {name:'Strict Pull-Ups',equip:'Bodyweight',detail:'4 sets x 6–10 reps · Pause at the top',block:'Upper Pull & Horizontal Push'},
+    {name:'Heavy Sandbag Floor Press',equip:'65 lb Sandbag',detail:'4 sets x 8–12 reps · Lie on floor, press bag from chest — great chest/triceps burner',block:'Upper Pull & Horizontal Push'},
+    {name:'Kettlebell Single-Arm Row',equip:'50 lb Kettlebell',detail:'3 sets x 8–10 reps per side · Brace on a bench/chair, draw elbow to hip',block:'Upper Pull & Horizontal Push'},
+    {name:'Feet-Elevated Push-Ups',equip:'Bodyweight',detail:'3 sets x 12–15 reps · Feet on a chair/couch for upper chest emphasis',block:'Upper Pull & Horizontal Push'},
+    {name:'Gada 360s or Casts',equip:'10–25 lb Gada Club',detail:'3 sets x 10–12 reps per direction · Smooth rotational shoulder control and grip endurance',block:'Upper Pull & Horizontal Push'}
+  ]},
+  2:{session:'Lower & Posterior Chain',category:'Bodyweight',exercises:[
+    {name:'Sandbag Bear-Hug Squats',equip:'65 lb Sandbag',detail:'4 sets x 8–12 reps · Hug bag high and tight; squat below parallel',block:'Lower & Posterior Chain'},
+    {name:'Kettlebell Single-Leg RDL',equip:'50 lb Kettlebell',detail:'4 sets x 8–10 reps per leg · Hinge at hips; maintain flat back and stable stance',block:'Lower & Posterior Chain'},
+    {name:'Sandbag Zercher Reverse Lunges',equip:'42 lb Sandbag',detail:'3 sets x 8 reps per leg · Hold bag in crook of elbows; step backward',block:'Lower & Posterior Chain'},
+    {name:'Kettlebell Swings',equip:'50 lb Kettlebell',detail:'3 sets x 15–20 reps · Explosive hip snap; lock out glutes at top',block:'Lower & Posterior Chain'},
+    {name:'Hanging Leg/Knee Raises',equip:'Pull-up Bar',detail:'3 sets x 10–12 reps · Squeeze abs at top without swinging',block:'Lower & Posterior Chain'}
+  ]},
+  3:{session:'Active Recovery',category:'Active Rest',exercises:[
+    {name:'Light Walking',equip:'Bodyweight',detail:'15–20 min · easy, conversational pace',block:'Active Recovery'},
+    {name:'Light Gada Swings',equip:'10–25 lb Gada Club',detail:'Easy pace · shoulder mobility',block:'Active Recovery'},
+    {name:'Thoracic Spine Stretches',equip:'Bodyweight',detail:'As needed',block:'Active Recovery'}
+  ]},
+  4:{session:'Upper Overhead & Vertical',category:'Bodyweight',exercises:[
+    {name:'Sandbag Strict Overhead Press',equip:'42 lb Sandbag',detail:'4 sets x 6–8 reps · Brace core and press overhead without arching low back',block:'Upper Overhead & Vertical'},
+    {name:'Chin-Ups',equip:'Pull-up Bar',detail:'4 sets x 6–10 reps · Underhand grip; focus on biceps and lower lats',block:'Upper Overhead & Vertical'},
+    {name:'Pike Push-Ups',equip:'Bodyweight',detail:'3 sets x 8–12 reps · Feet elevated or flat on floor to target shoulders',block:'Upper Overhead & Vertical'},
+    {name:'Kettlebell Bottoms-Up Clean & Press',equip:'50 lb Kettlebell',detail:'3 sets x 5–6 reps per arm · Builds wrist/shoulder stability and pressing power',block:'Upper Overhead & Vertical'},
+    {name:'Hollow Body Hold',equip:'Bodyweight',detail:'3 sets x 45 sec · Press lower back flat into the floor; arms extended',block:'Upper Overhead & Vertical'}
+  ]},
+  5:{session:'Lower & Conditioning',category:'Bodyweight',exercises:[
+    {name:'Sandbag Ground-to-Over-Shoulder',equip:'65 lb Sandbag',detail:'4 sets x 5 reps per shoulder · Explosive hip drive from floor to shoulder',block:'Lower & Conditioning'},
+    {name:'Bulgarian Split Squats',equip:'Bodyweight or 50 lb Kettlebell',detail:'3 sets x 10–12 reps per leg · Bodyweight, or hold kettlebell in goblet position',block:'Lower & Conditioning'},
+    {name:'Sandbag Bear-Hug Carry',equip:'65 lb Sandbag',detail:'4 sets x 45–60 sec walk · Walk briskly, core braced, posture upright',block:'Lower & Conditioning'},
+    {name:'Gada 10-to-2s',equip:'10–25 lb Gada Club',detail:'3 sets x 10 reps per side · Explosive rotational core and upper-back work',block:'Lower & Conditioning'},
+    {name:'Plank-to-Push-Up',equip:'Bodyweight',detail:'3 sets x 10–12 reps · Transition from elbows to hands without rocking hips',block:'Lower & Conditioning'}
+  ]},
+  6:{session:'Rest / Mobility',category:'Active Rest',exercises:null,rest:true},
+  0:{session:'Rest / Mobility',category:'Active Rest',exercises:null,rest:true}
+};
+
+export function getHomeScheduleForDate(ds){return HOME_SCHEDULE[new Date(ds+'T12:00:00').getDay()]||HOME_SCHEDULE[0];}

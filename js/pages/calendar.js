@@ -13,7 +13,8 @@
 
 import { db } from '../store.js';
 import { today, dateStr } from '../util.js';
-import { getScheduleForDate, WCOLORS } from '../schedule.js';
+import { getActiveScheduleForDate } from '../derive.js';
+import { WCOLORS } from '../schedule.js';
 
 let currentCalView='week';
 
@@ -24,7 +25,7 @@ export function renderCalendar(view){
   if(view==='week'){for(let i=0;i<7;i++){const dt=new Date(now);dt.setDate(now.getDate()+i);days.push(dt);}document.getElementById('cal-range-label').textContent='Next 7 days';}
   else{const yr=now.getFullYear(),mo=now.getMonth();const first=new Date(yr,mo,1),last=new Date(yr,mo+1,0);for(let i=0;i<first.getDay();i++)days.push(null);for(let i=1;i<=last.getDate();i++)days.push(new Date(yr,mo,i));document.getElementById('cal-range-label').textContent=first.toLocaleDateString('en-US',{month:'long',year:'numeric'});}
   let html='<div class="cal-grid">';dayNames.forEach(n=>html+=`<div class="cal-day-name">${n}</div>`);
-  days.forEach(dt=>{if(!dt){html+='<div class="cal-day empty"></div>';return;}const ds=dateStr(dt),isToday=ds===today();const sched=getScheduleForDate(ds);const dev=d.deviations&&d.deviations[ds];const fast=d.fasts.find(f=>f.date===ds);const dotColor=WCOLORS[sched.category]||'#f7c46a';html+=`<div class="cal-day${isToday?' today':''}"><span class="cal-day-num" style="color:${isToday?'var(--accent)':'var(--text)'}">${dt.getDate()}</span><div class="cal-dots"><div class="cal-dot" style="background:${dev&&dev.type==='missed'?'var(--danger)':dotColor}"></div>${fast?'<div class="cal-dot" style="background:#4fd8c4;opacity:.5"></div>':''}</div><div class="cal-abbr">${sched.rest?'REST':sched.category.substring(0,3)}</div></div>`;});
+  days.forEach(dt=>{if(!dt){html+='<div class="cal-day empty"></div>';return;}const ds=dateStr(dt),isToday=ds===today();const sched=getActiveScheduleForDate(ds);const dev=d.deviations&&d.deviations[ds];const fast=d.fasts.find(f=>f.date===ds);const dotColor=WCOLORS[sched.category]||'#f7c46a';html+=`<div class="cal-day${isToday?' today':''}"><span class="cal-day-num" style="color:${isToday?'var(--accent)':'var(--text)'}">${dt.getDate()}</span><div class="cal-dots"><div class="cal-dot" style="background:${dev&&dev.type==='missed'?'var(--danger)':dotColor}"></div>${fast?'<div class="cal-dot" style="background:#4fd8c4;opacity:.5"></div>':''}</div><div class="cal-abbr">${sched.rest?'REST':sched.category.substring(0,3)}</div></div>`;});
   html+='</div>';document.getElementById('cal-container').innerHTML=html;
 }
 

@@ -16,7 +16,7 @@
 
 import { today, dateStr, addDays } from './util.js';
 import { db } from './store.js';
-import { PROGRESSION, SPEED_PCT, getScheduleForDate, PROGRAM_START } from './schedule.js';
+import { PROGRESSION, SPEED_PCT, getScheduleForDate, getHomeScheduleForDate, PROGRAM_START } from './schedule.js';
 
 // ---------------------------------------------------------------------------
 // Consistency-score averaging windows — ARCHITECTURE.md §4.
@@ -74,10 +74,53 @@ export function pausedDays(ds){
   },0);
 }
 
+// ---------------------------------------------------------------------------
+// Program start — a THIRD, distinct state alongside running and paused.
+//
+// Not started / running / paused. Not started means Alsruhe has never been
+// begun: there is no meaningful week number, and none should be displayed or
+// computed. Stored additively as d.programStart — a YYYY-MM-DD string once
+// Ryan taps Start, or null before that. A brand-new store (init()) and the
+// app.js migration guard both default it to null, NOT to PROGRAM_START — an
+// existing store gaining this field for the first time must not silently
+// become "already running", which is the exact bug this feature exists to
+// fix (a paused/never-started program showing a meaningless week number).
+//
+// PROGRAM_START (schedule.js) is kept, per §1.4's spirit, but its role is now
+// only a last-resort fallback if a stored programStart value is present but
+// malformed — so programWeek() below still cannot throw. It is no longer read
+// as "the" start date.
+// ---------------------------------------------------------------------------
+
+// The stored start date, or null while not started. Malformed stored values
+// (not a non-empty string) are treated as absent rather than repaired (§1.4).
+export function programStart(){
+  const d=db();
+  return (typeof d.programStart==='string'&&d.programStart)?d.programStart:null;
+}
+
+export function isProgramStarted(){return !!programStart();}
+
+// The schedule actually in effect for a date (ARCHITECTURE.md §9.0): Alsruhe
+// once started, otherwise the interim home routine. This is the ONE place
+// that decision is made — callers should reach for this instead of
+// getScheduleForDate()/getHomeScheduleForDate() directly so the routing rule
+// never has to be duplicated.
+export function getActiveScheduleForDate(ds){
+  return isProgramStarted()?getScheduleForDate(ds):getHomeScheduleForDate(ds);
+}
+
 // Elapsed days minus paused days, divided by seven. Unpausing therefore resumes
 // at the same program week instead of jumping ahead to wall-clock time.
+//
+// Returns null while the program has not been started — there is no program
+// week to report, and nothing here may throw or silently invent one.
 export function programWeek(ds){
-  const start=new Date(PROGRAM_START+'T12:00:00');const cur=new Date((ds||today())+'T12:00:00');
+  const startStr=programStart();
+  if(!startStr)return null;
+  let start=new Date(startStr+'T12:00:00');
+  if(isNaN(start))start=new Date(PROGRAM_START+'T12:00:00'); // malformed stored value — fall back rather than throw
+  const cur=new Date((ds||today())+'T12:00:00');
   if(isNaN(start)||isNaN(cur))return 1;
   const elapsed=Math.floor((cur-start)/86400000)-pausedDays(ds);
   return Math.max(1,Math.min(12,Math.floor(Math.max(0,elapsed)/7)+1));
@@ -219,6 +262,7 @@ export const FASTING_PROTOCOL={
 // window straddles a week boundary.
 export function isDeloadFastWeek(ds){
   if(isPaused(ds))return false;                       // no program week while dormant
+  if(!isProgramStarted())return false;                // no program week before Alsruhe starts
   const wk=programWeek(ds);
   if(wk===FASTING_PROTOCOL.TEST_WEEK)return false;    // never test a 1RM off a fast
   return FASTING_PROTOCOL.DELOAD_WEEKS.includes(wk);
@@ -266,7 +310,7 @@ export function calcFastHrs(fast){if(!fast||!fast.start)return 0;const s=new Dat
 // reasonable default rather than scoring as a failure.
 export function getSleepForDate(ds){const d=db();const logged=d.sleeps.find(s=>s.date===ds);if(logged)return logged;return{hours:7,deep:1.2,quality:3,_default:true};}
 
-export function getWorkoutForDate(ds){const d=db();const dev=d.deviations&&d.deviations[ds];if(dev&&dev.type==='swapped'&&dev.swap)return{type:dev.swap,date:ds,_swapped:true};if(dev&&dev.type==='missed')return null;const logged=d.workouts.find(w=>w.date===ds);if(logged)return logged;const sched=getScheduleForDate(ds);if(sched.rest)return{type:'Active Rest',date:ds,_assumed:true};return{type:sched.category,date:ds,_assumed:true};}
+export function getWorkoutForDate(ds){const d=db();const dev=d.deviations&&d.deviations[ds];if(dev&&dev.type==='swapped'&&dev.swap)return{type:dev.swap,date:ds,_swapped:true};if(dev&&dev.type==='missed')return null;const logged=d.workouts.find(w=>w.date===ds);if(logged)return logged;const sched=getActiveScheduleForDate(ds);if(sched.rest)return{type:'Active Rest',date:ds,_assumed:true};return{type:sched.category,date:ds,_assumed:true};}
 
 // ---------------------------------------------------------------------------
 // Per-exercise checkboxes — ARCHITECTURE.md §9.4.
@@ -290,7 +334,7 @@ export function exerciseLog(ds){
 // exercise, the stale tick is ignored rather than counted, so `checked` can
 // never exceed `total` and an old log cannot inflate a score above 100.
 export function exerciseProgress(ds){
-  const names=(getScheduleForDate(ds).exercises||[]).map(e=>e.name);
+  const names=(getActiveScheduleForDate(ds).exercises||[]).map(e=>e.name);
   const log=exerciseLog(ds);
   return{touched:log.touched,checked:names.filter(n=>log.checked.includes(n)).length,total:names.length};
 }
@@ -372,7 +416,7 @@ export function deviationType(ds){
 export function calcTrainingScore(ds){
   ds=ds||today();
   const isRestDay=new Date(ds+'T12:00:00').getDay()===0;
-  if(getScheduleForDate(ds).rest)return scheduleFallbackScore(ds,isRestDay);
+  if(getActiveScheduleForDate(ds).rest)return scheduleFallbackScore(ds,isRestDay);
   if(isPaused(ds))return hasStartedActivity(ds)?100:0;
   // AN EXPLICIT "MISSED" OUTRANKS THE CHECKBOXES — §9.5.
   //

@@ -14,8 +14,8 @@
 
 import { db, save } from '../store.js';
 import { today, esc } from '../util.js';
-import { getScheduleForDate, CATEGORY_COLORS, CATEGORY_BORDER, CATEGORY_COLOR_TEXT, PROGRESSION } from '../schedule.js';
-import { programWeek, mainLiftRx, openPause, pausedDays, isPaused, exerciseLog, exerciseProgress } from '../derive.js';
+import { CATEGORY_COLORS, CATEGORY_BORDER, CATEGORY_COLOR_TEXT, PROGRESSION } from '../schedule.js';
+import { programWeek, mainLiftRx, openPause, pausedDays, isPaused, isProgramStarted, getActiveScheduleForDate, exerciseLog, exerciseProgress } from '../derive.js';
 import { renderVitalsHeader } from '../components/vitals-header.js';
 import { renderHome, getSelectedDate, setDeviation, saveSwap } from './home.js';
 
@@ -27,7 +27,7 @@ export function renderTrainingPage(){
   renderProgramPause();
   const ds=getSelectedDate();
   updateTrainingSectionLabel(ds);
-  renderPrescription(ds,'training-rx-container');
+  renderPrescription(ds,'training-rx-container',true);
   renderDeviationTray();
 }
 
@@ -45,7 +45,14 @@ function updateTrainingSectionLabel(ds){
 }
 
 // ---------------------------------------------------------------------------
-// Program pause — ARCHITECTURE.md §9. TRAINING ONLY.
+// Program start / pause — ARCHITECTURE.md §9. TRAINING ONLY.
+//
+// THREE DISTINCT STATES: not started, running, paused.
+//
+// Not started: Alsruhe has never begun. There is no week number — programWeek()
+// returns null, and the card offers Start instead of Pause. Starting sets
+// today as the program's start date; week 1 then means week 1, not a
+// meaningless calendar-days count from a hardcoded constant.
 //
 // Pausing holds the 12-week program clock so unpausing resumes at the same
 // week. It changes nothing about fasting, sleep or dietary scoring. There is
@@ -53,9 +60,11 @@ function updateTrainingSectionLabel(ds){
 //
 // THE CONFIRMATION GATE IS DELIBERATE-ACTION PROTECTION, NOT SECURITY.
 // A random 3-digit challenge renders above a numeric keypad with a cancel
-// button, and the pause commits only on an exact match. Its whole job is to
+// button, and the action commits only on an exact match. Its whole job is to
 // make a pocket mis-tap impossible; anyone holding the phone can read the
-// number off the screen, which is fine — that is not the threat.
+// number off the screen, which is fine — that is not the threat. Start uses
+// the SAME gate as pause/resume, deliberately: this is a decision Ryan should
+// not trigger by mis-tap either.
 //
 // DO NOT simplify this to confirm(). A confirm dialog is one tap away from the
 // same accident, and Safari renders it as a system sheet the thumb is already
@@ -66,8 +75,9 @@ function updateTrainingSectionLabel(ds){
 // leave the store untouched.
 // ---------------------------------------------------------------------------
 
-// null when the gate is closed, else {action:'pause'|'resume', code, entry, msg}.
-// Deliberately module state, not stored: an abandoned gate must not survive.
+// null when the gate is closed, else {action:'pause'|'resume'|'start', code,
+// entry, msg}. Deliberately module state, not stored: an abandoned gate must
+// not survive.
 let gate=null;
 
 function newChallenge(){return String(Math.floor(100+Math.random()*900));}
@@ -79,6 +89,14 @@ export function renderProgramPause(){
 }
 
 function cardHtml(){
+  if(!isProgramStarted()){
+    return `<div class="pause-card">`+
+      `<div class="pause-state">Program not started</div>`+
+      `<div class="pause-sub">Training the interim home routine until Alsruhe begins.</div>`+
+      `<button class="pause-btn" onclick="openPauseGate('start')">Start program</button>`+
+      `<div class="pause-hint">Starting sets today as Week 1, day 1. Fasting, sleep and dietary scoring are unaffected either way.</div>`+
+    `</div>`;
+  }
   const open=openPause();
   const ds=today();
   const wk=programWeek(ds);
@@ -102,7 +120,7 @@ function cardHtml(){
 }
 
 function gateHtml(){
-  const verb=gate.action==='pause'?'pause':'resume';
+  const verb=gate.action; // 'pause' | 'resume' | 'start' — all read fine as-is
   const slots=[0,1,2].map(i=>`<span class="keypad-slot${gate.entry.length>i?' is-filled':''}">${gate.entry[i]||''}</span>`).join('');
   const keys=['1','2','3','4','5','6','7','8','9'].map(k=>`<button class="keypad-key" onclick="pauseGateKey('${k}')">${k}</button>`).join('');
   return `<div class="pause-card">`+
@@ -144,7 +162,9 @@ export function pauseGateKey(k){
     if(gate.entry===gate.code){
       const action=gate.action;
       gate=null;
-      if(action==='pause')pauseProgram();else resumeProgram();
+      if(action==='pause')pauseProgram();
+      else if(action==='resume')resumeProgram();
+      else if(action==='start')startProgram();
       renderTrainingPage();
       return;
     }
@@ -172,6 +192,16 @@ function resumeProgram(){
     const p=d.programPauses[i];
     if(p&&p.start&&!p.end){p.end=today();save(d);return;}
   }
+}
+
+// Writes the explicit program start date (§9.0) — a one-way transition out of
+// "not started". Distinct from PROGRAM_START (schedule.js), which is now only
+// a malformed-data fallback, never a semantic "already running" signal.
+function startProgram(){
+  const d=db();
+  if(typeof d.programStart==='string'&&d.programStart)return; // already started — no-op
+  d.programStart=today();
+  save(d);
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +239,7 @@ function progressHtml(prog,log,dormant){
 // leaves the day marked as worked, which is what makes "touched but empty"
 // score 0 instead of reverting to the assumed-done default.
 export function toggleExercise(ds,idx){
-  const ex=(getScheduleForDate(ds).exercises||[])[idx];
+  const ex=(getActiveScheduleForDate(ds).exercises||[])[idx];
   if(!ex)return;
   const d=db();
   if(!d.exerciseLogs||typeof d.exerciseLogs!=='object'||Array.isArray(d.exerciseLogs))d.exerciseLogs={};
@@ -289,7 +319,7 @@ export function trainingSetDeviation(type){
   const wasActive=(((db().deviations||{})[ds])||{}).type===type;
   setDeviation(type);
   swapAreaOpen=(type==='swapped'&&!wasActive);
-  renderPrescription(ds,'training-rx-container');
+  renderPrescription(ds,'training-rx-container',true);
   renderDeviationTray();
 }
 
@@ -297,20 +327,32 @@ export function trainingSaveSwap(){
   const sel=document.getElementById('training-dev-swap-select');
   saveSwap(sel?sel.value:'Other');
   swapAreaOpen=false;
-  renderPrescription(getSelectedDate(),'training-rx-container');
+  renderPrescription(getSelectedDate(),'training-rx-container',true);
   renderDeviationTray();
 }
 
 // containerId lets the same prescription card mount on Home and on the
-// Training page without a second copy of the renderer.
+// Training page without a second copy of the renderer. `interactive` is the
+// ONE parameter controlling whether the checkboxes actually toggle — Home
+// passes false so the card is visible and accurate but genuinely inert;
+// Training passes true. This is deliberately the same renderer, not a fork
+// (ARCHITECTURE.md §9.4/§9.6 and the Home read-only rule both depend on it).
+// Anything other than the literal `false` is treated as interactive, so
+// existing 2-argument callers keep working unchanged.
+//
 // Deviation notes are DEPRECATED: the note input was removed and nothing writes
 // `note` any more. Existing notes stay in storage and still render here, so the
 // value is HTML-escaped on the way out — it used to be injected raw. Do not
 // delete the field from stored records; §1.4 forbids it.
-export function renderPrescription(ds,containerId){
-  const sched=getScheduleForDate(ds);const d=db();const dev=d.deviations&&d.deviations[ds];const catColor=CATEGORY_COLOR_TEXT[sched.category]||'var(--text)';const catBg=CATEGORY_COLORS[sched.category]||'transparent';const catBorder=CATEGORY_BORDER[sched.category]||'var(--border)';const dayName=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date(ds+'T12:00:00').getDay()];
-  const wk=programWeek(ds);const phase=PROGRESSION[wk-1].phase;
-  let html=`<div class="rx-card" style="border-color:${catBorder};background:${catBg}"><div class="rx-header"><div><div class="rx-day-label">${dayName}</div><div class="rx-session-name">${sched.session}</div><div class="rx-week-tag">Week ${wk} of 12 · ${phase}</div></div><div class="rx-category-tag" style="color:${catColor};background:rgba(0,0,0,.2);border:1px solid ${catBorder}">${sched.category}</div></div>`;
+export function renderPrescription(ds,containerId,interactive){
+  const editable=interactive!==false;
+  const sched=getActiveScheduleForDate(ds);const d=db();const dev=d.deviations&&d.deviations[ds];const catColor=CATEGORY_COLOR_TEXT[sched.category]||'var(--text)';const catBg=CATEGORY_COLORS[sched.category]||'transparent';const catBorder=CATEGORY_BORDER[sched.category]||'var(--border)';const dayName=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date(ds+'T12:00:00').getDay()];
+  // wk is null while the program has not been started (derive.js
+  // programWeek()) — the interim home routine has no week number at all, not
+  // week 1 and not a computed one. Nothing below may throw on that null.
+  const wk=programWeek(ds);const phase=(wk!=null)?PROGRESSION[wk-1].phase:null;
+  const weekTag=(wk!=null)?`Week ${wk} of 12 · ${phase}`:'Program not started';
+  let html=`<div class="rx-card" style="border-color:${catBorder};background:${catBg}"><div class="rx-header"><div><div class="rx-day-label">${dayName}</div><div class="rx-session-name">${sched.session}</div><div class="rx-week-tag">${weekTag}</div></div><div class="rx-category-tag" style="color:${catColor};background:rgba(0,0,0,.2);border:1px solid ${catBorder}">${sched.category}</div></div>`;
   if(dev&&dev.type==='missed')html+=`<div style="padding:0 16px 16px"><div class="alert err" style="margin:0">✗ Missed</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${esc(dev.note)}</div>`:''}</div>`;
   else if(dev&&dev.type==='swapped')html+=`<div style="padding:0 16px 16px"><div class="alert warn" style="margin:0">↔ Swapped to: ${dev.swap||'other'}</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${esc(dev.note)}</div>`:''}</div>`;
   else if(dev&&dev.type==='completed')html+=`<div style="padding:0 16px 16px"><div class="alert success" style="margin:0">✓ Marked Completed</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${esc(dev.note)}</div>`:''}</div>`;
@@ -336,7 +378,13 @@ export function renderPrescription(ds,containerId){
         const done=log.checked.includes(ex.name);
         let line='';
         if(ex.main&&rx)line=`<div class="rx-main-line${rx.weight==='set TM'?' rx-no-tm':''}"><div class="rx-main-rx">Week ${rx.week} — ${rx.phase} — ${rx.setsReps} @ ${rx.pctLabel} — ${rx.weight}</div><div class="rx-main-meta">Rest ${rx.rest} · ${rx.objective}</div></div>`;
-        html+=`<button type="button" class="rx-exercise-item rx-ex-toggle${done?' is-done':''}" aria-pressed="${done?'true':'false'}" onclick="toggleExercise('${ds}',${idx})">`+
+        // Home renders this card with editable=false: no onclick attribute at
+        // all (nothing to fire) plus the native `disabled` attribute, so a tap
+        // is genuinely inert rather than merely styled to look that way.
+        // Training always renders editable=true, unchanged.
+        const clickAttr=editable?` onclick="toggleExercise('${ds}',${idx})"`:'';
+        const disabledAttr=editable?'':' disabled';
+        html+=`<button type="button" class="rx-exercise-item rx-ex-toggle${done?' is-done':''}" aria-pressed="${done?'true':'false'}"${clickAttr}${disabledAttr}>`+
           `<span class="rx-ex-box">${done?'✓':''}</span>`+
           `<span class="rx-ex-num">${marker}</span>`+
           `<div style="flex:1"><div class="rx-ex-name">${ex.name}</div><div class="rx-ex-equip">${ex.equip}</div>${ex.detail?`<div class="rx-ex-detail">${ex.detail}</div>`:''}${line}</div>`+

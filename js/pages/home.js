@@ -15,8 +15,8 @@
 
 import { db, save } from '../store.js';
 import { today, dateStr, addDays } from '../util.js';
-import { calcScore, sc, consistencyRows, WEEK_WINDOW_DAYS, MONTH_WINDOW_DAYS } from '../derive.js';
-import { getScheduleForDate, WCOLORS } from '../schedule.js';
+import { calcScore, sc, consistencyRows, getActiveScheduleForDate, WEEK_WINDOW_DAYS, MONTH_WINDOW_DAYS } from '../derive.js';
+import { WCOLORS } from '../schedule.js';
 import { renderPrescription } from './training.js';
 import { renderFastingStatus } from './fasting.js';
 import { renderVitalsHeader } from '../components/vitals-header.js';
@@ -29,7 +29,7 @@ export function buildDayStrip(){
   const strip=document.getElementById('day-strip');const now=new Date();const days=[];for(let i=-7;i<=7;i++)days.push(addDays(now,i));
   const d=db();
   strip.innerHTML=days.map(dt=>{
-    const ds=dateStr(dt);const dow=['Su','Mo','Tu','We','Th','Fr','Sa'][dt.getDay()];const sched=getScheduleForDate(ds);const isToday=ds===today();const isSelected=ds===selectedDate;
+    const ds=dateStr(dt);const dow=['Su','Mo','Tu','We','Th','Fr','Sa'][dt.getDay()];const sched=getActiveScheduleForDate(ds);const isToday=ds===today();const isSelected=ds===selectedDate;
     const dev=d.deviations&&d.deviations[ds];let dotStyle=`background:${WCOLORS[sched.category]||'#6b6b8a'}`;if(dev&&dev.type==='missed')dotStyle='background:var(--danger)';if(dev&&dev.type==='completed')dotStyle='background:var(--accent5)';
     const abbr=sched.rest?'REST':sched.category.substring(0,3).toUpperCase();
     return `<div class="day-card${isToday?' is-today':''}${isSelected?' selected':''}" onclick="selectDay('${ds}')"><span class="dc-dow">${dow}</span><span class="dc-num">${dt.getDate()}</span><span class="dc-type">${abbr}</span><div class="dc-dot" style="${dotStyle}"></div></div>`;

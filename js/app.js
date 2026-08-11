@@ -145,6 +145,11 @@ document.getElementById('import-file-input').addEventListener('change', handleIm
   // SEED ONCE (§8.1). Only when the key is absent — an existing empty array
   // means Ryan deleted them all, and re-seeding would bring them back.
   if(!Array.isArray(d.supplements)){d.supplements=seedSupplements();changed=true;}
+  // Additive: a store that predates the not-started/running/paused split gets
+  // programStart backfilled to null (NOT to PROGRAM_START) — a store gaining
+  // this field for the first time must read as "not started", not silently
+  // become "already running since a hardcoded date". See derive.js.
+  if(!('programStart' in d)){d.programStart=null;changed=true;}
   if(changed)save(d);
 })();
 
