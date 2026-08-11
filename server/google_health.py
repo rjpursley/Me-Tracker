@@ -25,25 +25,76 @@
 #      for 7 days for debugging (purge_old_raw()) and never served to the
 #      client (server/app.py's /api/vitals routes read the daily store only).
 #
-# HONESTY NOTE ON FIELD NAMES: the Google Health API's public docs (as of
-# this build — developers.google.com/health) confirm the endpoint shapes,
-# pagination parameters (pageSize/pageToken/nextPageToken) and the general
-# DataPoint union pattern, but do not fully specify every value field name for
-# every data type, or the exact `filter` grammar per type. This file is
-# written defensively as a result: _value_block()/_numeric() look for a
-# typed value under a set of plausible field names rather than assuming one,
-# fetch_data_points() tries two plausible filter grammars before giving up on
-# a type, and every pull logs the raw shape of its first result to
-# server/logs/sync.log so the *real* shape is visible and correctable the
-# first time this runs against live data. Treat that log as the source of
-# truth over this comment if they disagree.
+# -----------------------------------------------------------------------------
+# 2026-08-11 FIX — data type names and filter grammar were wrong; every pull
+# 400'd on the first real sync. Root cause, from Google's own discovery
+# document (https://health.googleapis.com/$discovery/rest?version=v4 — see
+# ARCHITECTURE.md §6.6 for how to fetch and read it):
+#
+#   - Two of ten internal type keys ('daily_hrv', 'time_in_hr_zone') were
+#     abbreviated shorthand that did NOT match Google's real snake_case data
+#     type identifier ('daily_heart_rate_variability',
+#     'time_in_heart_rate_zone'). The filter string's data-type prefix has to
+#     be the REAL identifier — an abbreviation is a different, nonexistent
+#     type as far as the API is concerned. This produced
+#     INVALID_DATA_POINT_FILTER_DATA_TYPE_RESTRICTION.
+#   - Every type's filter used the wrong MEMBER PATH: it invented an
+#     `interval.civil_end_time` filter field that only exists for `sleep`,
+#     and used `<=` where the API only accepts `<`. The real grammar depends
+#     on the type's shape — interval, sample, daily-summary, or (uniquely)
+#     sleep, which filters by END time, not start — see FILTER_CATEGORY and
+#     _build_filter() below. This produced
+#     INVALID_DATA_POINT_FILTER_DATA_TYPE_MEMBER.
+#
+# DATA_TYPES keys are now asserted to equal their own kebab-case path in
+# snake_case, so the first bug above cannot silently reappear — a mismatched
+# key now fails at import time, not as a 400 discovered in production.
+#
+# The previous "guess a filter shape, retry the other one on 400" logic is
+# gone. It was a reasonable hedge before any of this was confirmed, but it is
+# no longer appropriate now that the grammar is known from an authoritative
+# source rather than guessed — per the instruction that produced this fix, a
+# wrong name failing loudly beats a guess that might silently return the
+# wrong thing. If a 400 happens now, it is logged in FULL (see rule 3 below)
+# and treated as a real, unexpected problem, not a cue to guess again.
+#
+# ALSO FIXED, discovered while tracing why fixing the filter alone still
+# produced empty aggregates:
+#   - Several numeric fields (beatsPerMinute, count, averageHeartRateBeats-
+#     PerMinute, ...) are int64 and Google serializes those as JSON STRINGS,
+#     not numbers — _numeric() only accepted real numbers and silently
+#     dropped every one of them.
+#   - Daily-summary types (daily_resting_heart_rate, etc.) carry a `date`
+#     object ({year,month,day}), not a timestamp — the old day-bucketing
+#     code had nothing that looked for it, so every daily-type row was
+#     silently dropped before aggregation ever saw it.
+#   - Sample-shaped types (heart_rate, weight, body_fat) carry their time
+#     under `sampleTime.physicalTime` — the old bucketing code read the
+#     whole `sampleTime` object as if it were a timestamp string, which
+#     never matches a string check and again silently dropped every row.
+#   - `time_in_heart_rate_zone` has no numeric "minutes" field at all — it's
+#     an interval (heartRateZoneType + start/end) and the minutes have to be
+#     computed from the interval's duration.
+#   - Sleep stage minutes come from `summary.stagesSummary` (Google already
+#     computes this) when present, falling back to summing raw `stages[]`
+#     interval durations only if it isn't.
+# See rule 3 below for how this whole class of mistake gets caught faster
+# next time.
+#
+# 3. LOG THE FULL ERROR BODY, NEVER A TRUNCATED ONE. A previous version of
+#    this file sliced HTTP error bodies to 300 characters, which cut Google's
+#    response off right before the `details` array — exactly the part that
+#    names the invalid filter member. That truncation is why this bug took
+#    two sessions to fix instead of one. fetch_data_points() below logs
+#    resp.text in full, unconditionally, on every non-200 and on every
+#    fallback-mode-style retry. Do not reintroduce a slice.
 # -----------------------------------------------------------------------------
 
 import json
 import logging
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -75,28 +126,60 @@ DEFAULT_RAW_RETENTION_DAYS = 7
 MAX_RETRIES = 5
 RETRY_BACKOFF_BASE = 2.0  # seconds; multiplied by attempt number
 
-# data type key (used internally + in the filter string) -> URL path segment
-# (kebab-case, per the API's own kebab-in-path / snake-in-filter convention).
+# data type key (also the filter string's data-type prefix) -> URL path
+# segment (kebab-case). BOTH taken directly from Google's discovery document
+# (see the 2026-08-11 fix note above) — key is deliberately just path with
+# '-' replaced by '_', asserted below so the two can never drift apart again.
 DATA_TYPES = {
     'exercise': 'exercise',
     'steps': 'steps',
     'heart_rate': 'heart-rate',
     'daily_resting_heart_rate': 'daily-resting-heart-rate',
-    'daily_hrv': 'daily-heart-rate-variability',
-    'time_in_hr_zone': 'time-in-heart-rate-zone',
+    'daily_heart_rate_variability': 'daily-heart-rate-variability',
+    'time_in_heart_rate_zone': 'time-in-heart-rate-zone',
     'weight': 'weight',
     'body_fat': 'body-fat',
-    'vo2_max': 'daily-vo2-max',
+    'daily_vo2_max': 'daily-vo2-max',
     'sleep': 'sleep',
 }
 
-# Session-shaped types (an interval with a start and an end) vs sample-shaped
-# types (one instant, one value). Confirmed for exercise/sleep/steps/weight/
-# heart_rate by the API's DataPoint union docs; the daily-* and
-# time-in-heart-rate-zone types are a best guess (interval, since "time IN a
-# zone" and "OF a day" both describe a span) — fetch_data_points() falls back
-# to the other shape automatically if this guess is wrong for a given type.
-SESSION_TYPES = {'exercise', 'sleep', 'steps', 'time_in_hr_zone'}
+for _key, _path in DATA_TYPES.items():
+    assert _key == _path.replace('-', '_'), (
+        f"DATA_TYPES key {_key!r} must equal its path {_path!r} in snake_case "
+        "— the filter string is built from this key, so a mismatch here is "
+        "exactly the 2026-08-11 bug (see module docstring) shipping again."
+    )
+
+# Which time-bounding filter member each type accepts, per Google's discovery
+# document (dataPoints.list's `filter` parameter description — see
+# ARCHITECTURE.md §6.6). Four shapes, all confirmed against that document,
+# none guessed:
+#   'interval' -> {type}.interval.civil_start_time — covers BOTH plain
+#                 interval types (steps, time_in_heart_rate_zone) and session
+#                 types other than sleep/ECG (exercise). The doc gives these
+#                 as separate bullets but they are the identical field
+#                 pattern.
+#   'sample'   -> {type}.sample_time.civil_time (heart_rate, weight, body_fat)
+#   'daily'    -> {type}.date — DATE ONLY (YYYY-MM-DD), no time component
+#                 (daily_resting_heart_rate, daily_heart_rate_variability,
+#                 daily_vo2_max)
+#   'sleep'    -> sleep.interval.civil_end_time — SLEEP IS THE ONE TYPE
+#                 FILTERED BY ITS END TIME, NOT START. A session that starts
+#                 one calendar day and ends the next is attributed to the day
+#                 it ENDED (the wake day) — _bucket_by_day() below follows
+#                 the same convention for consistency.
+FILTER_CATEGORY = {
+    'exercise': 'interval',
+    'steps': 'interval',
+    'heart_rate': 'sample',
+    'daily_resting_heart_rate': 'daily',
+    'daily_heart_rate_variability': 'daily',
+    'time_in_heart_rate_zone': 'interval',
+    'weight': 'sample',
+    'body_fat': 'sample',
+    'daily_vo2_max': 'daily',
+    'sleep': 'sleep',
+}
 
 # exercise/sleep are session logs, not high-frequency samples — the API caps
 # their page size at 25 regardless of what's requested. Everything else can
@@ -226,16 +309,27 @@ def get_credentials() -> Credentials:
 # HTTP + pagination.
 # -----------------------------------------------------------------------------
 
-def _iso(dt):
-    return dt.strftime('%Y-%m-%dT%H:%M:%S')
-
-
-def _build_filter(data_type_key, start_dt, end_dt, mode):
-    if mode == 'interval':
-        return (f'{data_type_key}.interval.civil_start_time >= "{_iso(start_dt)}" AND '
-                f'{data_type_key}.interval.civil_end_time <= "{_iso(end_dt)}"')
-    return (f'{data_type_key}.sample_time.civil_time >= "{_iso(start_dt)}" AND '
-            f'{data_type_key}.sample_time.civil_time <= "{_iso(end_dt)}"')
+def _build_filter(data_type_key, start_dt, end_dt):
+    """Builds the filter string for this type's FILTER_CATEGORY. Dates only
+    (YYYY-MM-DD) — every pattern in Google's discovery doc accepts a bare
+    civil date, which sidesteps any ambiguity about second-level boundaries.
+    end_dt is EXCLUSIVE (the day after the last day wanted): the API only
+    supports `>=` and `<` on these fields, never `<=` — using `<=` was one of
+    the two filter bugs fixed 2026-08-11 (see module docstring)."""
+    start = start_dt.date().isoformat()
+    end_excl = (end_dt.date() + timedelta(days=1)).isoformat()
+    category = FILTER_CATEGORY[data_type_key]
+    if category == 'interval':
+        field = f'{data_type_key}.interval.civil_start_time'
+    elif category == 'sample':
+        field = f'{data_type_key}.sample_time.civil_time'
+    elif category == 'daily':
+        field = f'{data_type_key}.date'
+    elif category == 'sleep':
+        field = 'sleep.interval.civil_end_time'
+    else:
+        raise AssertionError(f"no filter grammar defined for category {category!r}")
+    return f'{field} >= "{start}" AND {field} < "{end_excl}"'
 
 
 def _request_with_retry(url, params, access_token, session):
@@ -263,40 +357,40 @@ def fetch_data_points(data_type_key, start_dt, end_dt, credentials, session=None
     Returns (points, page_count). Raises GoogleHealthSyncError if the pull
     could not be completed; callers must treat that as "unknown", never as
     "empty", and must not overwrite previously stored data for days this call
-    covered."""
+    covered.
+
+    The filter is now built ONCE from a known-correct grammar (FILTER_CATEGORY,
+    confirmed against Google's discovery document) rather than guessed and
+    retried — see the 2026-08-11 fix note at the top of this file. A 400 here
+    is a genuinely unexpected problem, not a cue to try something else; it is
+    logged in full and raised."""
     session = session or requests.Session()
     path = DATA_TYPES[data_type_key]
     url = f"{API_BASE}/users/me/dataTypes/{path}/dataPoints"
     page_size = MAX_PAGE_SIZE.get(data_type_key, DEFAULT_PAGE_SIZE)
+    filt = _build_filter(data_type_key, start_dt, end_dt)
 
-    filter_mode = 'interval' if data_type_key in SESSION_TYPES else 'sample'
     points = []
     page_token = None
     page_count = 0
-    tried_fallback_mode = False
 
     while True:
         if credentials.expired:
             credentials.refresh(GoogleAuthRequest())
 
-        params = {"pageSize": page_size, "filter": _build_filter(data_type_key, start_dt, end_dt, filter_mode)}
+        params = {"pageSize": page_size, "filter": filt}
         if page_token:
             params["pageToken"] = page_token
 
         resp = _request_with_retry(url, params, credentials.token, session)
 
-        if resp.status_code == 400 and not tried_fallback_mode and not page_token:
-            # The filter grammar for this data type may not match our first
-            # guess (see the module docstring's honesty note). Try the other
-            # shape once, from the start, before giving up on this type.
-            tried_fallback_mode = True
-            filter_mode = 'sample' if filter_mode == 'interval' else 'interval'
-            logger.warning("%s: filter rejected (400) in mode=%s, retrying as mode=%s",
-                            data_type_key, 'sample' if filter_mode == 'interval' else 'interval', filter_mode)
-            continue
-
         if resp.status_code != 200:
-            raise GoogleHealthSyncError(f"{data_type_key}: HTTP {resp.status_code} — {resp.text[:300]}")
+            # FULL body, never truncated — rule 3 in the module docstring.
+            # Google's ErrorInfo/BadRequest details name the exact offending
+            # filter member when the filter is the problem; a short slice
+            # used to cut that off, which is why this took longer to fix
+            # than it should have the first time.
+            raise GoogleHealthSyncError(f"{data_type_key}: HTTP {resp.status_code} — {resp.text}")
 
         try:
             body = resp.json()
@@ -317,10 +411,9 @@ def fetch_data_points(data_type_key, start_dt, end_dt, credentials, session=None
         if page_count > 500:
             # A real safety valve, not an expected outcome — 500 pages at
             # 1000/page is 500,000 rows for one type in one sync window. If
-            # this ever fires it means either the filter isn't bounding the
-            # range (see the honesty note) or something is genuinely wrong;
-            # either way, looping forever is worse than stopping and logging.
-            logger.error("%s: stopped after 500 pages — filter may not be bounding the range correctly", data_type_key)
+            # this ever fires, something is genuinely wrong; looping forever
+            # is worse than stopping and logging.
+            logger.error("%s: stopped after 500 pages — investigate before assuming this is normal", data_type_key)
             break
 
     logger.info("%s: pulled %d dataPoint(s) across %d page(s) for %s..%s",
@@ -329,17 +422,23 @@ def fetch_data_points(data_type_key, start_dt, end_dt, credentials, session=None
 
 
 # -----------------------------------------------------------------------------
-# Parsing — defensive on purpose. See the module docstring's honesty note.
+# Parsing. Field names below are taken from Google's discovery document
+# schemas (Steps, Exercise, Sleep, HeartRate, Weight, BodyFat,
+# DailyRestingHeartRate, DailyHeartRateVariability, DailyVO2Max,
+# TimeInHeartRateZone, MetricsSummary, SleepStage, SleepSummary — see
+# ARCHITECTURE.md §6.6), not guessed. _numeric()'s multi-candidate lists stay
+# defensive for genuinely optional/alternate fields (e.g. a metric that may
+# be absent for a given source), not because the primary field name is in
+# doubt.
 # -----------------------------------------------------------------------------
 
-_TIMING_KEYS = {'name', 'dataSource', 'startTime', 'endTime', 'startUtcOffset',
-                'endUtcOffset', 'physicalTime', 'utcOffset'}
+_TIMING_KEYS = {'name', 'dataSource'}
 
 
 def _value_block(dp):
-    """Each dataPoint is a union: exactly one typed field alongside timing/
-    metadata fields. Returns (key, value_dict) for the first field that isn't
-    a known timing/metadata key."""
+    """Each dataPoint is a union: exactly one typed field (the data type's
+    own name, e.g. `heartRate`, `dailyRestingHeartRate`) alongside `name` and
+    `dataSource`. Returns (key, value_dict) for that field."""
     if not isinstance(dp, dict):
         return None, None
     for k, v in dp.items():
@@ -351,16 +450,31 @@ def _value_block(dp):
 
 
 def _numeric(block, candidates):
+    """Several int64 fields (beatsPerMinute, count, ...) are serialized by
+    Google as JSON STRINGS, not numbers — standard protobuf-JSON handling to
+    avoid JS float-precision loss on large integers. Accept both; this was
+    silently dropping every one of these fields before the 2026-08-11 fix."""
     if not isinstance(block, dict):
         return None
     for c in candidates:
         v = block.get(c)
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)):
             return float(v)
+        if isinstance(v, str):
+            try:
+                return float(v)
+            except ValueError:
+                continue
     return None
 
 
 def _local_date_str(ts):
+    """RFC-3339 timestamp string -> local calendar date string. Returns None
+    for anything that isn't a parseable string — including, notably, a raw
+    dict passed by mistake (a bug this function guards against but does not
+    silently paper over: the caller drops that data point instead)."""
     if not ts or not isinstance(ts, str):
         return None
     try:
@@ -370,21 +484,64 @@ def _local_date_str(ts):
     return dt.date().isoformat()
 
 
-def _bucket_by_day(points):
-    """Groups dataPoints by their LOCAL calendar date (ARCHITECTURE.md §12 —
-    a day is a local-calendar concept, not a UTC one). Looks for a start/
-    sample time at the top level first, then inside the value block's own
-    interval/sampleTime, since the union means we don't know the field name
-    for a given type in advance."""
+def _date_obj_to_str(date_obj):
+    """Google's `Date` type ({year, month, day} integers) — used by daily-
+    summary types INSTEAD OF a timestamp. Missing before the 2026-08-11 fix,
+    which meant every daily-cadence row (resting HR, HRV, VO2 max) was
+    silently dropped at the bucketing step before aggregation ever ran."""
+    if not isinstance(date_obj, dict):
+        return None
+    y, m, d = date_obj.get('year'), date_obj.get('month'), date_obj.get('day')
+    if not (y and m and d):
+        return None
+    try:
+        return date(y, m, d).isoformat()
+    except (TypeError, ValueError):
+        return None
+
+
+def _interval_minutes(interval):
+    """Minutes between an ObservationTimeInterval/SessionTimeInterval's
+    startTime and endTime. Used where the API gives a span but no explicit
+    duration field (time_in_heart_rate_zone; sleep stages when
+    summary.stagesSummary isn't present)."""
+    if not isinstance(interval, dict):
+        return None
+    try:
+        s = datetime.fromisoformat(str(interval.get('startTime', '')).replace('Z', '+00:00'))
+        e = datetime.fromisoformat(str(interval.get('endTime', '')).replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    return max(0.0, (e - s).total_seconds() / 60.0)
+
+
+def _bucket_by_day(points, data_type_key):
+    """Groups dataPoints by LOCAL calendar date (ARCHITECTURE.md §12 — a day
+    is a local-calendar concept, not a UTC one). WHERE the date comes from
+    depends on the type's shape (FILTER_CATEGORY):
+      - 'daily'  -> the value block's own `date` object
+      - 'sample' -> value.sampleTime.physicalTime
+      - 'sleep'  -> value.interval.endTime — the WAKE day, matching how
+                    Google itself recommends filtering sleep (§ module
+                    docstring)
+      - 'interval' (steps, time_in_heart_rate_zone, exercise) -> value.interval.startTime
+    Any point whose date can't be determined is dropped rather than guessed
+    into a day — silently mis-bucketed health data is worse than a data
+    point that's simply missing that sync."""
+    category = FILTER_CATEGORY[data_type_key]
     buckets = {}
     for dp in points:
-        ts = dp.get('startTime') or dp.get('physicalTime')
-        if not ts:
-            _, block = _value_block(dp)
-            if isinstance(block, dict):
-                interval = block.get('interval') or {}
-                ts = interval.get('startTime') or block.get('sampleTime') or block.get('physicalTime')
-        day = _local_date_str(ts)
+        _, block = _value_block(dp)
+        if not isinstance(block, dict):
+            continue
+        if category == 'daily':
+            day = _date_obj_to_str(block.get('date'))
+        elif category == 'sample':
+            day = _local_date_str((block.get('sampleTime') or {}).get('physicalTime'))
+        elif category == 'sleep':
+            day = _local_date_str((block.get('interval') or {}).get('endTime'))
+        else:
+            day = _local_date_str((block.get('interval') or {}).get('startTime'))
         if day is None:
             continue
         buckets.setdefault(day, []).append(dp)
@@ -418,10 +575,11 @@ def aggregate_day(date_str, raw):
     }
 
     if raw.get('steps'):
+        # Steps schema: {interval, count} — count is int64-as-string.
         total, any_seen = 0.0, False
         for dp in raw['steps']:
             _, block = _value_block(dp)
-            v = _numeric(block, ['count', 'steps', 'value'])
+            v = _numeric(block, ['count'])
             if v is not None:
                 total += v
                 any_seen = True
@@ -429,88 +587,116 @@ def aggregate_day(date_str, raw):
             summary['steps'] = int(round(total))
 
     if raw.get('heart_rate'):
+        # HeartRate schema: {beatsPerMinute, sampleTime, metadata}.
         latest_ts, latest_bpm = None, None
         for dp in raw['heart_rate']:
             _, block = _value_block(dp)
-            v = _numeric(block, ['beatsPerMinute', 'bpm', 'value'])
-            ts = dp.get('physicalTime') or dp.get('startTime')
+            if not isinstance(block, dict):
+                continue
+            v = _numeric(block, ['beatsPerMinute'])
+            ts = (block.get('sampleTime') or {}).get('physicalTime')
             if v is not None and ts and (latest_ts is None or ts > latest_ts):
                 latest_ts, latest_bpm = ts, v
         if latest_bpm is not None:
             summary['latestHR'] = {'bpm': round(latest_bpm), 'at': latest_ts}
 
     if raw.get('daily_resting_heart_rate'):
+        # DailyRestingHeartRate schema: {beatsPerMinute, date, metadata}.
         for dp in raw['daily_resting_heart_rate']:
             _, block = _value_block(dp)
-            v = _numeric(block, ['beatsPerMinute', 'bpm', 'value'])
+            v = _numeric(block, ['beatsPerMinute'])
             if v is not None:
                 summary['restingHR'] = round(v)
 
-    if raw.get('daily_hrv'):
-        for dp in raw['daily_hrv']:
+    if raw.get('daily_heart_rate_variability'):
+        # DailyHeartRateVariability schema: at least one of
+        # averageHeartRateVariabilityMilliseconds (the headline figure),
+        # nonRemHeartRateBeatsPerMinute, entropy, or the deep-sleep RMSSD is
+        # set — never all four. Prefer the headline figure; the deep-sleep
+        # RMSSD is a narrower, related-but-different number used only if
+        # nothing else is present.
+        for dp in raw['daily_heart_rate_variability']:
             _, block = _value_block(dp)
-            v = _numeric(block, ['milliseconds', 'rmssdMillis', 'value'])
+            v = _numeric(block, ['averageHeartRateVariabilityMilliseconds',
+                                  'deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds'])
             if v is not None:
                 summary['hrv'] = round(v, 1)
 
-    if raw.get('vo2_max'):
-        for dp in raw['vo2_max']:
+    if raw.get('daily_vo2_max'):
+        # DailyVO2Max schema: {date, vo2Max, cardioFitnessLevel, ...}.
+        for dp in raw['daily_vo2_max']:
             _, block = _value_block(dp)
-            v = _numeric(block, ['vo2Max', 'mlPerKgMin', 'score', 'value'])
+            v = _numeric(block, ['vo2Max'])
             if v is not None:
                 summary['vo2Max'] = round(v, 1)
 
     if raw.get('weight'):
+        # Weight schema: {sampleTime, weightGrams, notes}.
         for dp in raw['weight']:
             _, block = _value_block(dp)
-            grams = _numeric(block, ['weightGrams', 'grams'])
+            grams = _numeric(block, ['weightGrams'])
             if grams is not None:
                 summary['weightLbs'] = round(grams / 453.59237, 1)
-            else:
-                lbs = _numeric(block, ['weightLbs', 'lbs', 'value'])
-                if lbs is not None:
-                    summary['weightLbs'] = round(lbs, 1)
 
     if raw.get('body_fat'):
+        # BodyFat schema: {percentage, sampleTime}.
         for dp in raw['body_fat']:
             _, block = _value_block(dp)
-            v = _numeric(block, ['percentage', 'percent', 'value'])
+            v = _numeric(block, ['percentage'])
             if v is not None:
                 summary['bodyFatPct'] = round(v, 1)
 
-    if raw.get('time_in_hr_zone'):
-        # Passed through under whatever zone labels the device/API uses.
-        # NOT the app's own Karvonen zones (§5) — those are computed
-        # client-side for the live header only, from live HR + weekly resting
-        # HR + age. This is a separate, device-defined historical bucket.
-        for dp in raw['time_in_hr_zone']:
+    if raw.get('time_in_heart_rate_zone'):
+        # TimeInHeartRateZone schema: {heartRateZoneType, interval} — no
+        # numeric duration field; minutes are the interval's own length.
+        # Passed through under the DEVICE's zone labels (LIGHT/MODERATE/
+        # VIGOROUS/PEAK) — NOT the app's own Karvonen zones (§5), which are
+        # computed client-side for the live header only, from live HR +
+        # weekly resting HR + age. This is a separate, device-defined
+        # historical bucket; do not conflate the two.
+        for dp in raw['time_in_heart_rate_zone']:
             _, block = _value_block(dp)
-            if isinstance(block, dict):
-                for zk, zv in block.items():
-                    if isinstance(zv, (int, float)) and not isinstance(zv, bool):
-                        summary['hrZoneMinutes'][zk] = summary['hrZoneMinutes'].get(zk, 0) + zv
+            if not isinstance(block, dict):
+                continue
+            zone = block.get('heartRateZoneType')
+            mins = _interval_minutes(block.get('interval'))
+            if zone and mins is not None:
+                summary['hrZoneMinutes'][zone] = summary['hrZoneMinutes'].get(zone, 0) + mins
 
     if raw.get('sleep'):
+        # Sleep schema: {stages[], metadata, summary, type, interval, ...}.
+        # summary.stagesSummary (list of {type, minutes, count}) is Google's
+        # OWN computed total per stage — prefer it. Fall back to summing raw
+        # stages[]'s interval durations only when summary/stagesSummary is
+        # absent. minutes/count on StageSummary are int64-as-string.
         stage_totals, total_minutes, any_seen = {}, 0.0, False
         for dp in raw['sleep']:
             _, block = _value_block(dp)
             if not isinstance(block, dict):
                 continue
             any_seen = True
-            stages = block.get('stages')
-            if isinstance(stages, list):
-                for stage in stages:
-                    if not isinstance(stage, dict):
+            summary_obj = block.get('summary') or {}
+            stages_summary = summary_obj.get('stagesSummary')
+            if isinstance(stages_summary, list) and stages_summary:
+                for s in stages_summary:
+                    if not isinstance(s, dict):
                         continue
-                    name = stage.get('type') or stage.get('stage') or 'unknown'
-                    mins = _numeric(stage, ['durationMinutes'])
-                    if mins is None:
-                        ms = _numeric(stage, ['durationMillis', 'durationMs'])
-                        if ms is not None:
-                            mins = ms / 60000.0
+                    name = s.get('type') or 'unknown'
+                    mins = _numeric(s, ['minutes'])
                     if mins is not None:
                         stage_totals[name] = stage_totals.get(name, 0) + mins
                         total_minutes += mins
+            else:
+                stages = block.get('stages')
+                if isinstance(stages, list):
+                    for stage in stages:
+                        if not isinstance(stage, dict):
+                            continue
+                        name = stage.get('type') or 'unknown'
+                        mins = _interval_minutes(stage)
+                        if mins is not None:
+                            stage_totals[name] = stage_totals.get(name, 0) + mins
+                            total_minutes += mins
         if any_seen:
             summary['sleep']['totalMinutes'] = round(total_minutes) if total_minutes else None
             summary['sleep']['stageMinutes'] = {k: round(v) for k, v in stage_totals.items()}
@@ -522,29 +708,27 @@ def aggregate_day(date_str, raw):
         # NO DURATION OR HEART-RATE THRESHOLD IS APPLIED HERE OR ANYWHERE
         # DOWNSTREAM. Do not add one; see the block comment on
         # hasStartedActivity() in js/derive.js for why.
-        avg_hrs, peak_hrs = [], []
+        #
+        # MetricsSummary has averageHeartRateBeatsPerMinute but NO peak/max
+        # heart rate field — that isn't a bug here, the API genuinely doesn't
+        # provide one for exercise sessions. workout.peakHR stays null.
+        avg_hrs = []
         for dp in raw['exercise']:
             _, block = _value_block(dp)
             if not isinstance(block, dict):
                 continue
             interval = block.get('interval') or {}
-            activity_type = block.get('exerciseType') or block.get('activityType') or 'UNKNOWN'
+            activity_type = block.get('exerciseType') or 'UNKNOWN'
             summary['startedActivities'].append({
                 'activityType': activity_type,
-                'startTime': dp.get('startTime') or interval.get('startTime'),
-                'endTime': dp.get('endTime') or interval.get('endTime'),
+                'startTime': interval.get('startTime'),
+                'endTime': interval.get('endTime'),
             })
-            metrics = block.get('metricsSummary') or {}
-            avg_hr = _numeric(metrics, ['averageHeartRateBeatsPerMinute', 'avgHeartRate', 'averageHeartRate'])
-            peak_hr = _numeric(metrics, ['maxHeartRateBeatsPerMinute', 'peakHeartRate', 'maxHeartRate'])
+            avg_hr = _numeric(block.get('metricsSummary') or {}, ['averageHeartRateBeatsPerMinute'])
             if avg_hr is not None:
                 avg_hrs.append(avg_hr)
-            if peak_hr is not None:
-                peak_hrs.append(peak_hr)
         if avg_hrs:
             summary['workout']['avgHR'] = round(sum(avg_hrs) / len(avg_hrs))
-        if peak_hrs:
-            summary['workout']['peakHR'] = round(max(peak_hrs))
 
     return summary
 
@@ -626,7 +810,7 @@ def sync_range(start_date: str, end_date: str) -> dict:
             result['errors'].append(f"{type_key}: {e}")
             continue
         result['types'][type_key] = {'count': len(points), 'pages': pages}
-        for day, pts in _bucket_by_day(points).items():
+        for day, pts in _bucket_by_day(points, type_key).items():
             raw_by_day.setdefault(day, {})[type_key] = pts
 
     if not raw_by_day:
@@ -676,11 +860,10 @@ def last_sync_info():
 
 if __name__ == "__main__":
     import sys
-    from datetime import date
 
-    today = date.today().isoformat()
-    start = sys.argv[1] if len(sys.argv) > 1 else today
-    end = sys.argv[2] if len(sys.argv) > 2 else today
+    today_str = date.today().isoformat()
+    start = sys.argv[1] if len(sys.argv) > 1 else today_str
+    end = sys.argv[2] if len(sys.argv) > 2 else today_str
     print(f"Syncing {start}..{end} — see server/logs/sync.log for detail.")
     out = sync_range(start, end)
     print(json.dumps(out, indent=2, default=str))
