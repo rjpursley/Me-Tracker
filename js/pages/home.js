@@ -47,7 +47,10 @@ export function renderHomeDayContent(){
   const score=calcScore(ds);
   document.getElementById('top-score').textContent=score.total||'—';
   renderScoreBox();
-  renderPrescription(ds);renderFastingStatus(ds);
+  // interactive=false: Home is a read-only view of the prescription card.
+  // Scrolling past it must not accidentally toggle an exercise — Training is
+  // where the checkboxes are meant to be tapped (§9.4/§9.6).
+  renderPrescription(ds,undefined,false);renderFastingStatus(ds);
 }
 
 // ---------------------------------------------------------------------------

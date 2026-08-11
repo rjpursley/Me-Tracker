@@ -145,6 +145,12 @@
    .rx-exercise-item was written for a div. */
 .rx-ex-toggle{width:100%;min-height:44px;margin:0;background:none;border:none;border-top:1px solid var(--border);border-radius:0;color:inherit;font:inherit;text-align:left;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .15s}
 .rx-ex-toggle:active{background:var(--surface2)}
+/* Home renders this card with the native `disabled` attribute (no onclick at
+   all) so a tap is genuinely inert, not just styled to look that way. Kill
+   the pointer/press affordances that would otherwise suggest it still does
+   something. */
+.rx-ex-toggle:disabled{cursor:default;pointer-events:none}
+.rx-ex-toggle:disabled:active{background:none}
 .rx-ex-box{flex-shrink:0;width:24px;height:24px;margin-top:1px;display:flex;align-items:center;justify-content:center;border-radius:7px;border:1.5px solid var(--border);background:var(--surface2);font-size:14px;line-height:1;color:var(--accent5)}
 .rx-ex-toggle.is-done .rx-ex-box{border-color:var(--accent5)}
 .rx-ex-toggle.is-done .rx-ex-name{color:var(--muted);text-decoration:line-through}
