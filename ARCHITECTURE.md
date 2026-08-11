@@ -594,22 +594,43 @@ run the script again, which forces a fresh consent screen.
 - `GET /api/vitals/{today}` returning `found:false` for a day well after it
   should have synced is the symptom; the log above is where to find why.
 
-### 6.6 Field-name honesty note
+### 6.6 Field names and filter grammar — confirmed, not guessed
 
-Google Health API's public docs (developers.google.com/health, as read while
-building this) confirm the endpoint shapes, pagination parameters
-(`pageSize`/`pageToken`/`nextPageToken`), and the general per-data-type
-`DataPoint` union pattern, but do not fully specify every value field name or
-the exact `filter` grammar for every data type. `google_health.py` is written
-defensively as a result: `_value_block()`/`_numeric()` look for a value under
-a set of plausible field names rather than assuming one is correct,
-`fetch_data_points()` tries two plausible filter grammars (interval-based,
-sample-based) before giving up on a type, and every pull logs the raw shape
-of its first result to `sync.log`. **Treat the log as the source of truth
-over this file if they disagree** — the first real sync against live data is
-the actual test of these guesses, and `sync.log` is where a wrong guess would
-surface (as a 400 that fell back to the other grammar, or as a field that
-`aggregate_day()` couldn't find a value in).
+**The first real sync (2026-08-11) 400'd on every data type.** The original
+build guessed at filter grammar and field names from partial public docs;
+the guesses were wrong in specific, now-understood ways — see the fix note
+at the top of `google_health.py` for the full diagnosis. Two classes of bug:
+
+1. Two internal type keys (`daily_hrv`, `time_in_hr_zone`) were shorthand
+   that didn't match Google's real snake_case identifiers
+   (`daily_heart_rate_variability`, `time_in_heart_rate_zone`) — the filter
+   string's data-type prefix has to be the real name.
+2. Every filter used an invented member path (`interval.civil_end_time`,
+   which only exists for `sleep`) and `<=` where the API only accepts `<`.
+
+**The fix, and where the real answer came from:** Google's own discovery
+document, `https://health.googleapis.com/$discovery/rest?version=v4` — fetch
+it and read `resources.users.dataTypes.dataPoints.methods.list.parameters
+.filter.description` for the authoritative filter grammar, and
+`schemas.DataPoint.properties` for the real per-type field names (the kebab-
+case path each one names is right there in each field's description). This
+beats the narrative docs pages, which are incomplete. `FILTER_CATEGORY` in
+`google_health.py` encodes what that document says: every type is
+`interval`, `sample`, `daily` (date-only, no time), or — the one exception —
+`sleep`, which is filtered by its **end** time, not start.
+
+**No more guess-and-retry.** The original "try interval, fall back to
+sample on a 400" logic is gone. A 400 now is a genuinely unexpected
+problem, logged in full (never truncated — a 300-character slice used to
+cut the response off right before the part naming the bad filter member,
+which is most of why this took two sessions instead of one) and raised, not
+silently retried with a different guess.
+
+**Verified against live data**, not just against a 200 status code: real
+steps/resting-HR/sleep numbers, heart-rate pagination confirmed at 21 pages
+for a single day (8,475 samples), and a forced credential failure left the
+daily store byte-for-byte unchanged. See the 2026-08-11 session's commit
+for the exact figures.
 
 ---
 
