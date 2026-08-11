@@ -46,7 +46,7 @@ rule. Each pillar has its own default and its own controls:
 |----------|--------------|---------|
 | Fasting  | Assumed held — scores 100 | Fasting Fail button (§7.1). **No pause exists.** |
 | Sleep    | 7h assumed | API overrides the assumption once it lands (§6) |
-| Training | Assumed done — schedule fallback | Per-exercise checkboxes (§9.4), **pausable** (§9.1). Full rules in §9.5 |
+| Training | Assumed done — schedule fallback | Per-exercise checkboxes (§9.4, **read-only on Home**), **not-started/running/pausable** (§9.0/§9.1). Full rules in §9.5 |
 | Dietary  | Nothing assumed | Macros count only when supplied |
 
 - **Fasting.** The fast is assumed to have held unless the Fail button is
@@ -651,6 +651,83 @@ per exercise, and the deviation control (§9.6).
 **Training scoring is defined in §9.5.** That section is the authority; if the
 code disagrees with it, the code is wrong.
 
+### 9.0 Three program states — not started / running / paused
+
+**Not started is a distinct state from paused.** Before this existed,
+`PROGRAM_START` was a hardcoded constant and `programWeek()` counted calendar
+days from it unconditionally, so a program nobody had begun still displayed
+"Week 2 of 12" — a number with no meaning, because Ryan had not trained a
+single session. The fix is a third state, not a special case of pause.
+
+| State | Stored as | `programWeek()` | Training page shows |
+|---|---|---|---|
+| **Not started** | `d.programStart === null` | `null`, always | "Program not started" + Start control |
+| **Running** | `d.programStart` is a date, no open pause | `1`–`12` | "Program running · Week N of 12" + Pause control |
+| **Paused** | `d.programStart` is a date, open entry in `d.programPauses[]` | held at the week it was paused on | "Program dormant · Held at week N of 12" + Resume control |
+
+**Stored additively.** `d.programStart` is a `YYYY-MM-DD` string once Ryan
+taps Start, or `null` before that. `store.js`'s `init()` and the `app.js`
+migration guard both default it to **`null`, never to `PROGRAM_START`** — a
+store gaining this field for the first time (i.e. every store that existed
+before this feature) must read as *not started*, not silently become
+"already running since a hardcoded date". That would have reproduced the
+exact bug this feature exists to fix.
+
+**`PROGRAM_START` (`schedule.js`) is kept — per §1.4's spirit for code
+constants — but demoted.** It is no longer read as "the" start date anywhere.
+Its only remaining job is a last-resort fallback inside `programWeek()` if a
+stored `programStart` value is present but malformed (fails `Date` parsing),
+so the function still cannot throw. Do not delete it, and do not restore it
+as the default.
+
+**`programWeek(ds)` returns `null` while not started — never `1`, never a
+computed value.** Every caller must treat `null` as "no week to report", not
+coerce it. This is what makes §7's deload-fast check safe: `isDeloadFastWeek()`
+explicitly returns `false` when `!isProgramStarted()`, so the 48hr fast
+(weeks 4 and 8) cannot fire before there is a program week to be week 4 of.
+
+**Starting the program** (`pages/training.js`'s `startProgram()`) sets
+`d.programStart` to today and does nothing else — it does not touch
+`d.programPauses`. Week 1 then means week 1, counted from the day Ryan
+actually began. The control sits on the Training page behind the **same
+random 3-digit keypad gate** pause/resume already use (§9.2) — reusing the
+gate, not a new one, because starting is exactly the kind of decision Ryan
+should not trigger by mis-tap either. It is a one-way transition: there is no
+UI path back to not-started once started.
+
+#### The interim home routine
+
+Ryan trains at home until the gym (and Alsruhe) opens. **`HOME_SCHEDULE`**
+in `schedule.js` is a second, complete schedule — same `{name, equip, detail,
+block}` shape as Alsruhe's `SCHEDULE`, sourced from `Simple Workout
+Routine.rtf` in the repo root (65lb sandbag, ~42-45lb sandbag, 50lb
+kettlebell, 10-25lb gada club, pull-up bar) — that is **active only while
+Alsruhe has not been started.**
+
+- **`getActiveScheduleForDate(ds)` in `derive.js` is the one and only place
+  that routing decision is made:** Alsruhe's `SCHEDULE` once
+  `isProgramStarted()`, otherwise `HOME_SCHEDULE`. Every page that used to call
+  `getScheduleForDate()` directly (Home's day strip, the Training page, the
+  Calendar page, and `derive.js`'s own scoring functions) now goes through
+  this instead, so the rule is never duplicated. `getScheduleForDate()` and
+  the new `getHomeScheduleForDate()` in `schedule.js` remain pure day-lookup
+  functions with no notion of which one is "active" — that decision belongs in
+  `derive.js`, not in the pure-data file.
+- **Fixed loads, not percentages.** No `tmKey`, no `mainLift`, no exercise
+  carries `main:true`. These exercises are never routed through
+  `trainingMax()` / `mainLiftRx()` — there is no Training Max for a fixed
+  sandbag or kettlebell weight, and there must never be one.
+- **Everything else about it is identical to Alsruhe**, because it goes
+  through the exact same code: per-exercise checkboxes (§9.4, stored the same
+  way, by name), the deviation control (§9.6), and training scoring (§9.5,
+  including the category fallback table — the interim's strength days are
+  categorized `Bodyweight`, matching Alsruhe's own Day 6 precedent for
+  non-barbell, implement-based training).
+- **When Alsruhe starts, the app switches to it automatically** —
+  `getActiveScheduleForDate()` re-evaluates on every render. `HOME_SCHEDULE`
+  stays in the code for later reuse (a future gap between programs, a deload
+  week away from the gym, etc.) — it is not deleted once Alsruhe is running.
+
 ### 9.1 Program pause — built
 
 If Ryan says "the program is paused", the app can now represent it.
@@ -685,7 +762,7 @@ scored 100 exactly like a running one, because `getWorkoutForDate()` assumed the
 scheduled session regardless. Pause only ever moved the week number. The paused
 branch in §9.5 is what actually connects the two.
 
-### 9.2 Pause confirmation gate — built
+### 9.2 Pause confirmation gate — built, also gates Start (§9.0)
 
 A random 3-digit challenge renders above a numeric keypad with a cancel button.
 The action commits **only on an exact match**. A new number is generated every
@@ -699,9 +776,15 @@ the threat. **Do not simplify it to a `confirm()` dialog:** a confirm sheet is
 one tap away from the same accident, rendered right where the thumb is already
 travelling.
 
-The gate lives in `pages/training.js` because pause is the only thing that uses
-it today. If a second pillar ever needs one, extract it to `js/components/` then
-— not before.
+**The same gate now also confirms Start (§9.0)**, not just pause/resume —
+`gate.action` is `'pause'`, `'resume'` or `'start'`, and all three read as
+valid English verbs directly (`gateHtml()` no longer needs to translate the
+action into separate wording). Starting the program is exactly the kind of
+one-way decision this gate exists to protect against a pocket mis-tap.
+
+The gate lives in `pages/training.js` because pause and start are the only
+things that use it today. If a second pillar ever needs one, extract it to
+`js/components/` then — not before.
 
 ### 9.3 Not yet built
 
@@ -740,6 +823,30 @@ easy to get silently wrong:
 Both render as a card with every box empty. Tick a box and untick it and
 `touched` **stays true** — the day does not revert to assumed-done. Do not
 "simplify" this by inferring `touched` from `checked.length`.
+
+#### Home renders the same card read-only
+
+The prescription card mounts on both Home and Training, and Home is a
+scrolling page — a checkbox that responded to a tap while Ryan scrolled past
+it on the way to something else would silently log an exercise he never did.
+**On Home the checkboxes are visible and accurate but genuinely inert; on
+Training they are fully interactive, unchanged.**
+
+- **One component, one parameter.** `renderPrescription(ds, containerId,
+  interactive)` in `pages/training.js` takes a third argument; anything other
+  than the literal `false` is treated as interactive, so the existing
+  2-argument Training call sites needed no change. Home is the only caller
+  that passes `false`. There is no forked "read-only prescription card" —
+  that would be a second copy of ~80 lines to keep in sync forever.
+- **Genuinely inert, not disabled-looking-but-clickable.** When
+  `interactive` is `false`, each exercise button renders with the native
+  `disabled` attribute **and no `onclick` attribute at all** — there is
+  nothing for a tap to fire, not a click handler that checks a flag and
+  no-ops. `styles/components.css` adds `.rx-ex-toggle:disabled{cursor:default;
+  pointer-events:none}` so it doesn't even look pressable.
+- Nothing else about the card changes in read-only mode — the same checked
+  state, the same progress line, the same deviation banner all still render;
+  only the ability to change anything is removed.
 
 ### 9.5 Training scoring — built
 
