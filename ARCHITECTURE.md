@@ -816,7 +816,84 @@ UI must say so rather than render `0.0h deep`.
 so a night with 12 awake minutes stores 572 rather than 560. It inflates
 sleep hours slightly and therefore the sleep score. Left alone because it
 changes stored aggregates and scoring, which is Ryan's call, not a drive-by
-fix during a display bug.
+fix during a display bug. **Resolved 2026-08-12 — see §6.10.**
+
+### 6.10 Awake time is recorded, not counted as sleep
+
+**The bug (§6.9's open item, fixed 2026-08-12).** `sleep.totalMinutes` summed
+every `stagesSummary` bucket including `AWAKE`, so every stage-tracked night
+read high — systematically and in one direction only. Sleep is 25% of the
+consistency score, so this had been quietly inflating it.
+
+**Ryan's decision: awake time is real and gets recorded, not folded into sleep
+— and old days are not rewritten.**
+
+#### Three fields, additive (§1.4)
+
+| Field | Meaning |
+|---|---|
+| `totalMinutes` | **Unchanged.** Every stage bucket summed, awake included. |
+| `asleepMinutes` | Every bucket **except** `AWAKE`. |
+| `awakeMinutes` | The `AWAKE` bucket alone. |
+
+They always reconcile: `totalMinutes == asleepMinutes + awakeMinutes`. Awake is
+subtracted from the total rather than summed from the non-awake buckets,
+specifically so that identity cannot drift.
+
+Worked case, 2026-08-08 (two records that night, one CLASSIC nap + one STAGES
+main sleep): `totalMinutes 572`, `asleepMinutes 560`, `awakeMinutes 12`.
+
+#### The read rule: prefer `asleepMinutes`, fall back to `totalMinutes`
+
+`derive.js`'s `getSleepForDate()` and `pages/vitals.js`'s `resolveDay()` both
+use `asleepMinutes ?? totalMinutes`. Days aggregated before this change have no
+`asleepMinutes` and fall through to `totalMinutes`, reproducing exactly what
+they scored before.
+
+**THE PRESENCE OF THE FIELD IS THE BOUNDARY.** There is deliberately **no epoch
+constant** here (unlike training's `STRICT_TRAINING_FROM`, §9.5) and **no
+migration**. Do not add either.
+
+#### History was deliberately NOT re-aggregated
+
+**No backfill was run and none should be.** Ryan declined the history rewrite:
+the corrected figure matters going forward, and re-aggregating the past would
+change numbers he has already seen. The nightly sync's trailing 3-day window
+(§6.3) naturally re-aggregates recent days with the new code; everything older
+keeps its original shape indefinitely. **That inconsistency is the intended
+outcome, not a gap to fill.** If a future session is tempted to backfill so the
+data "looks consistent", that is the rewrite that was declined.
+
+Verified at the time of the change: all 46 stored days still lacked
+`asleepMinutes`, and sleep scores across a 10-date spread were byte-identical
+before and after.
+
+#### CLASSIC vs STAGES — measured, not assumed
+
+Google returns two record shapes, and both occur in Ryan's data:
+
+| Type | Buckets | `awakeMinutes` |
+|---|---|---|
+| `STAGES` | `AWAKE` / `LIGHT` / `DEEP` / `REM` | real, 8–32 min observed |
+| `CLASSIC` | a single `ASLEEP` total | **0** |
+
+**CLASSIC does not hide awake time inside its single total** — checked against
+live records, where Google's own `summary.minutesAwake` is `0` on every CLASSIC
+night. So on those nights `asleepMinutes == totalMinutes` and the correction is
+a no-op, which is right rather than a missing case. Deep sleep is also
+genuinely unavailable on CLASSIC nights; the UI says "deep n/a" (§1.7).
+
+Excluding `AWAKE` reproduces Google's own `summary.minutesAsleep` almost
+exactly (482→474 vs 474; 433→421 vs 421; 477→463 vs 463; one case off by a
+single minute, 441 vs 442, from Google's own rounding). The stage buckets are
+used rather than `summary.minutesAsleep` so the three stored fields reconcile
+arithmetically.
+
+#### Surfaced, not just stored
+
+The Vitals sleep-history rows show awake time where the field exists —
+`7.0h · 1.4h deep · 12m awake`. A day without the field shows nothing extra,
+never a fabricated `0m awake` (§1.7).
 
 ---
 

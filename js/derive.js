@@ -295,14 +295,27 @@ export function calcFastHrs(fast){if(!fast||!fast.start)return 0;const s=new Dat
 // exists does the 7h/_default fallback still apply. quality is a subjective
 // 1-5 rating the API has no equivalent for, so API-sourced days get the same
 // neutral 3 the old default used — real duration data, neutral quality weight.
+// AWAKE TIME IS NOT SLEEP — prefer asleepMinutes, fall back to totalMinutes.
+//
+// The server used to fold AWAKE minutes into sleep.totalMinutes, inflating
+// every stage-tracked night (ARCHITECTURE.md §6.10). aggregate_day() now also
+// writes sleep.asleepMinutes (awake excluded) and sleep.awakeMinutes.
+//
+// THE PRESENCE OF THE FIELD IS THE BOUNDARY. Days aggregated before that
+// change have no asleepMinutes, and fall through to totalMinutes — which
+// reproduces exactly what they scored before, so no history moves. Days
+// aggregated since score off real asleep time. There is deliberately NO epoch
+// constant and NO migration; do not add either, and do not re-sync history to
+// populate the field (Ryan declined that rewrite).
 export function getSleepForDate(ds){
   const d=db();const logged=d.sleeps.find(s=>s.date===ds);
   if(logged)return logged;
   const v=getCachedVitals(ds||today());
-  if(v&&v.sleep&&v.sleep.totalMinutes!=null&&v.sleep.totalMinutes>0){
+  const sleepMin=(v&&v.sleep)?(v.sleep.asleepMinutes??v.sleep.totalMinutes):null;
+  if(sleepMin!=null&&sleepMin>0){
     const stages=v.sleep.stageMinutes||{};
     const deepMin=stages.deep??stages.DEEP??stages.Deep??0;
-    return{hours:v.sleep.totalMinutes/60,deep:deepMin/60,quality:3,_fromApi:true};
+    return{hours:sleepMin/60,deep:deepMin/60,quality:3,_fromApi:true};
   }
   return{hours:7,deep:1.2,quality:3,_default:true};
 }

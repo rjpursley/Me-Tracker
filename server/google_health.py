@@ -663,7 +663,12 @@ def aggregate_day(date_str, raw):
         'bodyFatPct': None,
         'steps': None,
         'hrZoneMinutes': {},
-        'sleep': {'totalMinutes': None, 'stageMinutes': {}},
+        # asleepMinutes / awakeMinutes are ADDITIVE siblings of totalMinutes,
+        # added 2026-08-12 — see the sleep block below and ARCHITECTURE.md
+        # §6.10. totalMinutes keeps its ORIGINAL meaning (every stage bucket
+        # summed, awake included) so no stored day changes value.
+        'sleep': {'totalMinutes': None, 'asleepMinutes': None,
+                  'awakeMinutes': None, 'stageMinutes': {}},
         'workout': {'avgHR': None, 'peakHR': None},
         'startedActivities': [],
     }
@@ -763,7 +768,41 @@ def aggregate_day(date_str, raw):
         # OWN computed total per stage — prefer it. Fall back to summing raw
         # stages[]'s interval durations only when summary/stagesSummary is
         # absent. minutes/count on StageSummary are int64-as-string.
-        stage_totals, total_minutes, any_seen = {}, 0.0, False
+        #
+        # ############ AWAKE TIME IS NOT SLEEP (2026-08-12) ############
+        # totalMinutes sums EVERY stage bucket, AWAKE included, so a night
+        # with 12 awake minutes stored 572 when only 560 were slept. That is
+        # systematic and one-directional — every stage-tracked night reads
+        # high — and sleep is 25% of the consistency score.
+        #
+        # THE FIX IS ADDITIVE (§1.4). totalMinutes keeps its exact original
+        # meaning and value, so no stored day changes and no history is
+        # re-aggregated. Two new sibling fields carry the correction:
+        #     asleepMinutes — every bucket EXCEPT awake
+        #     awakeMinutes  — the awake bucket alone
+        # Days aggregated before this change simply lack both keys, and
+        # derive.js's getSleepForDate() falls back to totalMinutes for them.
+        # The PRESENCE OF THE FIELD IS THE BOUNDARY — there is deliberately no
+        # epoch constant and no migration. Do not add one, and do not backfill
+        # to make old days "look consistent": Ryan explicitly declined the
+        # history rewrite.
+        #
+        # MEASURED against live records before writing this. On STAGES nights
+        # (AWAKE/LIGHT/DEEP/REM) excluding AWAKE reproduces Google's own
+        # summary.minutesAsleep: 482->474 vs 474, 433->421 vs 421, 477->463
+        # vs 463. On CLASSIC nights there is a single ASLEEP bucket, no AWAKE
+        # bucket, and Google reports minutesAwake 0 — so asleepMinutes equals
+        # totalMinutes and awakeMinutes is 0, which is correct rather than a
+        # gap. CLASSIC does NOT hide awake time inside its single total.
+        stage_totals, total_minutes, awake_minutes, any_seen = {}, 0.0, 0.0, False
+
+        def _add_stage(name, mins):
+            nonlocal total_minutes, awake_minutes
+            stage_totals[name] = stage_totals.get(name, 0) + mins
+            total_minutes += mins
+            if name == 'AWAKE':
+                awake_minutes += mins
+
         for dp in raw['sleep']:
             _, block = _value_block(dp)
             if not isinstance(block, dict):
@@ -775,24 +814,25 @@ def aggregate_day(date_str, raw):
                 for s in stages_summary:
                     if not isinstance(s, dict):
                         continue
-                    name = s.get('type') or 'unknown'
                     mins = _numeric(s, ['minutes'])
                     if mins is not None:
-                        stage_totals[name] = stage_totals.get(name, 0) + mins
-                        total_minutes += mins
+                        _add_stage(s.get('type') or 'unknown', mins)
             else:
                 stages = block.get('stages')
                 if isinstance(stages, list):
                     for stage in stages:
                         if not isinstance(stage, dict):
                             continue
-                        name = stage.get('type') or 'unknown'
                         mins = _interval_minutes(stage)
                         if mins is not None:
-                            stage_totals[name] = stage_totals.get(name, 0) + mins
-                            total_minutes += mins
+                            _add_stage(stage.get('type') or 'unknown', mins)
         if any_seen:
             summary['sleep']['totalMinutes'] = round(total_minutes) if total_minutes else None
+            # Awake is subtracted from the total rather than summed from the
+            # non-awake buckets, so the three fields always reconcile exactly:
+            # totalMinutes == asleepMinutes + awakeMinutes.
+            summary['sleep']['asleepMinutes'] = round(total_minutes - awake_minutes) if total_minutes else None
+            summary['sleep']['awakeMinutes'] = round(awake_minutes) if total_minutes else None
             summary['sleep']['stageMinutes'] = {k: round(v) for k, v in stage_totals.items()}
 
     if raw.get('exercise'):

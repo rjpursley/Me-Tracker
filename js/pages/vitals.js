@@ -56,8 +56,19 @@ function resolveDay(d,ds){
   const v=getCachedVitals(ds);
   const sl=(d.sleeps||[]).find(s=>s.date===ds);
   const hr=(d.hrs||[]).find(h=>h.date===ds);
-  const apiSleepMin=(v&&v.sleep&&+v.sleep.totalMinutes>0)?+v.sleep.totalMinutes:null;
-  const stages=(v&&v.sleep&&v.sleep.stageMinutes)||{};
+  // Prefer asleepMinutes (awake excluded) and fall back to totalMinutes for
+  // days aggregated before that field existed — the same rule, and the same
+  // reasoning, as derive.js's getSleepForDate() (§6.10). The two must agree:
+  // the page must never show a different number from the one that was scored.
+  const apiSleep=(v&&v.sleep)||null;
+  const apiSleepMin=(apiSleep&&+(apiSleep.asleepMinutes??apiSleep.totalMinutes)>0)
+    ?+(apiSleep.asleepMinutes??apiSleep.totalMinutes):null;
+  // Awake minutes are RECORDED, not folded into sleep. Only shown where the
+  // field actually exists — an older day shows nothing rather than a
+  // fabricated 0 (§1.7).
+  const apiAwakeMin=(apiSleep&&apiSleep.awakeMinutes!=null&&+apiSleep.awakeMinutes>0)
+    ?+apiSleep.awakeMinutes:null;
+  const stages=(apiSleep&&apiSleep.stageMinutes)||{};
   // Versa 2 CLASSIC sleep records carry no stage breakdown at all — only an
   // ASLEEP total. Report deep as unknown on those rather than as 0.0h, which
   // would read as a measurement of zero deep sleep (§1.7).
@@ -70,6 +81,7 @@ function resolveDay(d,ds){
     ds,
     sleepHrs: sl?+sl.hours:(apiSleepMin!=null?apiSleepMin/60:null),
     deepHrs:  sl?(+sl.deep>0?+sl.deep:null):(apiDeepMin>0?apiDeepMin/60:null),
+    awakeMin: sl?null:apiAwakeMin,
     quality:  sl?+sl.quality:null,
     sleepFromApi: !sl&&apiSleepMin!=null,
     resting:  manualRest??apiRest,
@@ -108,7 +120,10 @@ export function renderBody(){
     const tag=r.quality!=null
       ?`<span class="tag ${r.quality>=4?'green':r.quality>=3?'teal':'red'}">${r.quality}/5</span>`
       :`<span class="tag teal">synced</span>`;
-    return `<div class="history-item"><span class="history-date">${r.ds}</span><span style="flex:1">${r.sleepHrs.toFixed(1)}h · ${r.deepHrs!=null?r.deepHrs.toFixed(1)+'h deep':'deep n/a'}</span>${tag}</div>`;
+    // Awake time is shown only where the aggregate actually carries it, so an
+    // older day reads exactly as it did rather than gaining a fake "0m awake".
+    const awake=r.awakeMin!=null?` · ${r.awakeMin}m awake`:'';
+    return `<div class="history-item"><span class="history-date">${r.ds}</span><span style="flex:1">${r.sleepHrs.toFixed(1)}h · ${r.deepHrs!=null?r.deepHrs.toFixed(1)+'h deep':'deep n/a'}${awake}</span>${tag}</div>`;
   }).join(''):empty('No sleep data yet');
   const hrRows=rows.filter(r=>r.resting!=null||r.workout!=null).slice(-HISTORY_DAYS_MAX).reverse();
   document.getElementById('hr-history').innerHTML=hrRows.length?hrRows.map(r=>
