@@ -337,8 +337,11 @@ export function getWorkoutForDate(ds){const d=db();const dev=d.deviations&&d.dev
 // Stored additively under d.exerciseLogs{date} as {touched, checked[]}, with
 // exercises identified BY NAME. Reads only; pages/training.js does the writing.
 //
-// Retroactive ticking is allowed with no time limit — any date the app can
-// render a prescription card for can be edited. Nothing here looks at today().
+// RETROACTIVE TICKING IS NOT ALLOWED — a day is editable only on that date
+// (the same-day lock, §9.5). That rule is enforced in pages/training.js, both
+// in the renderer and in toggleExercise() itself. Nothing HERE looks at
+// today(), deliberately: these are pure reads and must answer honestly about
+// any date, including locked ones.
 // ---------------------------------------------------------------------------
 
 // {touched, checked[]} for a date, normalised so callers never see undefined.
@@ -478,24 +481,61 @@ export function currentZone(bpm,ds){
 // ---------------------------------------------------------------------------
 // TRAINING SCORE — ARCHITECTURE.md §9.5.
 //
-// REST DAYS ARE UNAFFECTED by checkboxes, pause and API activity. They keep the
-// original schedule-fallback behaviour entirely.
+// ############ EMPTY CHECKBOXES MEAN IT DID NOT HAPPEN ############
 //
-// PROGRAM PAUSED (non-rest days):
-//   checkboxes ignored entirely. Started activity = 100, otherwise 0.
+// There is NO assumed-done default for training any more. One formula, applied
+// to every non-rest day whether the program is running, paused, or not started:
 //
-// PROGRAM ACTIVE (non-rest days):
-//   never touched -> assume the session happened; schedule fallback, unchanged.
-//   touched       -> (checked / total) * 100, plus 50 for a started activity,
-//                    capped at 100.
+//     score = min(100, (checked / total) * 100 + (startedActivity ? 50 : 0))
 //
-// The untouched vs touched-but-empty pair is the subtle one. Both render as a
-// card with no ticks, but the first scores by the fallback and the second
-// scores 0. That is the whole point of storing `touched` separately.
+// No `touched` branch. No separate paused branch. No deviation reads.
+//
+// REST DAYS SCORE 100, decided by the SCHEDULE'S OWN `rest` FLAG — never by the
+// weekday number. See calcTrainingScore() for why that distinction is a bug fix
+// and not a stylistic preference.
+//
+// ############ THE EPOCH ############
+//
+// Everything above applies from STRICT_TRAINING_FROM onward. Dates before it
+// keep the OLD behaviour exactly, in legacyTrainingScore() below, which is
+// FROZEN. Those days were logged under a different contract — rewriting them as
+// zeros would make the app lie about Ryan's past.
+//
+// A FUTURE SESSION THAT READS "UNTOUCHED SCORES ZERO" AS A BUG AND RESTORES THE
+// SCHEDULE FALLBACK IS CAUSING DRIFT, NOT FIXING IT. This changes what the
+// training pillar measures: no longer "did I train" but "did I train and log it
+// the same day." That is deliberate.
 // ---------------------------------------------------------------------------
 
-// The original category-table scoring, unchanged. Still the rule for rest days
-// and for untouched active days.
+// ---------------------------------------------------------------------------
+// STRICT_TRAINING_FROM — the epoch. The first date scored by the new rules.
+//
+// Dates >= this string use the strict formula above; dates < it use the frozen
+// legacy path. It is a plain YYYY-MM-DD local civil day (§12), compared as a
+// string, which is safe because ISO dates sort lexicographically.
+//
+// Set to the local civil day this rule shipped, so that no day Ryan had already
+// lived under the old contract is retroactively rescored. DO NOT move this date
+// backward — that would rewrite history. Moving it forward would exempt days
+// that were logged under the new rules. Neither is a maintenance operation;
+// both need a conversation with Ryan.
+// ---------------------------------------------------------------------------
+export const STRICT_TRAINING_FROM='2026-08-12';
+
+// ---------------------------------------------------------------------------
+// LEGACY-ONLY, FROZEN — everything from here to the end of
+// legacyTrainingScore() exists solely to score dates before
+// STRICT_TRAINING_FROM. Do not modify it, do not "improve" it, and do not
+// reintroduce any of it into the post-epoch path.
+// ---------------------------------------------------------------------------
+
+// LEGACY-ONLY (frozen). The original category-table scoring.
+//
+// ############ MUST NOT BE REINTRODUCED INTO POST-EPOCH SCORING ############
+// This is the "assumed done" fallback the new rules deliberately removed. It
+// is reachable only from legacyTrainingScore(). If you find yourself wanting to
+// call it from calcTrainingScore(), re-read §9.5 — that is the exact drift the
+// epoch exists to prevent.
 function scheduleFallbackScore(ds,isRestDay){
   const w=getWorkoutForDate(ds);
   if(!w)return isRestDay?80:0;
@@ -508,32 +548,67 @@ function scheduleFallbackScore(ds,isRestDay){
   return 60;
 }
 
-// The deviation type recorded for a date, or null. 'missed', 'swapped',
-// 'completed', 'skipped', 'makeup' — set from the tray on the Home page.
+// LEGACY-ONLY. The deviation type recorded for a date, or null: 'missed',
+// 'swapped', 'completed', 'skipped', 'makeup'.
+//
+// The UI that wrote these is gone (§9.6) and nothing can produce a new one.
+// Its only remaining caller is legacyTrainingScore(). Kept because pre-epoch
+// days still carry these records and must keep scoring the way they did.
 export function deviationType(ds){
   const d=db();const dev=d.deviations&&d.deviations[ds];
   return(dev&&dev.type)||null;
 }
 
-export function calcTrainingScore(ds){
-  ds=ds||today();
+// LEGACY-ONLY, FROZEN. The pre-epoch training score, byte-for-byte the
+// behaviour calcTrainingScore() had before STRICT_TRAINING_FROM existed —
+// including the hardcoded-Sunday rest-day test, the schedule fallback for
+// untouched days, the missed-outranks-checkboxes rule, the paused branch and
+// rest days at 80.
+//
+// ############ DO NOT MODIFY OR "FIX" ANYTHING IN HERE ############
+// The Saturday rest-day bug fixed in calcTrainingScore() is still present here
+// ON PURPOSE. Correcting it would change scores Ryan has already seen, which is
+// exactly what the freeze exists to prevent. This function's only job is to
+// reproduce the past, faithfully, including its mistakes.
+function legacyTrainingScore(ds){
   const isRestDay=new Date(ds+'T12:00:00').getDay()===0;
   if(getActiveScheduleForDate(ds).rest)return scheduleFallbackScore(ds,isRestDay);
   if(isPaused(ds))return hasStartedActivity(ds)?100:0;
-  // AN EXPLICIT "MISSED" OUTRANKS THE CHECKBOXES — §9.5.
-  //
-  // Saying "I missed this session" is a direct statement about the day; ticks
-  // are just the residue of tapping through a card. Without this, marking a day
-  // Missed and ticking every box scored 100, which is nonsense.
-  //
-  // This is deliberately ONLY 'missed'. The other deviation types keep flowing
-  // through the fallback exactly as before — 'swapped' still scores by the
-  // category swapped to, and 'completed'/'skipped'/'makeup' are unchanged.
-  // An untouched missed day already scored 0 via the fallback, so this changes
-  // nothing there; it fixes the touched case.
   if(deviationType(ds)==='missed')return 0;
   const p=exerciseProgress(ds);
   if(!p.touched)return scheduleFallbackScore(ds,isRestDay);
+  const boxes=p.total?Math.round((p.checked/p.total)*100):0;
+  return Math.min(100,boxes+(hasStartedActivity(ds)?50:0));
+}
+
+// ---------------------------------------------------------------------------
+// END OF THE FROZEN LEGACY PATH. Everything below is current behaviour.
+// ---------------------------------------------------------------------------
+
+export function calcTrainingScore(ds){
+  ds=ds||today();
+  if(ds<STRICT_TRAINING_FROM)return legacyTrainingScore(ds);
+
+  // REST DAYS SCORE 100, READ FROM THE SCHEDULE'S OWN FLAG.
+  //
+  // ############ NEVER INFER A REST DAY FROM THE WEEKDAY NUMBER ############
+  // This used to be `new Date(ds+'T12:00:00').getDay()===0` — hardcoded Sunday.
+  // That was a live bug: HOME_SCHEDULE (schedule.js, the interim routine) marks
+  // BOTH day 6 (Saturday) and day 0 (Sunday) as rest, so every Saturday fell
+  // through to the fallback with isRestDay=false and scored 60 instead of 80.
+  // The schedule is the only thing that knows which days are rest days; ask it.
+  const sched=getActiveScheduleForDate(ds);
+  if(sched.rest)return 100;
+
+  // ONE FORMULA for every non-rest day — running, paused, or not started.
+  //
+  // No `touched` branch: an untouched day and a touched-but-empty day both have
+  // zero boxes ticked and both score 0. `touched` is still WRITTEN and is still
+  // read by the legacy path, it just no longer changes anything here.
+  //
+  // No paused branch either. Pause still holds the program week (§9.1) — that
+  // is untouched — but it no longer changes how a day scores.
+  const p=exerciseProgress(ds);
   const boxes=p.total?Math.round((p.checked/p.total)*100):0;
   return Math.min(100,boxes+(hasStartedActivity(ds)?50:0));
 }

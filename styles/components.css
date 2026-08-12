@@ -159,7 +159,11 @@
 .rx-progress-state{font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--muted)}
 .rx-progress.is-partial .rx-progress-count{color:var(--warn)}
 .rx-progress.is-done .rx-progress-count{color:var(--accent5)}
-.rx-progress.is-dormant .rx-progress-state{color:var(--warn)}
+/* The same-day lock (ARCHITECTURE.md §9.4): a past or future day renders in
+   full but cannot be edited. Muted, not alarming — a locked day is the normal
+   state of every day except today. Replaces .is-dormant, which styled a
+   "ticks do not count while paused" line that no longer exists (§9.5). */
+.rx-progress.is-locked .rx-progress-state{color:var(--muted)}
 .rx-ex-num{font-size:11px;font-family:var(--font-mono);color:var(--accent);font-weight:500;min-width:20px;padding-top:2px}
 .rx-ex-name{font-size:16px;font-weight:600;color:var(--text);line-height:1.3}
 .rx-ex-equip{font-size:13px;color:var(--muted);font-family:var(--font-mono);margin-top:3px}

@@ -15,7 +15,11 @@
 import { db, save } from '../store.js';
 import { today } from '../util.js';
 import { CATEGORY_COLORS, CATEGORY_BORDER, CATEGORY_COLOR_TEXT, PROGRESSION } from '../schedule.js';
-import { programWeek, mainLiftRx, openPause, pausedDays, isPaused, isProgramStarted, getActiveScheduleForDate, exerciseLog, exerciseProgress } from '../derive.js';
+// isPaused is no longer imported: the prescription card used to render a
+// "ticks do not count while paused" state line, and pause no longer changes
+// how a day scores (§9.5). openPause()/pausedDays() are still used by the
+// program pause card below — pause itself is untouched (§9.1).
+import { programWeek, mainLiftRx, openPause, pausedDays, isProgramStarted, getActiveScheduleForDate, exerciseLog, exerciseProgress } from '../derive.js';
 import { renderVitalsHeader } from '../components/vitals-header.js';
 import { renderHome, getSelectedDate } from './home.js';
 
@@ -28,7 +32,11 @@ export function renderTrainingPage(){
   renderProgramPause();
   const ds=getSelectedDate();
   updateTrainingSectionLabel(ds);
-  renderPrescription(ds,'training-rx-container',true);
+  // THE SAME-DAY LOCK (§9.4). Training used to hardcode `true` here. A day's
+  // checkboxes are editable ONLY on that date; every other day renders through
+  // the SAME read-only path Home already uses, so past and future days are
+  // still fully visible, just inert. Home continues to pass false always.
+  renderPrescription(ds,'training-rx-container',ds===today());
 }
 
 // Mirrors renderHomeDayContent()'s label in home.js: "Today's Prescription"
@@ -211,34 +219,57 @@ function startProgram(){
 // hour runs out. Ticking records what was actually accomplished.
 //
 // THE CHECKBOXES RENDER INSIDE THE SHARED PRESCRIPTION CARD, which means they
-// appear both on the Training page (today) and on the Home page (whichever day
-// the strip has selected). That is deliberate: retroactive ticking is allowed
-// with no time limit, and the Home day strip is the date picker that already
-// exists. Building a second one on the Training page would be a worse version
-// of it.
+// appear both on the Training page and on the Home page, for whichever day the
+// Home day strip has selected. The strip is still how Ryan LOOKS at another
+// day; it no longer makes that day editable.
+//
+// RETROACTIVE TICKING IS NOT ALLOWED (§9.5). A day's boxes can be changed only
+// on that date, local civil day. At midnight it locks permanently — no grace
+// window, no override. Past and future days still render in full, read-only.
 //
 // The handler is given the DATE it was rendered for, never today(), so a tick
-// always lands on the day the card is showing.
+// always lands on the day the card is showing — and toggleExercise() then
+// re-checks that date against today() before it writes anything.
 // ---------------------------------------------------------------------------
 
-// The "3 of 12" line above the exercises. It exists to make the untouched vs
-// touched-but-empty distinction visible, because the two look identical on the
-// card — every box unticked — but score 100 and 0 respectively.
-function progressHtml(prog,log,dormant){
+// The "3 of 12" line above the exercises.
+//
+// Its old job was to make untouched vs touched-but-empty visible, because the
+// two looked identical but scored 100 and 0. That distinction is gone from
+// scoring (§9.5) — an empty card is 0 either way — so the line now reports the
+// two things that DO still matter: how much is ticked, and whether the day can
+// still be edited.
+//
+// `editable` is the same-day lock (§9.4): true only when the card is showing
+// today. Plain, unemotional wording; no confirmation dialogs anywhere near it.
+function progressHtml(prog,log,editable){
   let state,cls;
-  if(dormant){state='Program dormant — ticks are recorded but do not count while paused';cls=' is-dormant';}
-  else if(!log.touched){state='Not started — an untouched day counts as done';cls='';}
-  else if(prog.checked===prog.total){state='All done';cls=' is-done';}
-  else state=`${prog.total-prog.checked} still open`,cls=' is-partial';
+  if(!editable){
+    state=prog.checked?'Locked — this day is closed':'Locked — nothing was logged on this day';
+    cls=' is-locked';
+  }
+  else if(prog.checked===prog.total&&prog.total>0){state='All done';cls=' is-done';}
+  else if(!prog.checked){state='Nothing ticked yet — an empty day scores 0. Editable until midnight.';cls='';}
+  else state=`${prog.total-prog.checked} still open · editable until midnight`,cls=' is-partial';
   return `<div class="rx-progress${cls}"><span class="rx-progress-count">${prog.checked} of ${prog.total}</span><span class="rx-progress-state">${state}</span></div>`;
 }
 
 // Toggle one exercise on one date. Writes {touched, checked[]} additively.
 //
-// `touched` is set on the FIRST tap and never cleared — unticking everything
-// leaves the day marked as worked, which is what makes "touched but empty"
-// score 0 instead of reverting to the assumed-done default.
+// ############ THE SAME-DAY LOCK — DEFENCE IN DEPTH (§9.4) ############
+// A day is editable only on that date, local civil day. renderPrescription()
+// already refuses to emit an onclick for any other day, which is the UI half of
+// the rule. THIS GUARD IS THE GUARANTEE: it returns before touching the store,
+// so a future session that changes the render cannot silently reopen the write
+// path. Do not remove it on the grounds that "the buttons are disabled anyway".
+//
+// today() is local civil day (util.js, §12). Never toISOString().
+//
+// `touched` is still written on the first tap and never cleared. Post-epoch
+// scoring no longer reads it, but the frozen legacy path does (§9.5) and §1.4
+// forbids dropping the field.
 export function toggleExercise(ds,idx){
+  if(ds!==today())return;
   const ex=(getActiveScheduleForDate(ds).exercises||[])[idx];
   if(!ex)return;
   const d=db();
@@ -299,14 +330,14 @@ export function renderPrescription(ds,containerId,interactive){
   if(sched.rest)html+=`<div class="rx-rest-day"><div class="rx-rest-icon">🌿</div><div class="rx-rest-text">Full Rest — total recovery</div><div class="rx-rest-sub">Zero structured lifting or high-intensity cardio · hydration, protein, sleep</div></div>`;
   else if(sched.exercises&&sched.exercises.length){
     const rx=mainLiftRx(sched,ds);
-    const log=exerciseLog(ds);const prog=exerciseProgress(ds);const dormant=isPaused(ds);
+    const log=exerciseLog(ds);const prog=exerciseProgress(ds);
     // Index into sched.exercises is what the handler receives; the NAME is what
     // gets stored. Passing the index keeps apostrophes ("World's Greatest
     // Stretch") out of the inline onclick attribute entirely.
     let idx=-1;
     const blocks=[];sched.exercises.forEach(ex=>{let b=blocks[blocks.length-1];if(!b||b.name!==ex.block){b={name:ex.block,items:[]};blocks.push(b);}b.items.push(ex);});
     html+=`<div class="rx-exercises">`;
-    html+=progressHtml(prog,log,dormant);
+    html+=progressHtml(prog,log,editable);
     blocks.forEach(b=>{
       const isGiant=/Giant Set/i.test(b.name);
       html+=`<div class="rx-block-head">${b.name}</div>`;

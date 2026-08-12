@@ -35,18 +35,20 @@ The client never holds a secret. The server never has a public port.
 These are load-bearing. Violating one is a bug even if the code works.
 
 ### 1.1 Per-pillar defaults
-The governing intent is unchanged: no log for a day means the plan was followed.
-Do not add "did you do X today?" prompts. Do not default anything to incomplete.
-**Taps are spent on deviations, not confirmations.**
+For fasting and sleep, no log for a day still means the plan was followed. Do
+not add "did you do X today?" prompts to those. **Training is now the explicit
+exception: it assumes nothing** (see the table and §9.5). Dietary never assumed
+anything either.
 
-What that means differs per pillar, so state it per pillar rather than as one
-rule. Each pillar has its own default and its own controls:
+There is no single global default and there never really was — **do not
+describe this app as "silence = compliance"**, that framing was retired. State
+the rule per pillar:
 
 | Pillar   | Unlogged day | Control |
 |----------|--------------|---------|
 | Fasting  | Assumed held — scores 100 | Fasting Fail button (§7.1). **No pause exists.** |
 | Sleep    | 7h assumed | API overrides the assumption once it lands (§6) |
-| Training | Assumed done — schedule fallback | Per-exercise checkboxes (§9.4, **read-only on Home**) are the **entire** record — **there is no deviation control (§9.6)**. Not-started/running/pausable (§9.0/§9.1). Full rules in §9.5 |
+| Training | **Nothing assumed — an unlogged day scores 0** | Per-exercise checkboxes (§9.4, **read-only on Home**, **editable only on the day itself**) are the entire record — **no deviation control (§9.6)**. Not-started/running/pausable (§9.0/§9.1). Full rules in §9.5 |
 | Dietary  | Nothing assumed | Macros count only when supplied |
 
 - **Fasting.** The fast is assumed to have held unless the Fail button is
@@ -54,9 +56,13 @@ rule. Each pillar has its own default and its own controls:
   broken drops it to 0. Binary, per §7.1 — no hours-completed grading.
 - **Sleep.** 7h is assumed when there is no data. The API overrides that
   assumption; it does not compete with it.
-- **Training.** A day nobody touched is assumed to have happened and scores by
-  the schedule fallback. Once a checkbox is tapped the day is scored on what was
-  actually ticked. Pausable — see §9.1. **Full rules in §9.5.**
+- **Training. Nothing is assumed — this pillar is the exception to the opening
+  paragraph, deliberately.** Empty checkboxes mean it did not happen, and a day
+  is editable only on the day itself. The phrase **"assumed done" no longer
+  describes training, and neither does the schedule fallback** — both were
+  retired on 2026-08-12 and survive only in the frozen pre-epoch path. Ticking
+  is the record; a recorded Google Health session adds 50. Pausable — see §9.1,
+  though pause no longer changes the score. **Full rules in §9.5.**
 - **Dietary.** Nothing is assumed. Macros are counted only when supplied,
   because there is no defensible default for food that wasn't logged.
 
@@ -68,10 +74,10 @@ mean "Ryan wasn't measuring" rather than "Ryan wasn't doing it."
 
 **Scoped exception — training only.** Per-exercise checkboxes exist (§9.4)
 because a commercial gym produces genuine partial completion (equipment in use,
-time ran out). Checkboxes are **unchecked-but-counted-as-done by default**: an
-untouched day still scores as full compliance. Ticking records what was
-accomplished — and once a day has been touched at all, it is scored on the
-ticks. This exception does not extend to fasting, sleep, or diet.
+time ran out). **Unchecked means not done** — half the boxes is half the score,
+no boxes is zero — and a day can only be ticked on the day itself (§9.5). This
+exception does not extend to fasting, sleep, or diet: they keep their own
+defaults above.
 
 **There is no deviation control.** The "Log a Deviation" tray on the Training
 page was removed (§9.6) and nothing replaced it. `d.deviations` is still in
@@ -1007,16 +1013,18 @@ If Ryan says "the program is paused", the app can now represent it.
   `pausedDays`) and write nothing, per §1.3. Pausing and resuming write from
   `pages/training.js`.
 
-**While paused, a non-rest day scores by the paused branch in §9.5** — API
-activity only, checkboxes ignored. Since the API check is stubbed, that means
-**0 today**. There is deliberately **no neutral or excluded state**.
+**Pause no longer changes the training score at all.** As of 2026-08-12 there
+is one formula for every non-rest day (§9.5) and no paused branch in it: a
+paused day is scored on its checkboxes exactly like a running one. Pause's only
+job is holding the program week. There is deliberately **no neutral or excluded
+state**.
 
-*Historical note, so the record is straight:* an earlier revision of this file
-implied pause already forced training to 0. It never did. Before §9.5 landed,
-pause had **no effect whatsoever** on the training score — a paused Monday
-scored 100 exactly like a running one, because `getWorkoutForDate()` assumed the
-scheduled session regardless. Pause only ever moved the week number. The paused
-branch in §9.5 is what actually connects the two.
+*Historical note, so the record is straight:* this has now been three different
+things. Originally pause had **no effect whatsoever** on the score — a paused
+Monday scored 100 exactly like a running one, despite an earlier revision of
+this file implying otherwise. Then §9.5 gave it a branch of its own (API
+activity only, checkboxes ignored). That branch is now gone too, and the
+pre-epoch path (`legacyTrainingScore()`) is the only place it still runs.
 
 ### 9.2 Pause confirmation gate — built, also gates Start (§9.0)
 
@@ -1054,14 +1062,16 @@ things that use it today. If a second pillar ever needs one, extract it to
 One checkbox per exercise, grouped by block (warm-up → giant set → assistance →
 finisher), matching `{name, equip, detail, block}` in `schedule.js`.
 
-- **Retroactive ticking is allowed with no time limit.** Any date the app can
-  render a prescription card for can be edited.
+- **RETROACTIVE TICKING IS NOT ALLOWED.** A day is editable only on that date
+  (the same-day lock, §9.5). At local midnight it locks permanently. The
+  earlier rule — "retroactive ticking is allowed with no time limit" — is
+  **false and has been removed**; do not restore it.
 - The checkboxes live **inside the shared prescription card**, which appears on
-  both Home and the Training page. Both now render whichever date the Home day
-  strip has selected — Training switched from a hardcoded `today()` to
-  `getSelectedDate()` in an earlier session and kept it. The Home day strip
-  *is* the date picker — do not build a second one. The click handler is given
-  the date the card was rendered for, never `today()`.
+  both Home and the Training page. Both render whichever date the Home day
+  strip has selected. The strip is still the date **picker** — it is how Ryan
+  looks at another day — it just no longer makes that day editable. The click
+  handler is given the date the card was rendered for, never `today()`, and
+  `toggleExercise()` re-checks that date against `today()` before writing.
 - **Stored as `d.exerciseLogs{}`**, keyed by date:
   `{ touched: true, checked: ["Goblet Squat", ...] }`
 - Exercises are stored **by name, not by index**, so reordering `schedule.js`
@@ -1069,17 +1079,24 @@ finisher), matching `{name, equip, detail, block}` in `schedule.js`.
   that day's card are counted, so a renamed or removed exercise is ignored
   rather than inflating the total.
 
-**`touched` and `checked` are two different facts.** This is the part that is
-easy to get silently wrong:
+**`touched` and `checked` are still two different facts, but only one of them
+scores now.**
 
-| Stored state | Meaning | Score |
+| Stored state | Meaning | Score (post-epoch) |
 |---|---|---|
-| no record | the day was never opened | assumed done — schedule fallback |
-| `{touched:true, checked:[]}` | the day was worked, nothing got done | **0** |
+| no record | the day was never opened | **0** |
+| `{touched:true, checked:[]}` | the day was opened, nothing got ticked | **0** |
+| `{touched:true, checked:[…]}` | what was actually done | `checked/total × 100` (+50 for a recorded session, capped at 100) |
 
-Both render as a card with every box empty. Tick a box and untick it and
-`touched` **stays true** — the day does not revert to assumed-done. Do not
-"simplify" this by inferring `touched` from `checked.length`.
+The first two rows used to score differently — no record meant "assumed done"
+and fell through to the schedule fallback. **They are the same now: an empty
+card is 0 either way** (§9.5).
+
+**`touched` is still written and must not be removed** (§1.4). It is still set
+on the first tap and never cleared, and the frozen pre-epoch path
+(`legacyTrainingScore()`) still reads it to reproduce old scores exactly. Do
+not "simplify" it away by inferring it from `checked.length`, and do not delete
+the field on the grounds that current scoring ignores it.
 
 #### Home renders the same card read-only
 
@@ -1106,40 +1123,107 @@ Training they are fully interactive, unchanged.**
   anything is removed. (The card used to render a deviation banner too. That
   went with the deviation control — §9.6.)
 
-### 9.5 Training scoring — built
+### 9.5 Training scoring — rewritten 2026-08-12
 
-**Rest days are unaffected by all of this.** Checkboxes, pause and API activity
-are skipped entirely and the original schedule fallback applies (a rest day
-scores 80).
+#### The rule: empty checkboxes mean it did not happen
 
-**Program active, non-rest day:**
+**There is no assumed-done default for training.** One formula, applied to
+every non-rest day — whether the program is running, paused, or not started:
 
-| Case | Score |
+```
+score = min(100, (checked / total) * 100 + (startedActivity ? 50 : 0))
+```
+
+There is no `touched` branch and no separate paused branch.
+
+**Rest days score 100.** Checkboxes and API activity are skipped entirely.
+
+#### Worked examples — a 12-exercise day
+
+| Situation | Score |
 |---|---|
-| Never touched | assume the session happened — schedule fallback, unchanged |
-| Touched | `(checked / total) * 100` |
-| Started API activity that day | **+50** |
-| — | **capped at 100** |
+| No boxes, no Google Health activity | **0** |
+| No boxes, a run recorded in Google Health | **50** |
+| 6 of 12 boxes, no activity | **50** |
+| 6 of 12 boxes plus a recorded run | **100** |
+| All 12 boxes, no activity | **100** |
+| All 12 boxes plus a recorded run | **100** (capped, never above) |
+| Rest day | **100** |
 
-Worked examples on a 12-exercise day: all boxes = 100. Touched with zero boxes
-and no activity = 0. Half the boxes, no activity = 50. Half the boxes plus an
-activity = 100. Zero boxes plus an activity = 50.
+#### Rest days read the schedule's own flag, never the weekday
 
-**Program paused, non-rest day:**
+`calcTrainingScore()` used to compute
+`const isRestDay = new Date(ds+'T12:00:00').getDay()===0` — hardcoded Sunday.
+**That was a live bug.** `HOME_SCHEDULE` (the interim routine, active while
+Alsruhe has not been started) marks **both day 6 (Saturday) and day 0 (Sunday)**
+`rest:true`. Saturdays therefore fell through to the fallback with
+`isRestDay=false` and scored **60** instead of 80.
 
-- **Checkboxes are ignored entirely.**
-- Any started API activity = **100**. No activity = **0**.
+The rule now is `getActiveScheduleForDate(ds).rest` → 100. **Never infer a rest
+day from the weekday number again.** Only the schedule knows which days are rest
+days, and there are two schedules with different answers.
 
-The schedule fallback is the original category table — Resistance/HIIT 100,
-Zone 2/Bodyweight 85, Weighted Walk 70, Mobility 60, Active Rest 80 on a rest
-day and 60 otherwise.
+#### The same-day lock
 
-**Deviations no longer enter this at all.** A `missed` deviation used to force
-the pillar to 0 outright, and a `swapped` one used to re-route the fallback to
-the category swapped to. The control that wrote them is gone (§9.6). The stored
-records still exist and `getWorkoutForDate()` still reads them, so a historical
-`swapped`/`missed` day still scores the way it always did; nothing new can be
-written.
+**A training day's checkboxes are editable only on that date, local civil day.**
+At local midnight the day locks permanently. No grace window, no override, no
+admin escape hatch. Ryan asked for this explicitly and accepted the
+consequence: a dead phone costs a real training day.
+
+- Editable when `ds === today()` (`js/util.js`, local — §12). Nothing else.
+- **Past and future days still render in full, read-only.** They are not hidden
+  and the card is not blanked — Ryan needs to see the exercise list.
+- **Implemented by reusing the existing read-only path, not a second one.**
+  `renderPrescription(ds, containerId, interactive)` already emits genuinely
+  inert buttons when `interactive === false`: native `disabled`, no `onclick`
+  attribute at all, plus `.rx-ex-toggle:disabled{pointer-events:none}` (§9.4).
+  The Training page passes `ds === today()`; Home still passes `false` always.
+- **Defence in depth.** `toggleExercise(ds, idx)` itself returns early when
+  `ds !== today()`, before touching the store. The render side is the UI; this
+  is the guarantee. A future session that changes the render must not be able
+  to silently reopen the write path.
+- The card's state line reports the lock. No confirmation dialogs.
+
+#### The epoch — existing history is frozen
+
+**`STRICT_TRAINING_FROM = '2026-08-12'`**, a module-level constant in
+`js/derive.js`.
+
+| Dates | Path |
+|---|---|
+| `>= STRICT_TRAINING_FROM` | the formula above. **Deviations are never read.** |
+| `< STRICT_TRAINING_FROM` | `legacyTrainingScore()` — the old behaviour, frozen and unchanged |
+
+`legacyTrainingScore()` keeps the whole previous body: `scheduleFallbackScore()`
+for untouched days, the touched ratio, the `missed`-outranks-checkboxes rule,
+the paused branch, rest days at 80 — **and the hardcoded-Sunday bug above,
+deliberately left in place.** Fixing it there would change scores Ryan has
+already seen, which is precisely what the freeze prevents.
+
+**Why freeze rather than rescore:** those days were logged under a different
+contract. Ryan was told an untouched day counted as done, so he did not tick
+them. Rewriting them as zeros would make the app lie about his past.
+
+Pre-epoch days are also **always locked**, because they are not `today()` — the
+same-day rule already covers them; no separate check exists or is needed.
+
+#### This changes what the training pillar measures
+
+*It is no longer "did I train" but "did I train and log it the same day." That
+is deliberate. A future session that reads untouched-scores-zero as a bug and
+restores the fallback is causing drift, not fixing one.*
+
+#### What survived the rewrite
+
+- **`touched` is still written** by `toggleExercise()` and is still in the
+  schema (§1.4). `exerciseLog()` / `exerciseProgress()` still return it. Post-
+  epoch scoring simply never reads it; `legacyTrainingScore()` does.
+- **`scheduleFallbackScore()` and `deviationType()` are kept, legacy-only, and
+  commented as such.** `scheduleFallbackScore()` must **not** be reintroduced
+  into post-epoch scoring — it is the "assumed done" behaviour this rewrite
+  removed.
+- **Pause still holds the program week (§9.1).** Only its scoring effect is
+  gone. There is no pause branch in the current path.
 
 #### What counts as an API activity
 
@@ -1165,7 +1249,8 @@ duration or heart-rate fields on those entries. It returns `false` whenever
 nothing is known — cache not yet primed, server unreachable, or genuinely no
 session that day — never a fabricated positive (§1.7).
 
-Because it is always false today, **paused days score 0 for training**. That is
+Because it is false whenever the server has nothing for a day, **a day with no
+boxes ticked and no recorded session scores 0** — paused or not. That is
 expected and accepted. Do not build a neutral or excluded state to hide it.
 
 ### 9.6 The deviation control — REMOVED 2026-08-12

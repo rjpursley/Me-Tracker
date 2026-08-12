@@ -24,15 +24,16 @@ const DB_KEY = 'metracker_v2';
 //
 // exerciseLogs is an OBJECT keyed by date: {touched:true, checked:[name,...]}.
 //
-// `touched` and `checked` are two DIFFERENT FACTS and the training score
-// depends on telling them apart:
-//   - no record at all -> the day was never opened, so the session is assumed
-//     to have happened and scores by the schedule fallback.
-//   - {touched:true, checked:[]} -> the day WAS worked and nothing was done.
-//     That scores 0, not 100.
-// Ticking a box and then unticking it therefore leaves `touched` true. Do not
-// "simplify" this by inferring touched from checked.length — that silently
-// turns every abandoned session back into full compliance.
+// `touched` and `checked` are two DIFFERENT FACTS. They used to score
+// differently — no record meant "assumed done" and fell through to the schedule
+// fallback, while {touched:true, checked:[]} scored 0. AS OF 2026-08-12 BOTH
+// SCORE 0: empty checkboxes mean it did not happen (ARCHITECTURE.md §9.5).
+//
+// `touched` IS STILL WRITTEN AND MUST NOT BE REMOVED (§1.4). It is set on the
+// first tap and never cleared, and derive.js's frozen legacyTrainingScore()
+// still reads it to reproduce pre-epoch scores exactly. Do not "simplify" it
+// away by inferring it from checked.length, and do not drop the field on the
+// grounds that current scoring ignores it.
 //
 // Exercises are stored BY NAME, not by index, so reordering schedule.js cannot
 // silently re-point a tick at a different movement. Names are also readable in
