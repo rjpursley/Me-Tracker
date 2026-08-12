@@ -34,11 +34,17 @@ export const SPEED_PCT=[60,70];
 
 // NO fastLabel FIELD HERE. A per-weekday `fastLabel` string used to describe
 // the fasting protocol (18:6 daily, 36hr Fri–Sun) and was removed once that
-// protocol changed: the current one (§7) has a 48hr deload that depends on the
-// program week, which a static per-weekday string cannot express. It moved to
-// fastPlan() in derive.js. Removed rather than left as dead data with a
+// protocol changed. The protocol lives in fastPlan() in derive.js and is now a
+// single daily 18:6 window on every date (§7) — the weekly 24hr and the 48hr
+// deload fast are gone. Do NOT "simplify" that back into a per-weekday string
+// here: the whole point of the split is that schedule.js is training data and
+// knows nothing about fasting. Removed rather than left as dead data with a
 // deprecation marker, so there is nothing here for a future session to
 // mistake for the current protocol. See ARCHITECTURE.md §7 for what runs now.
+//
+// NOTE: PROGRESSION below has "Deload" WEEKS (4 and 8). Those are TRAINING
+// deloads — lighter percentages — and are unrelated to the deleted 48hr deload
+// FAST that used to key off the same week numbers. Do not conflate them.
 export const SCHEDULE={
   1:{session:'Max Effort Lower (Squat)',category:'Resistance',tmKey:'tm_squat',mainLift:'Barbell Back Squat',exercises:[
     {name:'Goblet Squat',equip:'Kettlebell / dumbbell',detail:'x 10 reps · 3-second pause at bottom',block:'Warm-Up — 2 Rounds'},

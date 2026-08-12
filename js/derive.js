@@ -227,82 +227,60 @@ export function mainLiftRx(sched,ds){
 // ---------------------------------------------------------------------------
 // FASTING PROTOCOL — ARCHITECTURE.md §7.
 //
+// INTERMITTENT FASTING ONLY. ONE PROTOCOL, EVERY SINGLE DAY:
+//
+//   Daily 18:6, eating window 12:30–18:30 local. No exceptions, no variation
+//   by weekday, no variation by program week.
+//
 // This is the SCHEDULE only. The timer and the phase engine (calcFastHrs,
-// getPhase) are untouched and stay untouched (§11) — this block answers
-// "what fast is planned on this date", nothing more.
+// getPhase, startFastTimer) are untouched and stay untouched (§11) — this
+// block answers "what fast is planned on this date", nothing more. Fasting
+// SCORING is also untouched: still binary, still assumed-held, still dropped
+// to 0 only by the Fasting Fail button (§7.1, fastBroken()).
 //
-//   Daily      18:6, eating window 12:30–18:30 local.
-//   Weekly     24hr, Saturday 18:30 -> Sunday 18:30.
-//   Deload     48hr, Friday 18:30 -> Sunday 18:30, PROGRAM WEEKS 4 AND 8 ONLY.
+// ############ REMOVED — DO NOT REINTRODUCE ANY OF THESE ############
+//   - the quarterly 60–72hr fast   (removed in an earlier session)
+//   - the weekly 24hr fast          (Sat 18:30 -> Sun 18:30)
+//   - the 48hr deload fast          (program weeks 4 and 8)
 //
-// NO EXTENDED FAST IN WEEK 12. Week 12 is the test week — you never test a 1RM
-// off a fast. Week 12 keeps the weekly 24hr and gets no 48hr. The check below
-// is written explicitly even though 12 is not in DELOAD_WEEKS, so the rule is
-// visible in code rather than an accident of the array's contents.
+// Removed with them: isDeloadFastWeek(), FASTING_PROTOCOL.DELOAD_WEEKS /
+// TEST_WEEK / weeklyHours / deloadHours, the never-in-week-12 test-week rule,
+// and the paused-program `week: null` special case — that existed ONLY so a
+// deload fast could ask "is this week 4?" without a program week to answer
+// with. With no week-dependent fast left, there is nothing to special-case.
 //
-// The quarterly 60–72hr fast was REMOVED. Do not reintroduce it.
+// They are deleted outright rather than left behind a flag, following the same
+// reasoning schedule.js records for the old per-weekday `fastLabel`: dead data
+// describing a retired protocol is exactly what a future session mistakes for
+// the current one.
 //
-// PAUSED: while the program is dormant there IS NO PROGRAM WEEK (§9.1), so
-// "is this week 4?" has no answer. In that state the weekly 24hr runs and the
-// 48hr never does. Handled explicitly below — it must not throw and must not
-// silently pick a week.
+// Ryan can still LOG a longer fast by hand — the Log Entry page's fast-type
+// select still offers 16:8 / 18:6 / OMAD / 24h / 36h / 48h, deliberately. What
+// shrank is the SCHEDULED protocol, not what can be recorded.
 // ---------------------------------------------------------------------------
 export const FASTING_PROTOCOL={
   eatOpen:'12:30',
-  eatClose:'18:30',
-  weeklyHours:24,   // Sat 18:30 -> Sun 18:30
-  deloadHours:48,   // Fri 18:30 -> Sun 18:30
-  DELOAD_WEEKS:[4,8],
-  TEST_WEEK:12
+  eatClose:'18:30'
 };
 
-// Is a 48hr deload fast scheduled for the week containing this date?
+// What fast is planned on this calendar date? Always the daily 18:6.
 //
-// PROGRAM_START is a Monday, so a week runs Mon..Sun — which means the Friday,
-// Saturday and Sunday of one 48hr window all share the same program week. No
-// window straddles a week boundary.
-export function isDeloadFastWeek(ds){
-  if(isPaused(ds))return false;                       // no program week while dormant
-  if(!isProgramStarted())return false;                // no program week before Alsruhe starts
-  const wk=programWeek(ds);
-  if(wk===FASTING_PROTOCOL.TEST_WEEK)return false;    // never test a 1RM off a fast
-  return FASTING_PROTOCOL.DELOAD_WEEKS.includes(wk);
-}
-
-// What fast is planned on this calendar date?
-//
-// Returns {kind, protocol, headline, detail, week, paused} where kind is
-// 'daily' | 'weekly24' | 'deload48'. Purely derived (§1.3); writes nothing.
+// Returns {kind, protocol, headline, detail, week, paused}. The shape is
+// unchanged so pages/fasting.js needs no rework, but `kind` is now ALWAYS
+// 'daily' — there are no other kinds. `week` and `paused` are kept and
+// reported honestly (the program week this date falls in, null while not
+// started; whether the program was dormant) even though neither changes the
+// plan any more. Purely derived (§1.3); writes nothing.
 export function fastPlan(ds){
   ds=ds||today();
-  const dow=new Date(ds+'T12:00:00').getDay();        // 0 Sun .. 6 Sat
-  const paused=isPaused(ds);
-  const week=paused?null:programWeek(ds);
-  const deload=isDeloadFastWeek(ds);
-  const daily={
+  return{
     kind:'daily',
     protocol:'18:6 · eat '+FASTING_PROTOCOL.eatOpen+'–'+FASTING_PROTOCOL.eatClose,
     headline:'18:6 Window',
     detail:'Eat '+FASTING_PROTOCOL.eatOpen+'–'+FASTING_PROTOCOL.eatClose+' · fast the rest',
-    week,paused
+    week:programWeek(ds),
+    paused:isPaused(ds)
   };
-
-  if(deload&&(dow===5||dow===6||dow===0)){
-    const label='48hr deload · Fri '+FASTING_PROTOCOL.eatClose+' → Sun '+FASTING_PROTOCOL.eatClose;
-    return{kind:'deload48',protocol:label,headline:'48hr Deload Fast',week,paused,
-      detail:dow===5?'Begins '+FASTING_PROTOCOL.eatClose+' tonight — week '+week+' deload'
-            :dow===6?'Fast active · day 1 of 2'
-            :'Breaks '+FASTING_PROTOCOL.eatClose+' today'};
-  }
-
-  if(dow===6||dow===0){
-    const label='24hr weekly · Sat '+FASTING_PROTOCOL.eatClose+' → Sun '+FASTING_PROTOCOL.eatClose;
-    return{kind:'weekly24',protocol:label,headline:'24hr Fast Window',week,paused,
-      detail:dow===6?'Begins '+FASTING_PROTOCOL.eatClose+' tonight'
-                    :'Breaks '+FASTING_PROTOCOL.eatClose+' today'};
-  }
-
-  return daily;
 }
 
 export function calcFastHrs(fast){if(!fast||!fast.start)return 0;const s=new Date((fast.date||today())+'T'+fast.start);if(isNaN(s))return 0;return Math.max(0,((fast.end?new Date((fast.date||today())+'T'+fast.end):new Date())-s)/3600000);}

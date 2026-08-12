@@ -6,9 +6,15 @@
 // bar and startFastTimer() below are all unchanged.
 //
 // The PROTOCOL (which fast is scheduled on which day) is a separate thing and
-// lives in fastPlan() in derive.js. The status bar reads it from there.
+// lives in fastPlan() in derive.js. The status bar reads it from there. As of
+// 2026-08-12 that protocol is a single daily 18:6 window, every day — the
+// weekly 24hr and the 48hr deload fasts were removed (§7). Nothing on this
+// page needed to change for that beyond one dead branch; fastPlan() kept its
+// return shape.
 //
-// BUILT (§7.1): the Fasting Fail button, below.
+// BUILT (§7.1): the Fasting Fail button, below. Fasting SCORING is unchanged
+// by the protocol change — still binary, still assumed-held, still dropped to
+// 0 only by that button.
 // ---------------------------------------------------------------------------
 
 import { db, save } from '../store.js';
@@ -91,11 +97,13 @@ export function saveFastFailNote(){
 export function renderFastingStatus(ds,containerId){
   const d=db();const isToday=ds===today();const todayFasts=d.fasts.filter(f=>f.date===ds);
   // The planned fast for this date comes from fastPlan() in derive.js (§7),
-  // which owns the protocol. schedule.js used to carry a per-weekday fastLabel
-  // describing the OLD protocol; it has since been removed there.
+  // which owns the protocol. That is now a single daily 18:6 window on every
+  // date, so plan.kind is always 'daily'. The moon icon that used to mark a
+  // weekly-24 or deload-48 day is gone with those fasts — the branch selecting
+  // it could never be true again. schedule.js's old per-weekday fastLabel was
+  // removed there for the same reason, an earlier protocol change.
   const plan=fastPlan(ds);
   let icon='⏱',val=plan.headline,sub=plan.detail,color='var(--accent2)';
-  if(plan.kind!=='daily')icon='🌙';
   // A broken fast (§7.1) outranks everything else on the bar, so the status
   // never reads "on track" directly above a day marked broken.
   if(fastBroken(ds)){icon='✕';val='Fast broken';sub='Scored 0 for fasting';color='var(--danger)';}

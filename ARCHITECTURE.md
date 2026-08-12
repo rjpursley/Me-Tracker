@@ -755,35 +755,59 @@ earliest date Google Health has"); if the full history is ever wanted, sync
 from `2021-07-30` explicitly rather than assuming today's default range
 covers it.
 
-**The protocol below replaced the original 18:6 / 36hr Fri–Sun / quarterly
-60–72hr scheme. The quarterly 60–72hr fast was removed entirely — do not
-reintroduce it.**
+---
+
+## 7. Fasting protocol — intermittent only
+
+**One protocol. Every single day. No exceptions, no variation by weekday and
+no variation by program week.**
 
 | Fast | When | Window |
 |---|---|---|
-| Daily 18:6 | every day | eat **12:30–18:30** local, fast the rest |
-| Weekly 24hr | every Saturday | **Sat 18:30 → Sun 18:30** |
-| Deload 48hr | **program weeks 4 and 8 only** | **Fri 18:30 → Sun 18:30** |
+| Daily 18:6 | **every day** | eat **12:30–18:30** local, fast the rest |
 
-**No extended fast in week 12.** Week 12 is the test week, and you never test a
-1RM off a fast. Week 12 keeps the weekly 24hr and gets no 48hr. The check is
-written explicitly in `isDeloadFastWeek()` even though 12 is not in
-`DELOAD_WEEKS`, so the rule is visible in code rather than an accident of the
-array's contents.
+That is the whole table.
 
-**Paused: the weekly 24hr runs, the 48hr never does.** While the program is
-dormant there is no program week (§9.1), so "is this week 4?" has no answer.
-`isDeloadFastWeek()` returns `false` when paused and `fastPlan()` reports
-`week: null`. It must not throw and must not silently pick a week.
+### ############ REMOVED — DO NOT REINTRODUCE ############
 
-`PROGRAM_START` is a Monday, so a program week runs Mon–Sun — the Friday,
-Saturday and Sunday of one 48hr window always share the same program week. No
-window straddles a boundary.
+Three extended fasts have been removed from this app across three separate
+decisions. A future session that finds the schedule "too simple" and adds one
+back is causing drift.
+
+| Removed fast | Was | Removed |
+|---|---|---|
+| Quarterly 60–72hr | every quarter | earlier session |
+| **Weekly 24hr** | Sat 18:30 → Sun 18:30 | **2026-08-12** |
+| **Deload 48hr** | Fri 18:30 → Sun 18:30, program weeks 4 and 8 | **2026-08-12** |
+
+Also removed with them, in `derive.js`: `isDeloadFastWeek()`,
+`FASTING_PROTOCOL.DELOAD_WEEKS` / `TEST_WEEK` / `weeklyHours` / `deloadHours`,
+the never-in-week-12 test-week rule, and the paused-program `week: null`
+special case. That last one existed **only** so a deload fast could ask "is
+this week 4?" on a date with no program week to answer with; with no
+week-dependent fast left, there is nothing to special-case, and `fastPlan()`
+now reports the real program week (or `null` while not started) honestly.
+
+They were deleted outright rather than left behind a disabled flag — the same
+reasoning `schedule.js` records for the old per-weekday `fastLabel`. Dead data
+describing a retired protocol is precisely what a future session mistakes for
+the current one.
+
+**Ryan can still log a longer fast by hand.** The Log Entry page's fast-type
+`<select>` still offers 16:8 / 18:6 / OMAD / 24h / 36h / 48h, deliberately.
+What shrank is the *scheduled* protocol, not what can be *recorded*.
+
+**Fasting scoring did not change.** Still binary, still assumed-held, still
+dropped to 0 only by the Fasting Fail button (§7.1). `fastBroken()`,
+`d.fastDeviations` and the Fail control were not touched.
 
 ### 7.0 Where the protocol lives
 The schedule is `fastPlan(date)` in `derive.js`, returning
-`{kind, protocol, headline, detail, week, paused}` with `kind` one of
-`daily` / `weekly24` / `deload48`. It is pure derivation (§1.3).
+`{kind, protocol, headline, detail, week, paused}`. **`kind` is always
+`'daily'`** — there are no other kinds. The return shape was kept deliberately
+so `pages/fasting.js` needed no rework; `week` and `paused` are still reported
+honestly even though neither changes the plan any more. It is pure derivation
+(§1.3).
 
 **The timer and phase engine are a separate thing and remain protected (§11).**
 `calcFastHrs()`, `getPhase()`, the phase bar and `startFastTimer()` are
@@ -945,9 +969,10 @@ as the default.
 
 **`programWeek(ds)` returns `null` while not started — never `1`, never a
 computed value.** Every caller must treat `null` as "no week to report", not
-coerce it. This is what makes §7's deload-fast check safe: `isDeloadFastWeek()`
-explicitly returns `false` when `!isProgramStarted()`, so the 48hr fast
-(weeks 4 and 8) cannot fire before there is a program week to be week 4 of.
+coerce it. `fastPlan()` (§7) passes it straight through as `plan.week`, which
+is allowed to be `null`; nothing in the fasting protocol depends on the week
+any more, so there is no longer a caller that could be forced into guessing
+one. The renderer must not coerce `null` into a number either.
 
 **Starting the program** (`pages/training.js`'s `startProgram()`) sets
 `d.programStart` to today and does nothing else — it does not touch
