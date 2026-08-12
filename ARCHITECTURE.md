@@ -755,6 +755,69 @@ earliest date Google Health has"); if the full history is ever wanted, sync
 from `2021-07-30` explicitly rather than assuming today's default range
 covers it.
 
+### 6.9 Every reader of synced data must go through `getCachedVitals()`
+
+**Diagnosed and fixed 2026-08-12.** The Vitals (Sleep / HR) page showed an
+empty 15-day chart, em-dashes for Resting HR and Workout HR, and "No sleep
+data yet" — while Steps on the same page, same window, rendered fifteen days
+correctly. The server was serving real values the entire time.
+
+**The pipeline was healthy end to end.** Google held the data, the sync
+fetched it, `aggregate_day()` kept it, and both `/api/vitals/{date}` and
+`/api/vitals?from=&to=` served it. The fault was one file at the very last
+step: `js/pages/vitals.js` read sleep and heart rate **only** from
+`d.sleeps` / `d.hrs` — the manual-entry arrays written by the two forms at the
+bottom of that same file. Ryan has never hand-logged sleep or HR, because the
+watch does it, so those arrays were empty. Steps rendered because steps was
+the single line on the page wired to `getCachedVitals()` when §6 was built.
+
+**THE RULE: `d.sleeps` and `d.hrs` are the MANUAL log, not the data set.**
+Anything that displays or scores a vital must consult the Google Health cache
+as well, with the §6 precedence — a manual log wins where one exists, the
+synced aggregate fills the gap, neither means "no data" and never a guess
+(§1.7). `derive.js`'s `getSleepForDate()` and `weeklyRestingHR()` already did
+this correctly, which is why the **sleep pillar score and the Karvonen zones
+were right the whole time** and only the page display was blind. Two read
+paths for the same fact is what allowed one of them to rot unnoticed.
+
+**Why it hid for so long:** every symptom of an empty manual array is
+identical to the symptom of a failed sync. A blank chart and an em-dash look
+like "the server is down", so the investigation naturally starts at the server
+— which was fine. The discriminating evidence is per-data-type: a sync failure
+cannot return steps for fifteen days and nothing for sleep across the same
+window through the same code.
+
+**Checklist for a future session adding any synced metric to a page:** wire
+the display to `getCachedVitals()` at the same time as the aggregation, not
+later. If a metric renders blank, check which array the *page* is reading
+before suspecting the sync — `sync.log` and `server/data/vitals_daily.json`
+will tell you in under a minute whether the data ever arrived.
+
+#### Genuine data gaps, which are NOT this bug
+
+Fixing the above does not fill every day, and that is correct behaviour:
+
+| Field | Coverage in the store (46 days, 2026-05-17 → 08-12) | Why |
+|---|---|---|
+| steps | 46 / 46 | — |
+| restingHR | 39 / 46 | Google has none on the rest |
+| sleep | 25 / 46 | Google returns zero sleep rows for those dates — **notably 2026-07-30 → 08-05**, where resting HR exists but sleep does not. A wear/device-sync question, not a code one. |
+| workout avg HR | 9 / 46 | only days with a recorded session |
+| hrv | 17 / 46 | Google has none on the rest |
+| weight / bodyFatPct / vo2Max | 0 / 46 | Google returns **zero rows for every date** — the Versa 2 does not report these. Confirmed a separate cause from the above, not a shared bug. |
+
+**Sleep stage detail varies by record type.** Google returns `CLASSIC` records
+(one `ASLEEP` total, no breakdown) and `STAGES` records (`AWAKE`/`LIGHT`/
+`DEEP`/`REM`). Deep sleep is genuinely unavailable on `CLASSIC` nights and the
+UI must say so rather than render `0.0h deep`.
+
+**Open, deliberately not fixed here:** `aggregate_day()` sums *all*
+`stagesSummary` minutes into `sleep.totalMinutes`, which includes `AWAKE` —
+so a night with 12 awake minutes stores 572 rather than 560. It inflates
+sleep hours slightly and therefore the sleep score. Left alone because it
+changes stored aggregates and scoring, which is Ryan's call, not a drive-by
+fix during a display bug.
+
 ---
 
 ## 7. Fasting protocol — intermittent only
