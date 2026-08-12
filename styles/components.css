@@ -269,20 +269,12 @@
 .back-btn:active{background:var(--surface2)}
 .back-chev{font-size:20px;line-height:1}
 
-/* Deviation tray */
-.deviation-tray{margin-top:12px}
-.deviation-tray-label{font-size:11px;font-family:var(--font-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px}
-.dev-btn-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
-.dev-btn{padding:10px 4px;border-radius:12px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text);font-family:var(--font-head);font-size:13px;font-weight:600;cursor:pointer;text-align:center;transition:all .15s;display:flex;flex-direction:column;align-items:center;gap:4px}
-.dev-btn span.dev-icon{font-size:18px;display:block}
-.dev-btn span.dev-label{font-size:11px;font-family:var(--font-mono);color:var(--muted);display:block}
-.dev-btn:active{transform:scale(.96)}
-.dev-btn.active-btn{border-color:var(--accent5);background:rgba(106,247,124,.1)}
-.dev-btn.active-btn span.dev-label{color:var(--accent5)}
-.dev-btn.missed-btn.active-btn{border-color:var(--danger);background:rgba(247,106,106,.1)}
-.dev-btn.missed-btn.active-btn span.dev-label{color:var(--danger)}
-.dev-btn.skip-btn.active-btn{border-color:var(--muted);background:rgba(107,107,138,.1)}
-.dev-swap-area{margin-top:8px;display:none}
+/* The deviation-tray block was removed here (ARCHITECTURE.md §9.6) along with
+   the control it styled: .deviation-tray, .deviation-tray-label, .dev-btn-grid,
+   .dev-btn, .dev-icon, .dev-label, .active-btn, .missed-btn, .skip-btn and
+   .dev-swap-area. Each was grepped across the whole repo first and had no other
+   user. The Fasting Fail button (§7.1) is a separate control with its own
+   .fast-fail-* rules further down — it was not touched. */
 
 /* Live vitals header (ARCHITECTURE.md §4, §9) — mounted on Main and Training.
    Styled as an explicitly unconnected panel: dashed border and muted values, so

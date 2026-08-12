@@ -67,10 +67,9 @@
   <div class="section-title">Fasting</div>
   <div id="fasting-status-container"></div>
   <!-- The "Log a Deviation" tray and the "Today's Status" grid were removed
-       from this page. THE STORED DATA IS UNTOUCHED (§1.4): d.deviations still
-       exists and still renders on the prescription card.
-       The deviation control itself now lives on the Training page, alongside
-       the exercise checkboxes — see #training-deviation-tray below. -->
+       from this page, and the tray's later home on the Training page has since
+       been removed too (§9.6). There is no deviation control anywhere in the
+       app. THE STORED DATA IS UNTOUCHED (§1.4): d.deviations still exists. -->
 </div>
 
 <div class="page" id="page-training">
@@ -85,8 +84,15 @@
   </div>
   <div class="section-title" id="training-rx-section-label">Today's Prescription</div>
   <div id="training-rx-container"></div>
-  <div class="section-title">Log a Deviation</div>
-  <div id="training-deviation-tray"></div>
+  <!-- The "Log a Deviation" tray was REMOVED from this page (§9.6). The
+       per-exercise checkboxes in the prescription card above are now the
+       entire record of what happened on a training day; there is no
+       replacement control.
+       THE STORED DATA IS UNTOUCHED (§1.4): d.deviations still exists and old
+       records are preserved. Nothing writes it any more.
+       NOTE: the Fasting page below has its own section ALSO titled "Log a
+       Deviation" (#fasting-fail-container). That is the Fasting Fail button
+       (§7.1), a completely different control. It stays. -->
 </div>
 
 <div class="page" id="page-prs">

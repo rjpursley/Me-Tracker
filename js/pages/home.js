@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
-// pages/home.js — Day strip, consistency score, deviation tray, status grid.
+// pages/home.js — Day strip, consistency score, day content.
 //
-// ARCHITECTURE.md §1.1: silence = compliance. The deviation tray is how a
-// missed day gets recorded; an untouched day is treated as adherent. Taps are
-// spent on deviations, not confirmations.
+// ARCHITECTURE.md §1.1: each pillar has its own default and its own control.
+// There is no deviation tray here and no deviation write path anywhere in the
+// app any more (§9.6) — for training, the per-exercise checkboxes on the
+// prescription card are the whole record.
 //
 // Moved verbatim from index.html. No markup or logic changed.
 //
@@ -13,7 +14,9 @@
 // convert these to `const fn = () => {}` — that would break the cycle at load.
 // ---------------------------------------------------------------------------
 
-import { db, save } from '../store.js';
+// No store.js import: with setDeviation()/saveSwap() gone (§9.6) this file
+// neither reads nor writes localStorage directly — everything it renders comes
+// through derive.js.
 import { today, dateStr, addDays } from '../util.js';
 import { calcScore, sc, consistencyRows, getActiveScheduleForDate, WEEK_WINDOW_DAYS, MONTH_WINDOW_DAYS } from '../derive.js';
 import { WCOLORS } from '../schedule.js';
@@ -27,10 +30,12 @@ export function getSelectedDate(){return selectedDate;}
 
 export function buildDayStrip(){
   const strip=document.getElementById('day-strip');const now=new Date();const days=[];for(let i=-7;i<=7;i++)days.push(addDays(now,i));
-  const d=db();
   strip.innerHTML=days.map(dt=>{
     const ds=dateStr(dt);const dow=['Su','Mo','Tu','We','Th','Fr','Sa'][dt.getDay()];const sched=getActiveScheduleForDate(ds);const isToday=ds===today();const isSelected=ds===selectedDate;
-    const dev=d.deviations&&d.deviations[ds];let dotStyle=`background:${WCOLORS[sched.category]||'#6b6b8a'}`;if(dev&&dev.type==='missed')dotStyle='background:var(--danger)';if(dev&&dev.type==='completed')dotStyle='background:var(--accent5)';
+    // The dot is the session category, full stop. It used to be overridden to
+    // danger/accent5 by a 'missed'/'completed' deviation; both overrides went
+    // with the deviation control (§9.6).
+    let dotStyle=`background:${WCOLORS[sched.category]||'#6b6b8a'}`;
     const abbr=sched.rest?'REST':sched.category.substring(0,3).toUpperCase();
     return `<div class="day-card${isToday?' is-today':''}${isSelected?' selected':''}" onclick="selectDay('${ds}')"><span class="dc-dow">${dow}</span><span class="dc-num">${dt.getDate()}</span><span class="dc-type">${abbr}</span><div class="dc-dot" style="${dotStyle}"></div></div>`;
   }).join('');
@@ -103,32 +108,19 @@ export function renderScoreBox(){
 }
 
 // ---------------------------------------------------------------------------
-// THE DEVIATION TRAY AND THE STATUS GRID WERE REMOVED FROM THE HOME PAGE.
+// THE DEVIATION WRITE PATH IS GONE — ARCHITECTURE.md §9.6.
 //
-// Their renderers went with them — renderDeviationState() drew button states
-// for buttons that no longer exist, and renderStatusGrid() drew a card that no
-// longer has a mount point.
+// setDeviation() and saveSwap() lived here. They were the last two functions
+// in the app that wrote d.deviations, and they are deleted along with the
+// Training-page tray that was calling them. The five deviation types
+// (completed / missed / swapped / makeup / skipped) are no longer a concept
+// the UI can express at all.
 //
-// THE STORED DATA IS UNTOUCHED (§1.4). d.deviations still exists, every
-// recorded deviation still renders on the prescription card in training.js,
-// and a 'missed' deviation still forces the training pillar to 0 (§9.5).
+// THE STORED DATA IS UNTOUCHED (§1.4). d.deviations remains a top-level key,
+// app.js's migration guard still backfills it, and every record Ryan has
+// already logged is preserved exactly as written. It is still READ by
+// derive.js (deviationType(), getWorkoutForDate()) so existing history keeps
+// scoring the way it always did — only the write path is gone.
 //
-// ############ KNOWN GAP, FLAGGED DELIBERATELY ############
-// The tray was the ONLY UI in the app that WROTE a deviation — calendar.js
-// merely reads them. With it gone there is now no way to record a missed,
-// swapped, completed, skipped or make-up day by tapping. setDeviation() and
-// saveSwap() are kept below as the intact write path so the capability is not
-// lost, but nothing calls them until a deviation control is given a new home.
-// Do not delete them, and do not assume the gap is intentional design.
+// This is deliberate and is not a gap awaiting a new home for the control.
 // ---------------------------------------------------------------------------
-export function setDeviation(type){
-  const d=db();d.deviations=d.deviations||{};const current=d.deviations[selectedDate]||{};
-  if(current.type===type)delete d.deviations[selectedDate];else d.deviations[selectedDate]={...current,type,timestamp:new Date().toISOString()};
-  save(d);renderPrescription(selectedDate);buildDayStrip();
-}
-
-export function saveSwap(swap){
-  const d=db();d.deviations=d.deviations||{};
-  d.deviations[selectedDate]={...d.deviations[selectedDate],type:'swapped',swap,timestamp:new Date().toISOString()};
-  save(d);renderHomeDayContent();buildDayStrip();
-}

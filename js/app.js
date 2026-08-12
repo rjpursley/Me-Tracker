@@ -19,8 +19,7 @@ import { today, dateStr, addDays } from './util.js';
 import { primeVitalsCache } from './api.js';
 
 import {
-  renderHome, renderHomeDayContent, buildDayStrip, selectDay,
-  setDeviation, saveSwap
+  renderHome, renderHomeDayContent, buildDayStrip, selectDay
 } from './pages/home.js';
 import { renderCalendar, setCalView, getCalView } from './pages/calendar.js';
 import { renderHealth, saveBodyHeight, saveBodyAge, logBodyMeasurement } from './pages/health.js';
@@ -28,7 +27,7 @@ import { renderBody, logSleep, logHR } from './pages/vitals.js';
 import { renderDiet, logMeal, addSupplement, deleteSupplement, moveSupplement, toggleMacroChart } from './pages/dietary.js';
 import { initLogForms, setLogType, logWorkout, saveTargets } from './pages/log.js';
 import { logFast, startActiveFast, stopActiveFast, renderFastingPage, toggleFastFail, saveFastFailNote } from './pages/fasting.js';
-import { renderTrainingPage, openPauseGate, closePauseGate, pauseGateKey, pauseGateBack, toggleExercise, trainingSetDeviation, trainingSaveSwap } from './pages/training.js';
+import { renderTrainingPage, openPauseGate, closePauseGate, pauseGateKey, pauseGateBack, toggleExercise } from './pages/training.js';
 import { renderPRs, logOneRM } from './pages/prs.js';
 import { renderVitalsHeader } from './components/vitals-header.js';
 
@@ -90,13 +89,10 @@ window.closeDrawer=closeDrawer;
 window.showPage=showPage;
 
 window.selectDay=selectDay;
-// setDeviation() and saveSwap() are home.js's, exposed here per this file's
-// general policy. The actual onclick targets for the deviation control are
-// trainingSetDeviation() / trainingSaveSwap() below — training.js calls these
-// two directly (imported, not via window) and wraps them so the Training
-// page's own containers refresh too.
-window.setDeviation=setDeviation;
-window.saveSwap=saveSwap;
+// NO window.setDeviation / window.saveSwap / window.trainingSetDeviation /
+// window.trainingSaveSwap. The deviation control was removed (§9.6); the four
+// functions those names pointed at no longer exist. The stored d.deviations
+// key is untouched — see the migration guard at the bottom of this file.
 
 window.setCalView=setCalView;
 window.setLogType=setLogType;
@@ -111,8 +107,6 @@ window.closePauseGate=closePauseGate;
 window.pauseGateKey=pauseGateKey;
 window.pauseGateBack=pauseGateBack;
 window.toggleExercise=toggleExercise;
-window.trainingSetDeviation=trainingSetDeviation;
-window.trainingSaveSwap=trainingSaveSwap;
 window.logOneRM=logOneRM;
 window.addSupplement=addSupplement;
 window.deleteSupplement=deleteSupplement;

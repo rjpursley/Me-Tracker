@@ -13,22 +13,22 @@
 // ---------------------------------------------------------------------------
 
 import { db, save } from '../store.js';
-import { today, esc } from '../util.js';
+import { today } from '../util.js';
 import { CATEGORY_COLORS, CATEGORY_BORDER, CATEGORY_COLOR_TEXT, PROGRESSION } from '../schedule.js';
 import { programWeek, mainLiftRx, openPause, pausedDays, isPaused, isProgramStarted, getActiveScheduleForDate, exerciseLog, exerciseProgress } from '../derive.js';
 import { renderVitalsHeader } from '../components/vitals-header.js';
-import { renderHome, getSelectedDate, setDeviation, saveSwap } from './home.js';
+import { renderHome, getSelectedDate } from './home.js';
 
 // The Training page reached from the score box (§4). Vitals header, the
-// program pause control, today's (or the selected) prescription, and the
-// deviation control; §9 lists what else belongs here once built.
+// program pause control, and today's (or the selected) prescription. The
+// per-exercise checkboxes on that card are the whole record of a training
+// day now — the deviation tray that used to sit below it is gone (§9.6).
 export function renderTrainingPage(){
   renderVitalsHeader('vitals-header-training');
   renderProgramPause();
   const ds=getSelectedDate();
   updateTrainingSectionLabel(ds);
   renderPrescription(ds,'training-rx-container',true);
-  renderDeviationTray();
 }
 
 // Mirrors renderHomeDayContent()'s label in home.js: "Today's Prescription"
@@ -256,80 +256,23 @@ export function toggleExercise(ds,idx){
 }
 
 // ---------------------------------------------------------------------------
-// Deviation control — RESTORED here, on the Training page (§1.1, §9.5).
+// THE DEVIATION CONTROL WAS REMOVED FROM THIS PAGE — ARCHITECTURE.md §9.6.
 //
-// It used to live in a tray on the Home page. A prior session removed that
-// tray as UI cleanup without giving the write path a new home, which left
-// d.deviations with no way to be set by tapping anything — an open gap
-// flagged explicitly in ARCHITECTURE.md. This is that fix. It lives here,
-// next to the exercise checkboxes, because this is where Ryan already is
-// when recording what actually happened in a session.
+// A tray of five buttons (Completed / Missed / Swapped / Make-up / Planned
+// Skip) used to sit below the prescription card and write d.deviations. It is
+// gone, along with DEV_TYPES, the swap <select> panel, trainingSetDeviation()
+// and trainingSaveSwap(). THERE IS NO REPLACEMENT CONTROL: the per-exercise
+// checkboxes on the card above are now the entire record of what happened on
+// a training day.
 //
-// SAME TYPES, SAME STORED SHAPE. setDeviation() and saveSwap() are the exact
-// functions home.js already has — imported and called directly below, not
-// reimplemented. No note input: notes are deprecated (see the comment above
-// renderPrescription).
+// THE STORED KEY REMAINS (§1.4). d.deviations is still in the schema, still
+// backfilled by app.js's migration guard, still listed in store.js's import
+// sanity check, and every record Ryan has already logged is preserved
+// byte-for-byte. What changed is that NOTHING IN THE UI WRITES IT ANY MORE.
 //
-// OPERATES ON getSelectedDate(), NOT today(). That is the same "selected
-// date" the Home day strip sets and the same date renderPrescription() (and
-// therefore the checkboxes) is now rendered against on this page — see
-// renderTrainingPage() above. Marking a day Missed and looking at that same
-// day's checkboxes are always talking about the same date, and retroactive
-// marking works exactly like retroactive ticking: pick a day on Home's
-// strip, then act on it from here.
+// Do not "restore" this tray. Its removal was a decision, not a regression —
+// the same mistake in reverse to the one ARCHITECTURE.md §9.6 used to record.
 // ---------------------------------------------------------------------------
-
-const DEV_TYPES=[
-  {type:'completed',icon:'✓',label:'Completed',cls:''},
-  {type:'missed',icon:'✗',label:'Missed',cls:' missed-btn'},
-  {type:'swapped',icon:'↔',label:'Swapped',cls:''},
-  {type:'makeup',icon:'⟳',label:'Make-up',cls:''},
-  {type:'skipped',icon:'⏭',label:'Planned Skip',cls:' skip-btn'}
-];
-
-const SWAP_OPTIONS=['Resistance','Zone 2','Bodyweight','Wtd Walk','HIIT','Mobility','Other'];
-
-// Open only right after Swapped is tapped ON, not on every re-render — a
-// checkbox tick elsewhere on the page must not reopen a panel Ryan closed.
-let swapAreaOpen=false;
-
-function renderDeviationTray(){
-  const el=document.getElementById('training-deviation-tray');
-  if(!el)return;
-  const ds=getSelectedDate();
-  const dev=(db().deviations||{})[ds];
-  const devType=dev&&dev.type;
-  const btns=DEV_TYPES.map(d=>`<button class="dev-btn${d.cls}${devType===d.type?' active-btn':''}" onclick="trainingSetDeviation('${d.type}')"><span class="dev-icon">${d.icon}</span><span class="dev-label">${d.label}</span></button>`).join('');
-  let swapHtml='';
-  if(devType==='swapped'&&swapAreaOpen){
-    const opts=SWAP_OPTIONS.map(o=>`<option value="${o}"${dev.swap===o?' selected':''}>${o}</option>`).join('');
-    swapHtml=`<div style="margin-top:8px"><div class="form-label">What did you do instead?</div><select id="training-dev-swap-select">${opts}</select><button class="btn btn-primary" style="margin-top:8px" onclick="trainingSaveSwap()">Save Swap</button></div>`;
-  }
-  el.innerHTML=`<div class="deviation-tray-label">Log a Deviation</div><div class="dev-btn-grid">${btns}</div>${swapHtml}`;
-}
-
-// Wraps setDeviation(): that function only knows how to redraw Home's own
-// containers (§ its own comment), so this also refreshes the Training page's
-// prescription card and the tray itself. Toggle-off (tapping the already-
-// active button) is setDeviation()'s existing behaviour, unchanged here — it
-// clears the deviation, which is what "clearing returns the day to the
-// checkbox ratio" means in the verification notes.
-export function trainingSetDeviation(type){
-  const ds=getSelectedDate();
-  const wasActive=(((db().deviations||{})[ds])||{}).type===type;
-  setDeviation(type);
-  swapAreaOpen=(type==='swapped'&&!wasActive);
-  renderPrescription(ds,'training-rx-container',true);
-  renderDeviationTray();
-}
-
-export function trainingSaveSwap(){
-  const sel=document.getElementById('training-dev-swap-select');
-  saveSwap(sel?sel.value:'Other');
-  swapAreaOpen=false;
-  renderPrescription(getSelectedDate(),'training-rx-container',true);
-  renderDeviationTray();
-}
 
 // containerId lets the same prescription card mount on Home and on the
 // Training page without a second copy of the renderer. `interactive` is the
@@ -340,24 +283,19 @@ export function trainingSaveSwap(){
 // Anything other than the literal `false` is treated as interactive, so
 // existing 2-argument callers keep working unchanged.
 //
-// Deviation notes are DEPRECATED: the note input was removed and nothing writes
-// `note` any more. Existing notes stay in storage and still render here, so the
-// value is HTML-escaped on the way out — it used to be injected raw. Do not
-// delete the field from stored records; §1.4 forbids it.
+// NO DEVIATION BANNER. This card used to open with one of five banners
+// ("✗ Missed", "↔ Swapped to: …", and so on) read from d.deviations. All five
+// went with the control that wrote them (§9.6). The card no longer displays a
+// deviation of any kind, and does not read d.deviations at all.
 export function renderPrescription(ds,containerId,interactive){
   const editable=interactive!==false;
-  const sched=getActiveScheduleForDate(ds);const d=db();const dev=d.deviations&&d.deviations[ds];const catColor=CATEGORY_COLOR_TEXT[sched.category]||'var(--text)';const catBg=CATEGORY_COLORS[sched.category]||'transparent';const catBorder=CATEGORY_BORDER[sched.category]||'var(--border)';const dayName=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date(ds+'T12:00:00').getDay()];
+  const sched=getActiveScheduleForDate(ds);const catColor=CATEGORY_COLOR_TEXT[sched.category]||'var(--text)';const catBg=CATEGORY_COLORS[sched.category]||'transparent';const catBorder=CATEGORY_BORDER[sched.category]||'var(--border)';const dayName=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date(ds+'T12:00:00').getDay()];
   // wk is null while the program has not been started (derive.js
   // programWeek()) — the interim home routine has no week number at all, not
   // week 1 and not a computed one. Nothing below may throw on that null.
   const wk=programWeek(ds);const phase=(wk!=null)?PROGRESSION[wk-1].phase:null;
   const weekTag=(wk!=null)?`Week ${wk} of 12 · ${phase}`:'Program not started';
   let html=`<div class="rx-card" style="border-color:${catBorder};background:${catBg}"><div class="rx-header"><div><div class="rx-day-label">${dayName}</div><div class="rx-session-name">${sched.session}</div><div class="rx-week-tag">${weekTag}</div></div><div class="rx-category-tag" style="color:${catColor};background:rgba(0,0,0,.2);border:1px solid ${catBorder}">${sched.category}</div></div>`;
-  if(dev&&dev.type==='missed')html+=`<div style="padding:0 16px 16px"><div class="alert err" style="margin:0">✗ Missed</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${esc(dev.note)}</div>`:''}</div>`;
-  else if(dev&&dev.type==='swapped')html+=`<div style="padding:0 16px 16px"><div class="alert warn" style="margin:0">↔ Swapped to: ${dev.swap||'other'}</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${esc(dev.note)}</div>`:''}</div>`;
-  else if(dev&&dev.type==='completed')html+=`<div style="padding:0 16px 16px"><div class="alert success" style="margin:0">✓ Marked Completed</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${esc(dev.note)}</div>`:''}</div>`;
-  else if(dev&&dev.type==='skipped')html+=`<div style="padding:0 16px 16px"><div class="alert" style="margin:0;background:rgba(107,107,138,.1);border-color:var(--muted);color:var(--muted)">⏭ Planned skip</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${esc(dev.note)}</div>`:''}</div>`;
-  else if(dev&&dev.type==='makeup')html+=`<div style="padding:0 16px 16px"><div class="alert info" style="margin:0">⟳ Make-up session</div>${dev.note?`<div style="font-size:12px;font-family:var(--font-mono);color:var(--muted);margin-top:8px">${esc(dev.note)}</div>`:''}</div>`;
   if(sched.rest)html+=`<div class="rx-rest-day"><div class="rx-rest-icon">🌿</div><div class="rx-rest-text">Full Rest — total recovery</div><div class="rx-rest-sub">Zero structured lifting or high-intensity cardio · hydration, protein, sleep</div></div>`;
   else if(sched.exercises&&sched.exercises.length){
     const rx=mainLiftRx(sched,ds);

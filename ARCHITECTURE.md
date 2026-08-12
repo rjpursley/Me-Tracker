@@ -46,7 +46,7 @@ rule. Each pillar has its own default and its own controls:
 |----------|--------------|---------|
 | Fasting  | Assumed held — scores 100 | Fasting Fail button (§7.1). **No pause exists.** |
 | Sleep    | 7h assumed | API overrides the assumption once it lands (§6) |
-| Training | Assumed done — schedule fallback | Per-exercise checkboxes (§9.4, **read-only on Home**), **not-started/running/pausable** (§9.0/§9.1). Full rules in §9.5 |
+| Training | Assumed done — schedule fallback | Per-exercise checkboxes (§9.4, **read-only on Home**) are the **entire** record — **there is no deviation control (§9.6)**. Not-started/running/pausable (§9.0/§9.1). Full rules in §9.5 |
 | Dietary  | Nothing assumed | Macros count only when supplied |
 
 - **Fasting.** The fast is assumed to have held unless the Fail button is
@@ -73,24 +73,12 @@ untouched day still scores as full compliance. Ticking records what was
 accomplished — and once a day has been touched at all, it is scored on the
 ticks. This exception does not extend to fasting, sleep, or diet.
 
-**Deviation notes are deprecated.** The free-text note on a training deviation
-is no longer written. Notes already in storage are **preserved and still
-rendered** — §1.4 forbids deleting the field. The Fasting Fail note (§7.1) is a
-different control and stays.
-
-**The deviation control lives on the Training page, next to the exercise
-checkboxes — not on Home.** The "Log a Deviation" tray was removed from Home in
-one session and restored here in the next, because that is where Ryan already
-is when recording what actually happened in a session. It is **the only UI in
-the app that writes `d.deviations`** — `calendar.js` only reads them, and Home
-carries no deviation control of any kind. `setDeviation()` and `saveSwap()`
-still live in `home.js` (they redraw Home's own containers when called), but
-Training's `trainingSetDeviation()` / `trainingSaveSwap()` are what's actually
-wired to a tap, calling those two directly and then refreshing Training's own
-prescription card and tray. Same five types, same stored shape, no note input.
-It operates on `getSelectedDate()` — the Home day strip's selection — so
-retroactive marking works the same way retroactive checkbox ticking does: pick
-a day on Home's strip, then act on it from Training.
+**There is no deviation control.** The "Log a Deviation" tray on the Training
+page was removed (§9.6) and nothing replaced it. `d.deviations` is still in
+storage and still read by `derive.js` when scoring, but **no UI writes it**.
+Deviation notes were already deprecated before that and are likewise never
+written. **The Fasting Fail button and its note (§7.1) are a different control
+and are unaffected** — that one stays.
 
 ### 1.2 localStorage is the source of truth
 `metracker_v2` in the browser holds everything the app scores from. The server
@@ -913,8 +901,9 @@ real tokens.
 
 **Status: description, not specification** — except where marked. The page
 renders, top to bottom: the live vitals header, the program pause card, the
-prescription card (today's, or the selected day's — see §9.6) with a checkbox
-per exercise, and the deviation control (§9.6).
+Personal Records nav row, and the prescription card (today's, or the selected
+day's) with a checkbox per exercise. **Nothing below the card** — the deviation
+tray that used to sit there is gone (§9.6).
 
 **Training scoring is defined in §9.5.** That section is the authority; if the
 code disagrees with it, the code is wrong.
@@ -987,8 +976,7 @@ Alsruhe has not been started.**
   sandbag or kettlebell weight, and there must never be one.
 - **Everything else about it is identical to Alsruhe**, because it goes
   through the exact same code: per-exercise checkboxes (§9.4, stored the same
-  way, by name), the deviation control (§9.6), and training scoring (§9.5,
-  including the category fallback table — the interim's strength days are
+  way, by name) and training scoring (§9.5 — the interim's strength days are
   categorized `Bodyweight`, matching Alsruhe's own Day 6 precedent for
   non-barbell, implement-based training).
 - **When Alsruhe starts, the app switches to it automatically** —
@@ -1071,10 +1059,9 @@ finisher), matching `{name, equip, detail, block}` in `schedule.js`.
 - The checkboxes live **inside the shared prescription card**, which appears on
   both Home and the Training page. Both now render whichever date the Home day
   strip has selected — Training switched from a hardcoded `today()` to
-  `getSelectedDate()` when the deviation control needed the same date the
-  checkboxes already use (§9.6). The Home day strip *is* the date picker for
-  retroactive edits — do not build a second one. The click handler is given the
-  date the card was rendered for, never `today()`.
+  `getSelectedDate()` in an earlier session and kept it. The Home day strip
+  *is* the date picker — do not build a second one. The click handler is given
+  the date the card was rendered for, never `today()`.
 - **Stored as `d.exerciseLogs{}`**, keyed by date:
   `{ touched: true, checked: ["Goblet Squat", ...] }`
 - Exercises are stored **by name, not by index**, so reordering `schedule.js`
@@ -1115,8 +1102,9 @@ Training they are fully interactive, unchanged.**
   no-ops. `styles/components.css` adds `.rx-ex-toggle:disabled{cursor:default;
   pointer-events:none}` so it doesn't even look pressable.
 - Nothing else about the card changes in read-only mode — the same checked
-  state, the same progress line, the same deviation banner all still render;
-  only the ability to change anything is removed.
+  state and the same progress line still render; only the ability to change
+  anything is removed. (The card used to render a deviation banner too. That
+  went with the deviation control — §9.6.)
 
 ### 9.5 Training scoring — built
 
@@ -1128,21 +1116,10 @@ scores 80).
 
 | Case | Score |
 |---|---|
-| **Marked `missed`** | **0 — outranks everything below** |
 | Never touched | assume the session happened — schedule fallback, unchanged |
 | Touched | `(checked / total) * 100` |
 | Started API activity that day | **+50** |
 | — | **capped at 100** |
-
-**A `missed` deviation forces the pillar to 0 regardless of checkbox state.**
-Saying "I missed this session" is a direct statement about the day; ticks are
-just the residue of tapping through a card. Without this rule, marking a day
-Missed *and* ticking every box scored 100, which is nonsense.
-
-This applies to **`missed` only**. The other deviation types are unchanged:
-`swapped` still scores by the category swapped to, and
-`completed` / `skipped` / `makeup` do not override the boxes. An untouched
-missed day already scored 0 through the fallback, so that case did not move.
 
 Worked examples on a 12-exercise day: all boxes = 100. Touched with zero boxes
 and no activity = 0. Half the boxes, no activity = 50. Half the boxes plus an
@@ -1155,7 +1132,14 @@ activity = 100. Zero boxes plus an activity = 50.
 
 The schedule fallback is the original category table — Resistance/HIIT 100,
 Zone 2/Bodyweight 85, Weighted Walk 70, Mobility 60, Active Rest 80 on a rest
-day and 60 otherwise, and 0 for a day with a `missed` deviation.
+day and 60 otherwise.
+
+**Deviations no longer enter this at all.** A `missed` deviation used to force
+the pillar to 0 outright, and a `swapped` one used to re-route the fallback to
+the category swapped to. The control that wrote them is gone (§9.6). The stored
+records still exist and `getWorkoutForDate()` still reads them, so a historical
+`swapped`/`missed` day still scores the way it always did; nothing new can be
+written.
 
 #### What counts as an API activity
 
@@ -1184,36 +1168,67 @@ session that day — never a fabricated positive (§1.7).
 Because it is always false today, **paused days score 0 for training**. That is
 expected and accepted. Do not build a neutral or excluded state to hide it.
 
-### 9.6 Deviation control — built, lives here
+### 9.6 The deviation control — REMOVED 2026-08-12
 
-**This is the only UI in the app that writes `d.deviations`.** It sits on the
-Training page, alongside the exercise checkboxes — not on Home. `calendar.js`
-only reads deviations; it has no control of its own, and neither does Home.
+**There is no deviation control anywhere in the app.** The "Log a Deviation"
+tray on the Training page — five buttons, `Completed` / `Missed` / `Swapped` /
+`Make-up` / `Planned Skip` — was removed, along with the swap `<select>` panel
+that went with `Swapped`. **There is no replacement control.**
 
-- Same five types as before it moved — `completed`, `missed`, `swapped`,
-  `makeup`, `skipped` — and the same stored shape:
-  `d.deviations[date] = {type, swap?, timestamp}`. No note input; deviation
-  notes are deprecated (§1.1).
-- `setDeviation()` and `saveSwap()` still live in `home.js` and are called
-  directly, unmodified, from `pages/training.js` — they were already correct
-  and there was no reason to duplicate them. They only know how to redraw
-  Home's own containers, though, so `trainingSetDeviation()` /
-  `trainingSaveSwap()` wrap them to also refresh Training's prescription card
-  and the tray itself.
-- Tapping the already-active type clears the deviation (existing toggle
-  behaviour in `setDeviation()`, unchanged) — a day marked Missed returns to
-  its checkbox ratio, or to the schedule fallback if it was never touched.
-- **Operates on `getSelectedDate()`, the same "selected date" the Home day
-  strip sets and the checkboxes already render against** (§9.4). Retroactive
-  marking works exactly like retroactive ticking: pick a day on Home's strip,
-  then act on it from Training. Setting a deviation on one date does not touch
-  any other date's score.
+**Per-exercise checkboxes (§9.4) are now the entire record of a training day.**
+Tick what you did. That is the whole interface.
 
-*History, so the record stays straight:* the tray originally lived on Home. A
-session that cleaned up the Home page removed it without giving the write path
-anywhere else to live, which meant nothing in the app could set a deviation by
-tapping — flagged at the time as an open gap, not a design decision. This
-section replaces that gap note now that the control has a home.
+**Why it went:** it was dead weight from an older design. Five day-level labels
+sat on top of a per-exercise record that already said the same thing more
+precisely, and two of them (`Completed`, `Makeup`) changed no score at all.
+Ryan decided the checkboxes are the record and the labels are noise.
+
+#### What was deleted
+
+- `index.html`: the `#training-deviation-tray` mount and its section title.
+- `pages/training.js`: `DEV_TYPES`, `SWAP_OPTIONS`, `swapAreaOpen`,
+  `renderDeviationTray()`, `trainingSetDeviation()`, `trainingSaveSwap()`, and
+  **all five deviation banners** that used to render at the top of the
+  prescription card. The card displays no deviation of any kind now.
+- `pages/home.js`: `setDeviation()` and `saveSwap()` — the last write path in
+  the app — plus the day strip's `missed`/`completed` dot-colour overrides.
+- `app.js`: the four `window.*` bindings for those functions.
+- `pages/calendar.js`: the `missed`-forces-a-red-dot lookup. Calendar dots
+  colour by session category only.
+- `styles/components.css`: `.deviation-tray`, `.deviation-tray-label`,
+  `.dev-btn-grid`, `.dev-btn`, `.dev-icon`, `.dev-label`, `.active-btn`,
+  `.missed-btn`, `.skip-btn`, `.dev-swap-area`. Each was grepped repo-wide
+  first; none had another user.
+
+#### What was NOT deleted — this distinction is load-bearing
+
+**`d.deviations` remains in the schema (§1.4).** Nothing about the stored data
+changed. Every record Ryan already logged is preserved byte-for-byte.
+
+- `app.js`'s migration guard still backfills `d.deviations` onto older stores.
+- `store.js`'s `known` array still lists `deviations`, so an old backup still
+  passes the import sanity check.
+- `derive.js`'s `historyDays()` still enumerates its keys, so old deviation
+  dates still count toward "how much history does the app have".
+- `deviationType()` and `getWorkoutForDate()` still read it.
+
+**The rule is: the key stopped being *written*, not removed.** Post-epoch
+training scoring never reads it (§9.5); the frozen pre-epoch path still does,
+which is what keeps Ryan's existing history scoring exactly as it always did.
+
+**Do not restore this tray**, and do not read the absence of a write path as a
+gap awaiting a fix. An earlier session did remove the tray from Home without a
+new home for the write path and correctly flagged *that* as an accident. This
+is the opposite: a deliberate removal of the whole concept.
+
+##### The find-and-replace trap
+
+`index.html` contained **two** sections titled `Log a Deviation`. The one on
+`#page-training` was removed. The one on `#page-fasting`, above
+`#fasting-fail-container`, is the **Fasting Fail button (§7.1)** — a completely
+different control, Ryan's only way to record a broken fast, and it stays. Edit
+these by element id. A global find-and-replace on the heading text destroys the
+fasting control.
 
 ---
 
