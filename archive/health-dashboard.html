@@ -13,7 +13,7 @@
     function checkPin() {
       var pin = prompt("Me-Tracker — Enter PIN:");
       if (pin === null) { window.location.href = "https://google.com"; return; }
-      if (pin !== "7277255521") {
+      if (pin !== "REDACTED") {
         attempts++;
         if (attempts >= 3) { alert("Access denied."); window.location.href = "https://google.com"; }
         else { alert("Incorrect PIN. " + (3 - attempts) + " attempt(s) remaining."); checkPin(); }

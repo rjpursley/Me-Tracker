@@ -174,10 +174,90 @@ evicting site data from infrequently-visited sites, which it does.
 phone, every time, for real use.** The other two addresses are for testing
 from the Alienware itself.
 
-### 2.2 The PIN gate
-Keep it. Its job changed: it now guards against someone picking up an unlocked
-phone, not against someone finding a public URL. It was never real security and
-is not claimed to be.
+### 2.2 The PIN gate — removed 2026-08-11
+
+**There is no PIN gate.** It was removed deliberately, not lost by accident —
+if a future session finds no `checkPin()` in `index.html` and is tempted to
+treat that as a regression, it is not one.
+
+**Why it went:** the gate was written back when the app lived on GitHub
+Pages, where the HTML (PIN included) was on a public URL anyone could read.
+Once §2 moved hosting to Tailscale, that threat model was already gone — the
+app is reachable only from Ryan's own devices, behind Tailscale's own auth,
+behind his phone's lock screen. A `prompt()` dialog guarded nothing that
+wasn't already guarded twice over, and §2.2 previously argued it was worth
+keeping anyway as a "someone picked up an unlocked phone" speed bump. This
+session's explicit instruction overrode that: `window.prompt()` is unsupported
+in some mobile/WebView contexts (see the 2026-08-11 black-screen incident,
+§2.2.1) — including, on some iOS versions, a page running in standalone
+"Add to Home Screen" mode, which is a plausible way Ryan actually opens this
+app day to day. A security control that can hang or crash the entire app for
+its one legitimate user is a worse trade than the mis-tap risk it guarded
+against.
+
+**What was removed:** the inline `<script>` block that was the first thing in
+`<head>` — `checkPin()`, its `prompt()`/`alert()` calls, the hardcoded PIN
+value, and the redirect-to-Google punishment for a wrong guess or a cancelled
+prompt. Nothing else lived in or after that block; it was checked, not
+assumed, before deletion. The PIN number itself was also scrubbed from the two
+dead copies of this file under `archive/` (never served, kept only as
+history) — it does not appear anywhere in the repo any more.
+
+**Do not re-add a PIN, password, or lock screen without asking Ryan first.**
+If the hosting model ever changes back to something public, that is a
+conversation, not a silent restoration of this file.
+
+#### 2.2.1 The 2026-08-11 black-screen investigation
+
+Ryan reported a black screen and suspected the PIN. Investigated before
+assuming: served the real, unmodified `index.html` (PIN block intact) over
+plain HTTP and captured the actual console error.
+
+**What the error actually was:** `Error: prompt() is not supported`, thrown
+inside `checkPin()`. Confirmed reproducible — matches what prior sessions
+also reported.
+
+**What it was NOT:** in every load tested, that thrown error did not by
+itself blank the page — the DOM still rendered fully underneath it (nav,
+score, prescription card, all populated), because the exception only aborted
+that one inline `<script>` block; parsing continued into `<body>` and the
+`js/app.js` module regardless. Stale ES module caching — the other suspect
+named going into this session — was also checked directly and ruled out as
+today's active cause: every `js/*.js` request came back a fresh `200` with no
+link errors on a clean load, and `server/app.py` already carries anti-cache
+middleware for `.js`/`.css` (§2.3 territory) from an earlier session.
+
+**What was actually found, and fixed:** `index.html` itself had no
+`Cache-Control` header at all — the existing anti-cache middleware only
+matched `.js`/`.css` paths, never the HTML shell. Reproduced directly: after
+editing `index.html`, a brand-new browser tab kept rendering the **old**
+cached copy (PIN block and all), with no corresponding request even reaching
+the server's access log — proof the browser was never revalidating, not just
+caching briefly. That is a real, silent staleness bug of exactly the same
+family the `.js`/`.css` middleware was already written to prevent, just
+scoped to the file that boots the whole app instead of one module. Fixed by
+extending that same middleware to also cover `/` and `/index.html`
+(`server/app.py`) — now every load of the shell is `no-store`, matching the
+scripts and styles it loads.
+
+**Given both of the above, the most likely real-world explanation for
+Ryan's black screen** is a combination: his phone had at some point cached
+an old `index.html` (no header ever told it not to), and depending on the
+exact WebKit build/mode showing it — particularly standalone "Add to Home
+Screen" mode, where `prompt()` support is known to be unreliable — an
+unsupported synchronous `prompt()` call can hang the render thread rather
+than throw-and-continue the way it did in every environment tested this
+session. A hang before `<body>` ever paints would look exactly like a black
+screen, indefinitely, with no console error ever surfacing to explain it.
+Removing the PIN gate entirely removes that hang path outright; fixing the
+caching gap means a fresh load actually reaches his phone the next time
+something changes, rather than being invisibly ignored.
+
+**What to tell Ryan:** close the app fully (swipe it away, don't just
+background it) and reopen it once after this ships, so his phone is
+guaranteed to fetch the new `index.html` instead of whatever it has cached.
+After that one reopen, the no-store headers mean this specific staleness
+class shouldn't recur.
 
 ### 2.3 Running the server — for a future session with no memory of this one
 
@@ -336,7 +416,7 @@ what happened either way.
 
 ```
 Me-Tracker/
-├── index.html              # Shell only: PIN gate, topbar, drawer, page mounts
+├── index.html              # Shell only: topbar, drawer, page mounts
 ├── ARCHITECTURE.md         # This file
 ├── .gitignore              # Covers client_secret*.json, env.txt, *.env, etc.
 │
@@ -1236,7 +1316,8 @@ drawer, because §11 protects drawer structure and 1RMs are training data.
 
 ## 11. Do not touch without explicit instruction
 
-- PIN gate logic
+- ~~PIN gate logic~~ **Removed 2026-08-11 — see §2.2.** There is no PIN gate
+  to protect any more. Do not restore one without asking Ryan.
 - Drawer structure
 - `metracker_v2` schema (additive keys only)
 - **Fasting timer and phase logic** — `calcFastHrs()`, `getPhase()`,

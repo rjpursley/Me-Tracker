@@ -219,20 +219,28 @@ app.mount("/styles", StaticFiles(directory=STYLES_DIR), name="styles")
 
 
 # -----------------------------------------------------------------------------
-# No-cache headers on .js and .css — ARCHITECTURE.md §12 territory in spirit.
+# No-cache headers on index.html, .js and .css — ARCHITECTURE.md §12 territory
+# in spirit.
 #
 # ES module caching has cost real time across multiple sessions testing this
 # app: a browser (or this app's own test harness) would keep serving a
 # stale copy of a module after it was edited, with no visible sign anything
-# was wrong. A plain middleware inspecting the response path is simpler and
-# more robust than subclassing StaticFiles' internals (which differ across
-# starlette versions) — it works the same regardless of how a response for
-# a .js/.css path was produced.
+# was wrong. index.html carries the same risk and was originally left out of
+# this list — FileResponse sets no Cache-Control of its own, so a browser is
+# free to cache the HTML shell on heuristics alone and never even ask the
+# server again. Confirmed directly during the 2026-08-11 PIN-removal session:
+# a test browser kept serving a cached index.html with the just-deleted PIN
+# block still in it, across brand-new tabs, with zero corresponding request
+# in the server's own access log — proof the browser never revalidated.
+# A plain middleware inspecting the response path is simpler and more robust
+# than subclassing StaticFiles' internals (which differ across starlette
+# versions) — it works the same regardless of how a response for one of
+# these paths was produced.
 # -----------------------------------------------------------------------------
 @app.middleware("http")
-async def no_cache_for_scripts_and_styles(request: Request, call_next):
+async def no_cache_for_shell_scripts_and_styles(request: Request, call_next):
     response = await call_next(request)
-    if request.url.path.endswith((".js", ".css")):
+    if request.url.path in ("/", "/index.html") or request.url.path.endswith((".js", ".css")):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
