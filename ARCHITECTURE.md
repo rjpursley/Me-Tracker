@@ -895,6 +895,47 @@ The Vitals sleep-history rows show awake time where the field exists —
 `7.0h · 1.4h deep · 12m awake`. A day without the field shows nothing extra,
 never a fabricated `0m awake` (§1.7).
 
+### 6.11 Manual sleep entry retired — the API is authoritative for sleep
+
+**Decided 2026-08-12.** Ryan does not hand-log sleep; the watch measures it.
+The Log Sleep form on the Log Entry page is **retired**, using the same pattern
+as the daily fast goal (§7.1): `is-retired` rows, a `tag-inactive` badge, every
+input `disabled`, and a `form-note` saying why.
+
+**Precedence for sleep is now: synced → manual → the 7h assumption.**
+
+This is the one pillar where the API outranks a manual log. It is a deliberate
+inversion of the §1.1 note that "a manual log always wins", and it is scoped to
+sleep alone — leaving the form live while ignoring what it wrote would be worse
+than removing it, because a control that writes data nothing reads is a trap.
+
+**`d.sleeps` is not dead and was not deleted (§1.4):**
+
+- Existing entries are preserved and still render in Sleep / HR history.
+- They are still the **fallback** for a night the watch has no record of —
+  a real case, since Google holds no sleep at all for 2026-07-30 → 08-05
+  (§6.9). An old manual row for such a night still scores.
+- `logSleep()` is left in place. A write path is not deleted in the same commit
+  that disables its trigger; that is how a capability gets lost by accident.
+
+**Both readers were changed together** — `derive.js`'s `getSleepForDate()` and
+`pages/vitals.js`'s `resolveDay()`. Changing only the page would have made the
+displayed number differ from the scored one, which is precisely the failure
+§6.9 records. If one of these is ever changed, change the other in the same
+commit.
+
+#### Scope limit — this applies to sleep and nothing else
+
+**Manual HR entry is NOT retired.** `d.hrs`, the Log HR form and its
+manual-wins precedence are untouched and still fully functional. The same goes
+for meals, workouts and everything else Ryan still logs by hand. A future
+session that "makes the pillars consistent" by extending this inversion is
+causing drift — the asymmetry is the decision.
+
+**Consequence Ryan accepted:** with the form retired, a night the watch missed
+*going forward* cannot be recorded by hand and falls to the 7h assumption
+(§1.1). Old manual rows still work; new ones cannot be created.
+
 ---
 
 ## 7. Fasting protocol — intermittent only

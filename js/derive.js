@@ -307,9 +307,19 @@ export function calcFastHrs(fast){if(!fast||!fast.start)return 0;const s=new Dat
 // aggregated since score off real asleep time. There is deliberately NO epoch
 // constant and NO migration; do not add either, and do not re-sync history to
 // populate the field (Ryan declined that rewrite).
+// THE API IS AUTHORITATIVE FOR SLEEP (§6.11, changed 2026-08-12). The watch
+// measures it; the manual Log Sleep form is retired. The synced figure wins
+// wherever one exists.
+//
+// d.sleeps is NOT dead: it is still in the schema (§1.4), old entries are
+// preserved, and they are still used as the FALLBACK for a night the watch has
+// no record of — which is a real case (Google holds no sleep at all for
+// 2026-07-30..08-05, §6.9). Order is therefore: synced, then manual, then the
+// flat 7h assumption (§1.1).
+//
+// This function and pages/vitals.js's resolveDay() must always agree — §6.9
+// exists because a page once showed a different number from the one scored.
 export function getSleepForDate(ds){
-  const d=db();const logged=d.sleeps.find(s=>s.date===ds);
-  if(logged)return logged;
   const v=getCachedVitals(ds||today());
   const sleepMin=(v&&v.sleep)?(v.sleep.asleepMinutes??v.sleep.totalMinutes):null;
   if(sleepMin!=null&&sleepMin>0){
@@ -317,6 +327,8 @@ export function getSleepForDate(ds){
     const deepMin=stages.deep??stages.DEEP??stages.Deep??0;
     return{hours:sleepMin/60,deep:deepMin/60,quality:3,_fromApi:true};
   }
+  const logged=db().sleeps.find(s=>s.date===ds);
+  if(logged)return logged;
   return{hours:7,deep:1.2,quality:3,_default:true};
 }
 

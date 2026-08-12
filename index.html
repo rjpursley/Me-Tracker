@@ -295,13 +295,20 @@
     <div class="form-row"><div class="form-label">Date</div><input type="text" id="workout-date" placeholder="YYYY-MM-DD"></div>
     <button class="btn btn-primary" onclick="logWorkout()">Save Workout</button>
   </div>
+  <!-- RETIRED 2026-08-12 (§6.11), same pattern as the daily fast goal below.
+       Sleep comes from the watch via Google Health and the API is now
+       authoritative for it, so a hand-typed figure would be silently ignored —
+       a control that writes data nothing reads is worse than no control.
+       d.sleeps is NOT deleted (§1.4): existing entries are kept and still
+       render in the Vitals history. logSleep() is left in place too; a write
+       path is not deleted in the same commit that disables its trigger. -->
   <div id="form-sleep" class="card" style="display:none">
-    <div class="card-title">Log Sleep</div>
-    <div class="form-row"><div class="form-label">Total hours slept</div><input type="number" id="sleep-hours" placeholder="e.g. 7.5" step="0.25"></div>
-    <div class="form-row"><div class="form-label">Deep sleep (hours, estimate)</div><input type="number" id="sleep-deep" placeholder="e.g. 1.5" step="0.25"></div>
-    <div class="form-row"><div class="form-label">Sleep quality (1–5)</div><select id="sleep-quality"><option value="5">5 – Excellent</option><option value="4">4 – Good</option><option value="3" selected>3 – Average</option><option value="2">2 – Poor</option><option value="1">1 – Terrible</option></select></div>
-    <div class="form-row"><div class="form-label">Date</div><input type="text" id="sleep-date" placeholder="YYYY-MM-DD"></div>
-    <button class="btn btn-primary" onclick="logSleep()">Save Sleep</button>
+    <div class="card-title">Log Sleep <span class="tag-inactive">retired</span></div>
+    <div class="form-row is-retired"><div class="form-label">Total hours slept</div><input type="number" id="sleep-hours" placeholder="e.g. 7.5" step="0.25" disabled></div>
+    <div class="form-row is-retired"><div class="form-label">Deep sleep (hours, estimate)</div><input type="number" id="sleep-deep" placeholder="e.g. 1.5" step="0.25" disabled></div>
+    <div class="form-row is-retired"><div class="form-label">Sleep quality (1–5)</div><select id="sleep-quality" disabled><option value="5">5 – Excellent</option><option value="4">4 – Good</option><option value="3" selected>3 – Average</option><option value="2">2 – Poor</option><option value="1">1 – Terrible</option></select></div>
+    <div class="form-row is-retired"><div class="form-label">Date</div><input type="text" id="sleep-date" placeholder="YYYY-MM-DD" disabled></div>
+    <div class="form-note">Sleep is read from the watch via Google Health and is no longer entered by hand. Entries logged before this still count and still appear in Sleep / HR history.</div>
   </div>
   <div id="form-meal" class="card" style="display:none">
     <div class="card-title">Log Meal</div>

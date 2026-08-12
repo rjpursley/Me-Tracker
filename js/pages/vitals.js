@@ -77,12 +77,18 @@ function resolveDay(d,ds){
   const manualWork=(hr&&+hr.workout>0)?+hr.workout:null;
   const apiRest=(v&&+v.restingHR>0)?+v.restingHR:null;
   const apiWork=(v&&v.workout&&+v.workout.avgHR>0)?+v.workout.avgHR:null;
+  // SLEEP: the API wins (§6.11) — the watch measures it and the manual form is
+  // retired. An old manual row is still the fallback for a night the watch has
+  // no record of, so preserved entries keep rendering and keep scoring.
+  // HR IS DELIBERATELY NOT LIKE THIS: Ryan still logs heart rate by hand, so
+  // manual continues to win below. Do not "make them consistent".
+  const useApiSleep=apiSleepMin!=null;
   return{
     ds,
-    sleepHrs: sl?+sl.hours:(apiSleepMin!=null?apiSleepMin/60:null),
-    deepHrs:  sl?(+sl.deep>0?+sl.deep:null):(apiDeepMin>0?apiDeepMin/60:null),
-    awakeMin: sl?null:apiAwakeMin,
-    quality:  sl?+sl.quality:null,
+    sleepHrs: useApiSleep?apiSleepMin/60:(sl?+sl.hours:null),
+    deepHrs:  useApiSleep?(apiDeepMin>0?apiDeepMin/60:null):(sl&&+sl.deep>0?+sl.deep:null),
+    awakeMin: useApiSleep?apiAwakeMin:null,
+    quality:  useApiSleep?null:(sl?+sl.quality:null),
     sleepFromApi: !sl&&apiSleepMin!=null,
     resting:  manualRest??apiRest,
     workout:  manualWork??apiWork,
