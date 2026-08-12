@@ -793,6 +793,47 @@ later. If a metric renders blank, check which array the *page* is reading
 before suspecting the sync — `sync.log` and `server/data/vitals_daily.json`
 will tell you in under a minute whether the data ever arrived.
 
+#### Every metric has ONE owning source — check this table before wiring a read
+
+The §6.9 bug happened because nothing recorded which source owns which number,
+so a page could read the wrong one and nobody noticed. A full audit of every
+manual-array read in the client (2026-08-12) produced this. **It is the
+authority; if code disagrees with it, the code is wrong.**
+
+| Metric | Owner | Manual store | Synced field | Rule |
+|---|---|---|---|---|
+| Sleep | **API** | `d.sleeps` (retired, §6.11) | `sleep.asleepMinutes ?? sleep.totalMinutes` | synced → manual → 7h |
+| Resting HR *(zone table)* | **API** | — | `restingHR` | API only, per §5 |
+| Resting/workout HR *(Vitals display)* | manual | `d.hrs` | `restingHR`, `workout.avgHR` | manual → synced |
+| Steps | **API** | — | `steps` | API only |
+| Live HR / zone | **API** | — | `latestHR` | API only (§6.2) |
+| Started activity | **API** | — | `startedActivities` | API only (§9.5) |
+| Body fat / VO2 max / HRV | **API** | — | `bodyFatPct`, `vo2Max`, `hrv` | API only, per §10 |
+| Bodyweight / waist / height / age | **manual** | `d.body.*` | `weightLbs` exists but is **unused by design** (§10) | manual only |
+| Workout type/category | **manual** | `d.workouts` | `startedActivities[].activityType` — **not equivalent**, see below | manual only |
+| Meals / macros | **manual** | `d.meals` | **none** — no nutrition type is pulled | manual only |
+| Fasts | **manual** | `d.fasts` | **none** | manual only |
+
+**Two entries are deliberately asymmetric and must not be "made consistent":**
+
+- **Resting HR has two different rules on purpose.** The Karvonen zone table
+  reads the API only, because §5 says so — a hand-typed one-off must not shift
+  the training zones. The Vitals page's 15-day average lets a manual entry win,
+  because that card is a log of what Ryan recorded. They answer different
+  questions over different windows. *(Known consequence: a hand-logged resting
+  HR shows on the Vitals card but does not move the zone table. Flagged for
+  Ryan; changing it is a §5/§11 decision, not a cleanup.)*
+- **Bodyweight is manual even though `weightLbs` exists.** §10 assigns it to
+  manual entry, and Google currently returns zero weight rows anyway.
+
+**`d.workouts` and `startedActivities` are NOT the same fact.** Google reports
+`WALKING` / `WEIGHTS` / `RUNNING` / `OUTDOOR_BIKE` / `SPORT`; the app scores on
+`Resistance` / `HIIT` / `Zone 2` / `Bodyweight` / `Wtd Walk` / `Mobility` /
+`Active Rest`. Mapping one to the other means guessing intensity Google never
+reported — deciding whether a run was Zone 2 or HIIT — which is exactly the
+inference §9.5 forbids. `startedActivities` is used only for the boolean
+"was a session started", and that is all it should ever be used for.
+
 #### Genuine data gaps, which are NOT this bug
 
 Fixing the above does not fill every day, and that is correct behaviour:
