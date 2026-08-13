@@ -2206,11 +2206,43 @@ is ever committed.**
   Zero is a measurement of zero (§1.7). A value that is present but not a
   non-negative number is a **400**, not a silent `null` — quietly discarding a
   typo would store "no data" for something Ryan believes he entered.
-- **`confidence` is `"high"`** — hand-typed, per §8's tiers. **`"exact"` is
-  reserved for a future Open Food Facts hit and is never emitted here;** a
-  client that sends it gets `"high"` recorded instead.
+- **`confidence` is `"high"`** for a hand-typed item, per §8's tiers.
+  **`"exact"` was previously reserved for "a future Open Food Facts hit" and
+  rejected outright; that future arrived with §13.6 and it is accepted now —
+  but only on an item that carries a `barcode`.** The lookup is what makes it
+  exact, so an `"exact"` with no barcode is still recorded as `"high"`.
 - **The server generates `id`, `createdAt` and `updatedAt`.** A client cannot
   set them.
+
+#### Four additive fields from the barcode path (§13.6, §13.7)
+
+```json
+"barcode": "0857777004096", "basis": "converted",
+"servingGrams": 52, "servingSource": "off"
+```
+
+| Field | Meaning |
+|---|---|
+| `barcode` | The **canonical** code (§13.6), digits |
+| `basis` | `converted` / `per_serving` / `per_100g` — how the stored per-serving macros were arrived at |
+| `servingGrams` | Grams in one serving. Strictly positive |
+| `servingSource` | `off` (OFF knew it) / `label` (Ryan typed grams) / `divided` (net weight ÷ servings per container) |
+
+- **THE STORED MACROS ARE ALWAYS PER SERVING**, in every case. `basis` records
+  provenance, not what unit the numbers are in.
+- **ABSENCE IS THE BOUNDARY** (§1.4). Items that predate this have none of these
+  keys, and **nothing backfills them** — they are omitted from a stored record
+  rather than written as nulls, so "hand-typed, before barcodes" stays
+  distinguishable. No migration, no epoch constant, same rule as
+  `asleepMinutes` (§6.10) and `times` (§9.4).
+- **A `PUT` leaves a key it does not mention alone**, rather than clearing it.
+  These four are provenance, like `createdAt` — and the Meal Tracker's plain
+  Edit form knows nothing about them, so a PUT that dropped an item's barcode
+  because the edit form never heard of it would be silent data loss.
+- **`basis: "per_100g"` with no `servingGrams` is a 400.** Storing per-100 g
+  numbers behind a counter that counts servings (§8.0) is the exact silent
+  inflation §13.6 exists to prevent. The client disables Save as well — that is
+  the UI, this is the guarantee (§9.4's split).
 
 ### 13.3 Endpoints
 
@@ -2228,10 +2260,19 @@ Same-origin, no CORS, loopback bind unchanged (§2).
 or `null` when it is empty. Every mutating route returns the whole library so a
 client can refresh its mirror from the response rather than re-fetching.
 
-**`PUT` replaces the editable fields wholesale** (name, serving text, macros,
-confidence) and carries `createdAt` and `lastUsedAt` through untouched — an
-edit is not a use. **`/used` sets `lastUsedAt` and nothing else**: bumping
-`updatedAt` there would make every mirror look stale after lunch.
+**`PUT` replaces the editable fields wholesale** (name, serving text, macros)
+and carries `createdAt` and `lastUsedAt` through untouched — an edit is not a
+use. **`/used` sets `lastUsedAt` and nothing else**: bumping `updatedAt` there
+would make every mirror look stale after lunch.
+
+**`confidence` and the four §13.6 fields follow a different rule: a key the
+payload does not MENTION is left alone.** They are provenance, not label text,
+and the Meal Tracker's Edit form has never sent any of them. For a hand-typed
+item this is identical to the old behaviour (`high` either way) — but without
+it, fixing a typo in an Open Food Facts item's name silently demoted it from
+`exact` to `high` and dropped its barcode. Confidence is still re-checked
+against the **merged** barcode, so explicitly clearing the barcode still
+downgrades the tier. Verified both ways.
 
 **A missing or malformed `foods.json` yields an EMPTY library, never a 500.**
 Same reasoning as `_load_daily_store()` in `google_health.py`, and the
@@ -2287,3 +2328,248 @@ what stops a later correction to a label from silently rewriting past scores.
 
 **If a future session ever "normalises" `d.foodCounts` into an id reference,
 this purge starts rewriting history and must be turned off first.**
+
+---
+
+### 13.6 Barcode lookup — Open Food Facts
+
+**Built 2026-08-13.** `server/barcode.py` plus one endpoint in `server/app.py`.
+This is the "barcode → Open Food Facts" step §8 has always put first in the
+order of attempt, and HANDOFF §5 specified.
+
+> **Numbering note:** the build brief called this "§13.1". That number was
+> already the ownership rule above, and it is cited by name in `foods.py`,
+> `app.py` and §8.0 — renumbering would have caused exactly the drift this file
+> exists to stop. It landed at §13.6 instead. There is nothing else to read into
+> the number.
+
+#### The endpoint
+
+```
+GET /api/barcode/{code}
+```
+
+**It returns a CANDIDATE FOR REVIEW. It creates nothing.** The client shows what
+came back, Ryan checks it against the package in his hand, and only then does
+the **existing** `POST /api/foods` (§13.3) save it. There is deliberately no
+second create path and no "save on lookup" shortcut.
+
+| Outcome | HTTP | Body |
+|---|---|---|
+| A candidate | 200 | `{found:true, barcode, matchedAs, name, brand, servingText, servingGrams, packageGrams, basis, macros, sodiumSource}` |
+| OFF has no such product | **200** | `{found:false, barcode, reason}` |
+| The typed digits are not a barcode | 400 | `{detail}` — **no upstream call is made** |
+| OFF timed out, refused, or was unreachable | 502 | `{detail}` |
+
+**"Not found" is a 200 on purpose.** A product Open Food Facts does not have is
+a normal, frequent outcome — not an error — and the client turns it straight
+into manual entry with the barcode kept. Only a genuine upstream *failure* is a
+502, and a failure never returns a partial or fabricated product (§1.7).
+
+Upstream is `https://world.openfoodfacts.org/api/v2/product/{barcode}.json`,
+with a descriptive `User-Agent` per OFF's stated policy and an **8-second**
+timeout. **No API key, no auth, no secrets** — nothing in `barcode.py` reads
+`.metracker/`. **Nothing upstream is cached to disk.**
+
+**The User-Agent deliberately carries no personal contact details.** OFF asks
+callers to identify themselves; it gets the app name, version and repo URL.
+Ryan's email is not published to a third party's request logs to satisfy a
+courtesy header.
+
+#### ############ VISION MUST NEVER DECODE A BARCODE ############
+
+**Typed digits only. No camera, no live scanning, no image decoding, and no
+Ollama anywhere in this path.**
+
+This is not a scope note, it is a correctness rule. A vision model that misreads
+one digit **does not fail** — it returns a *different product's* macros, with
+full confidence, and nothing downstream can tell. Every other failure mode in
+this feature is visible; that one is silent, and it would poison the library
+permanently because §8.0's snapshot rule then copies those macros into a day's
+record.
+
+§8's order of attempt is **barcode → label OCR → plate estimate**: deterministic
+lookup first, inference only after, and the two never blurred. A camera-based
+barcode path is a separate, later build with its own decision — it is not an
+incremental improvement to this one.
+
+#### Normalisation — load-bearing
+
+- Whitespace and hyphens are stripped. **Anything else left over is rejected**,
+  not silently discarded — dropping a stray character could turn one product's
+  code into another's.
+- **8, 12 or 13 digits only.** Any other length is rejected *without calling
+  upstream*.
+- A 12-digit UPC-A is tried **as-is and zero-padded to 13** (EAN-13).
+- `matchedAs` reports which form was asked with: `ean13`, `upc12`,
+  `ean13-padded`, `ean8`.
+
+##### MEASURED, AND IT CONTRADICTS THE BRIEF THAT ASKED FOR IT
+
+The build brief said US 12-digit products "routinely miss without the pad". That
+was checked against live data rather than assumed, and **it is not true of
+today's API**:
+
+| Asked with | HTTP | `code` returned |
+|---|---|---|
+| `857777004096` (12) | 200 | `0857777004096` |
+| `0857777004096` (13) | 200 | `0857777004096` |
+
+Six US 12-digit codes, both forms each, twelve requests: **every one resolved,
+and every one came back keyed to the 13-digit form.** OFF does key on 13
+digits — that half is confirmed — but its API zero-pads the request itself, so
+the pad never *rescues* a lookup.
+
+**The pad attempt was kept anyway**, because it costs one request only when the
+first form misses, and it is real insurance if that server-side normalisation
+ever changes. **But do not expect to see `matchedAs: "ean13-padded"` in
+practice, and do not treat its absence as a bug.**
+
+##### The stored barcode is the CANONICAL code, not what Ryan typed
+
+Because OFF answers a 12-digit request with the 13-digit `code`, **that** is
+what the endpoint reports and what the client stores. Storing the 12 typed
+digits would mean the same product looked up later in its 13-digit form did not
+match the item already in the library — a hole straight through the duplicate
+guard (§13.7).
+
+The canonical code is adopted **only when it is the same number** (an integer
+comparison, so leading zeros are irrelevant). A code that is genuinely different
+is not silently accepted.
+
+#### ############ THE SERVING-SIZE PROBLEM — THE WHOLE FEATURE ############
+
+**OFF reports nutriments per 100 g, and only sometimes also per serving. The
+Meal Tracker counter counts SERVINGS (§8.0).** Getting this wrong does not look
+like a bug: it silently inflates or deflates every macro Ryan eats, in one
+direction, forever.
+
+**THE SERVER NEVER GUESSES A SERVING SIZE.** It never assumes 100 g is a
+serving, and it never returns per-100 g figures while labelling them
+per-serving. It reports what OFF has, what OFF lacks, and which case applies.
+Deciding what to do about a missing serving size is the client's job, with Ryan
+in the loop (§13.7).
+
+| Case | Condition | `basis` | Macros returned |
+|---|---|---|---|
+| 1 | `serving_quantity` present (grams/serving) | `converted` | `per100g × serving_quantity ÷ 100`, `servingGrams` set |
+| 2 | no `serving_quantity`, but `*_serving` nutriments exist | `per_serving` | used as-is, `servingGrams` **null** |
+| 3 | neither, but `product_quantity` present | `per_100g` | **UNCONVERTED per 100 g**, `packageGrams` set |
+| 4 | neither, and no `product_quantity` | `per_100g` | **UNCONVERTED per 100 g**, both null |
+
+Cases 3 and 4 share a `basis`; **`packageGrams` is what tells them apart**, and
+all it buys is that the client can offer the servings-per-container route
+without Ryan re-typing the net weight.
+
+**Case 2 returns null `servingGrams` deliberately.** Knowing the macros of a
+serving is not the same as knowing what it weighs, and inventing a weight is
+precisely what this module refuses to do.
+
+`packageGrams` is reported **whenever OFF has it**, in every case, because it is
+a fact about the product. It is only *acted on* in the per-100 g case.
+
+##### How the cases actually distribute — measured over 2,396 real products
+
+| `basis` | Count | Share |
+|---|---|---|
+| `converted` | 1,799 | 75.1% |
+| `per_100g` — case 3 (`packageGrams` known) | 470 | 19.6% |
+| `per_100g` — case 4 (nothing) | 127 | 5.3% |
+| **`per_serving`** | **0** | **0%** |
+
+**Case 2 did not occur once.** OFF *derives* its `*_serving` values from
+`*_100g × serving_quantity`, so per-serving values essentially never exist
+without a `serving_quantity` — which makes it case 1. The branch is kept
+(the brief asked for it, it is cheap, and OFF's derivation rule is not a
+promise), but **it is effectively dead code, and a future session should not be
+surprised to find it never runs.** It was verified by removing
+`serving_quantity` from a real record.
+
+**Roughly a quarter of lookups land on per-100 g**, so the client's two
+serving-size routes (§13.7) are not an edge case — they are the normal path
+every fourth scan.
+
+##### A converted figure can differ slightly from OFF's own per-serving value
+
+Case 1 recomputes from per-100 g rather than reading `*_serving`, per the
+brief's ordering. OFF rounds its stored per-serving values, so the two can
+disagree in the last decimal — Coca-Cola converts to `34.98 g` carbs where OFF's
+own `carbohydrates_serving` says `35`. That is rounding, not an error, and the
+review card lets Ryan overwrite either way.
+
+#### Field mapping
+
+| Me-Tracker | Open Food Facts |
+|---|---|
+| `protein` | `proteins` |
+| `fat` | `fat` |
+| `carbs` | `carbohydrates` |
+| `sugar` | `sugars` |
+| `fiber` | `fiber` |
+| `calories` | **`energy-kcal`** |
+| `sodium` | `sodium`, else derived from `salt` |
+
+**CALORIES COME FROM `energy-kcal`, NEVER FROM `energy`.** OFF's `energy` is
+kilojoules. Verified on a real record: the RXBAR reports `energy-kcal_100g 385`
+and `energy_100g 1610` — using the wrong one turns a 200 kcal bar into 837.
+
+**Any field absent upstream is `null`, NEVER `0`** (§1.7). Measured across the
+same 2,396 products: fiber missing on 29.5%, sugar and sodium on 6.1%, protein
+on 5.5%, calories on 5.1% — while **1,075 genuine measured zeros were kept as
+`0`**. A half-missing panel is the common case, not the exception, and it must
+come back half-null.
+
+#### Salt → sodium
+
+OFF usually carries **salt in grams**, and both its salt and sodium fields are
+in **grams** while this app stores sodium in **milligrams**.
+
+```
+sodium_mg = sodium_g × 1000                    sodiumSource = "sodium"
+sodium_mg = (salt_g ÷ 2.5) × 1000              sodiumSource = "salt"
+```
+
+`sodiumSource` is reported because a derived figure is arithmetic on a label
+value, not a label value.
+
+**The 2.5 constant is confirmed against real data, not taken on trust.** On 519
+of 556 products carrying both fields (93.3%), `salt ÷ 2.5` reproduces OFF's own
+sodium value exactly. End to end on the RXBAR: `0.865 ÷ 2.5 × 0.52 × 1000 =
+179.92 mg`, identical to the sodium-sourced answer of `179.9 mg`.
+
+##### OFF's own salt and sodium fields sometimes contradict each other
+
+**4.0% of those products (22 of 556) disagree by more than 10%**, and the
+pattern says the *sodium* field is the bad one — a unit slip of exactly 1000×,
+someone typing milligrams into a grams field:
+
+| Product | `salt_100g` | `sodium_100g` | `salt ÷ 2.5` |
+|---|---|---|---|
+| Thunfisch Filets | 0.89 | 0.000354 | 0.356 |
+| Natural Cottage Cheese | 0.52 | 0.000208 | 0.208 |
+| Sriracha Sauce | 7.8 | 0.134 | 3.12 |
+
+**`sodium` is still preferred when present**, per the brief. Three things make
+that safe rather than reckless, and a future session should weigh all three
+before "fixing" it:
+
+1. **Sodium is never scored** (§13.2). It is displayed only, so a wrong value
+   cannot move the Dietary score or any pillar.
+2. Every macro is **editable on the review card before anything is saved**
+   (§13.7), and `sodiumSource` is shown.
+3. Picking a winner automatically means guessing which of two upstream numbers
+   is right, which is the same class of decision this whole module refuses to
+   make about serving sizes.
+
+**Flagged for Ryan as an open call**, not fixed silently: preferring `salt` when
+the two disagree by more than ~10× would catch these, at the cost of overriding
+a value OFF actually reports.
+
+#### What this endpoint does not touch
+
+`google_health.py`, the sync loops, `foods.py`'s storage and every pre-existing
+route are untouched. Verified after the change: `/api/health`, `/api/foods`,
+`/api/sync/status`, `/api/vitals/{date}`, `/api/vitals?from=&to=`, `/`,
+`/index.html`, `/js/*`, `/styles/*` all still answer 200; `/api/counts` and
+`/api/foodCounts` still 404 (§13.1); and `server/data/` was **byte-identical**
+before and after a full test run.

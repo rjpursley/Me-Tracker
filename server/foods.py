@@ -37,6 +37,7 @@
 
 import json
 import os
+import re
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -67,11 +68,38 @@ FOOD_PURGE_DAYS = 120
 MACRO_FIELDS = ("protein", "fat", "carbs", "sugar", "calories", "fiber", "sodium")
 SCORED_MACRO_FIELDS = ("protein", "fat", "carbs", "sugar")
 
-# 'exact' is reserved for a future Open Food Facts barcode hit (§8) and is
-# never emitted by this module — everything created here is hand-typed, which
-# §8 tiers as 'high'.
+# §8's confidence tiers. 'exact' USED TO BE REJECTED HERE — §13.2 reserved it
+# for "a future Open Food Facts hit", and that future arrived with §13.6. It is
+# accepted now, but ONLY ON AN ITEM THAT CARRIES A BARCODE: a lookup is
+# deterministic, a hand-typed panel is not, and without that tie any client
+# could label a typed guess 'exact'. An 'exact' with no barcode is recorded as
+# 'high', the same downgrade this module has always applied to a tier it does
+# not believe.
 ALLOWED_CONFIDENCE = ("high", "low")
+BARCODE_CONFIDENCE = "exact"
 DEFAULT_CONFIDENCE = "high"
+
+# ---------------------------------------------------------------------------
+# The barcode path's additive fields (§13.6, §13.7).
+#
+# ABSENCE IS THE BOUNDARY (§1.4). Every item created before this existed simply
+# has none of these keys, and NOTHING BACKFILLS THEM — they are omitted from a
+# stored record rather than written as nulls, so "hand-typed, before barcodes"
+# stays distinguishable from "saved by the barcode path with nothing to report".
+#
+#   barcode        the CANONICAL code (§13.6), digits, or absent
+#   basis          where the stored macros came from
+#   servingGrams   grams in one serving
+#   servingSource  'off'      OFF knew the serving (basis converted/per_serving)
+#                  'label'    Ryan typed grams per serving off the panel
+#                  'divided'  Ryan gave net weight and servings per container
+#
+# THE STORED MACROS ARE ALWAYS PER SERVING, in every case. `basis` records how
+# that per-serving figure was arrived at, not what unit it is in.
+# ---------------------------------------------------------------------------
+BARCODE_FIELDS = ("barcode", "basis", "servingGrams", "servingSource")
+ALLOWED_BASIS = ("converted", "per_serving", "per_100g")
+ALLOWED_SERVING_SOURCE = ("off", "label", "divided")
 
 # Serialises read-modify-write. The purge runs on a worker thread out of the
 # nightly loop while request handlers run on FastAPI's threadpool; without this
@@ -207,29 +235,115 @@ def _clean_macros(payload):
     return {f: _clean_macro(src.get(f), f) for f in MACRO_FIELDS}
 
 
-def _clean_confidence(value):
-    """Hand-typed items are 'high' (§8). 'exact' belongs to a future barcode
-    lookup and is never emitted here, so anything unrecognised — including a
-    client that sent 'exact' — is recorded as 'high' rather than accepted."""
-    if isinstance(value, str) and value.strip().lower() in ALLOWED_CONFIDENCE:
-        return value.strip().lower()
+def _clean_confidence(value, has_barcode=False):
+    """Hand-typed items are 'high' (§8). 'exact' is accepted only alongside a
+    barcode (§13.6) — the lookup is what makes it exact. Anything else
+    unrecognised is recorded as 'high' rather than accepted."""
+    v = value.strip().lower() if isinstance(value, str) else ""
+    if v in ALLOWED_CONFIDENCE:
+        return v
+    if v == BARCODE_CONFIDENCE and has_barcode:
+        return BARCODE_CONFIDENCE
     return DEFAULT_CONFIDENCE
+
+
+def _clean_barcode(value):
+    """The stored barcode: digits, whitespace and hyphens stripped, or None.
+
+    Length is checked but the code is NOT re-derived here — barcode.py already
+    canonicalised it (§13.6), and a second, subtly different normalisation in a
+    second file is how two parts of one app start disagreeing about what the
+    same product is called. 14 allows for an ITF-14 case code being typed."""
+    if value is None:
+        return None
+    text = re.sub(r"[\s\-]", "", str(value))
+    if not text:
+        return None
+    if not text.isdigit() or not (8 <= len(text) <= 14):
+        raise FoodValidationError("barcode must be 8 to 14 digits.")
+    return text
+
+
+def _clean_choice(value, allowed, field):
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    v = str(value).strip().lower()
+    if v not in allowed:
+        raise FoodValidationError(f"{field} must be one of: {', '.join(allowed)}.")
+    return v
+
+
+def _clean_serving_grams(value):
+    """Grams in one serving. STRICTLY POSITIVE — unlike a macro, 0 is not a
+    measurement here, it is a serving that does not exist and would make every
+    conversion meaningless."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        raise FoodValidationError("servingGrams must be a number.")
+    if num != num or num in (float("inf"), float("-inf")) or num <= 0:
+        raise FoodValidationError("servingGrams must be a number greater than zero.")
+    return int(num) if float(num).is_integer() else round(num, 2)
+
+
+def _clean_barcode_fields(payload, existing=None):
+    """The four additive fields, merged over whatever is already stored.
+
+    A KEY THE PAYLOAD DOES NOT MENTION IS LEFT ALONE, rather than cleared. These
+    are provenance, not label text: the Meal Tracker's plain Edit form knows
+    nothing about them and posts a payload without them, and a PUT that dropped
+    an item's barcode because the edit form never heard of it would be silent
+    data loss. Same reasoning that carries createdAt through an update."""
+    merged = {k: (existing or {}).get(k) for k in BARCODE_FIELDS}
+    if "barcode" in payload:
+        merged["barcode"] = _clean_barcode(payload.get("barcode"))
+    if "basis" in payload:
+        merged["basis"] = _clean_choice(payload.get("basis"), ALLOWED_BASIS, "basis")
+    if "servingGrams" in payload:
+        merged["servingGrams"] = _clean_serving_grams(payload.get("servingGrams"))
+    if "servingSource" in payload:
+        merged["servingSource"] = _clean_choice(
+            payload.get("servingSource"), ALLOWED_SERVING_SOURCE, "servingSource")
+
+    # THE ONE CROSS-FIELD RULE, enforced here as well as in the UI. A per-100g
+    # candidate whose serving size is unknown has no per-serving macros to
+    # store, so saving it would put per-100g numbers behind a counter that
+    # counts servings (§8.0) — the exact silent inflation §13.6 exists to
+    # prevent. The client also disables Save; that is the UI, this is the
+    # guarantee (same split as §9.4's same-day lock).
+    if merged["basis"] == "per_100g" and merged["servingGrams"] is None:
+        raise FoodValidationError(
+            "A per-100g item needs a serving size in grams before it can be saved.")
+
+    return {k: v for k, v in merged.items() if v is not None}
 
 
 def _normalise_stored(item):
     """One stored record, with every field this module promises present. Fills
     gaps in an older or hand-edited file without rewriting it on disk."""
     macros = item.get("macros") if isinstance(item.get("macros"), dict) else {}
-    return {
+    out = {
         "id": str(item.get("id")),
         "name": item.get("name") or "",
         "servingText": item.get("servingText") or "",
         "macros": {f: macros.get(f, None) for f in MACRO_FIELDS},
-        "confidence": _clean_confidence(item.get("confidence")),
+        "confidence": _clean_confidence(item.get("confidence"),
+                                        has_barcode=bool(item.get("barcode"))),
         "createdAt": item.get("createdAt"),
         "updatedAt": item.get("updatedAt"),
         "lastUsedAt": item.get("lastUsedAt", None),
     }
+    # ABSENT STAYS ABSENT. Unlike the fields above, these four are NOT filled in
+    # with nulls — an item that predates the barcode path must keep reading as
+    # one, and materialising `barcode: null` on every old record would be the
+    # backfill §1.4 and §13.6 both rule out. Passed through unvalidated on
+    # purpose: load_items() must never raise over a hand-edited file.
+    for f in BARCODE_FIELDS:
+        if item.get(f) is not None:
+            out[f] = item.get(f)
+    return out
 
 
 def new_id():
@@ -249,7 +363,9 @@ def create_item(payload):
     name = _clean_text(payload.get("name"), "name", required=True)
     serving = _clean_text(payload.get("servingText"), "servingText")
     macros = _clean_macros(payload)
-    confidence = _clean_confidence(payload.get("confidence"))
+    extra = _clean_barcode_fields(payload)
+    confidence = _clean_confidence(payload.get("confidence"),
+                                   has_barcode=bool(extra.get("barcode")))
     now = _now_iso()
     item = {
         "id": new_id(),
@@ -260,6 +376,7 @@ def create_item(payload):
         "createdAt": now,
         "updatedAt": now,
         "lastUsedAt": None,
+        **extra,
     }
     with _lock:
         items = load_items()
@@ -278,15 +395,32 @@ def update_item(item_id, payload):
     name = _clean_text(payload.get("name"), "name", required=True)
     serving = _clean_text(payload.get("servingText"), "servingText")
     macros = _clean_macros(payload)
-    confidence = _clean_confidence(payload.get("confidence"))
     with _lock:
         items = load_items()
         for it in items:
             if it["id"] == item_id:
+                extra = _clean_barcode_fields(payload, existing=it)
                 it["name"] = name
                 it["servingText"] = serving
                 it["macros"] = macros
-                it["confidence"] = confidence
+                # Confidence follows the same "not mentioned means leave it
+                # alone" rule as the four fields below. The Meal Tracker's Edit
+                # form has never sent a confidence, so for a hand-typed item
+                # this is identical to the old behaviour ('high' either way) —
+                # but without it, fixing a typo in an Open Food Facts item's
+                # name silently demoted it from 'exact' to 'high'. It is still
+                # re-checked against the MERGED barcode, so clearing the
+                # barcode still downgrades the tier.
+                conf_src = payload["confidence"] if "confidence" in payload else it.get("confidence")
+                it["confidence"] = _clean_confidence(
+                    conf_src, has_barcode=bool(extra.get("barcode")))
+                for f in BARCODE_FIELDS:
+                    # Set what survived the merge, and genuinely remove what did
+                    # not, so a cleared field leaves no null behind.
+                    if f in extra:
+                        it[f] = extra[f]
+                    else:
+                        it.pop(f, None)
                 it["updatedAt"] = _now_iso()
                 _save_items(items)
                 logger.info("food library: updated %s (%s)", it["name"], it["id"])

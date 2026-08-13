@@ -1,14 +1,15 @@
 # -----------------------------------------------------------------------------
 # server/app.py — Me-Tracker's server. ARCHITECTURE.md §2, §3.
 #
-# Two jobs, and only these two today:
+# What it does today:
 #   1. Serve the client's static files (index.html, js/, styles/) so the app
 #      loads at all.
 #   2. Answer GET /api/health so something exists to check the server is up.
+#   3. Google Health sync — nightly, hourly and on demand (§6).
+#   4. The food library (§13) and barcode lookup (§13.6).
 #
-# Everything else (Google Health sync, the vision queue, barcode lookup) is a
-# LATER task. api_router below is where that work attaches — see the comment
-# at its definition. Do not build those here.
+# The vision queue (§8) is the one job still not built. api_router below is
+# where it attaches — see the comment at its definition. Do not build it here.
 #
 # BINDS 127.0.0.1:8123 ONLY. Tailscale is what exposes this externally, via
 # `tailscale serve` reverse-proxying https://<hostname>.<tailnet>.ts.net into
@@ -32,6 +33,7 @@ from fastapi.staticfiles import StaticFiles
 
 import google_health
 import foods
+import barcode
 
 HOST = "127.0.0.1"
 PORT = 8123
@@ -72,11 +74,11 @@ def secrets_readable() -> bool:
 #   - Google Health sync   (OAuth refresh, paginated pulls, aggregation —
 #     server/google_health.py, ARCHITECTURE.md §6)
 #   - Vision queue          (Ollama minicpm-v job queue — server/vision.py,
-#     ARCHITECTURE.md §8)
-#   - Barcode lookup        (Open Food Facts — server/barcode.py, §8)
+#     ARCHITECTURE.md §8) — STILL NOT BUILT
 #
-# Do not implement any of those here. This task only builds the skeleton they
-# plug into, per explicit instruction.
+# Google Health sync (§6), the food library (§13) and barcode lookup (§13.1)
+# have since been built and attach further down this file. The vision queue is
+# the one entry above that is still a later task; do not implement it here.
 # -----------------------------------------------------------------------------
 api_router = APIRouter()
 
@@ -204,6 +206,40 @@ def foods_used(item_id: str):
     except foods.FoodNotFound:
         raise HTTPException(status_code=404, detail="No food with that id.")
     return {"id": item["id"], "lastUsedAt": item["lastUsedAt"]}
+
+
+# -----------------------------------------------------------------------------
+# Barcode lookup — ARCHITECTURE.md §13.6. All real work lives in barcode.py.
+#
+# RETURNS A CANDIDATE FOR REVIEW. IT CREATES NOTHING. The client shows what came
+# back, Ryan checks it against the package in his hand and edits anything that
+# is wrong, and only then does the EXISTING POST /api/foods above save it. There
+# is deliberately no second create path.
+#
+# THREE OUTCOMES, AND THEY ARE DIFFERENT THINGS:
+#   200 {found:true, ...}   a candidate
+#   200 {found:false, ...}  OFF does not have this product. A NORMAL OUTCOME,
+#                           not an error — the client drops into manual entry.
+#   400                     the typed digits are not a barcode (never called
+#                           upstream)
+#   502                     OFF timed out, refused, or was unreachable. NEVER a
+#                           partial or fabricated product (§1.7).
+#
+# Plain `def` like the foods routes: it makes a blocking, up-to-8-second HTTP
+# call, and FastAPI runs a sync handler on its threadpool, so a slow lookup
+# cannot stall /api/health, the sync loops, or the static file routes.
+#
+# No API key, no auth, no secrets. Nothing here reads .metracker/ and nothing
+# upstream is cached to disk.
+# -----------------------------------------------------------------------------
+@api_router.get("/barcode/{code}")
+def barcode_lookup(code: str):
+    try:
+        return barcode.lookup(code)
+    except barcode.BarcodeFormatError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except barcode.UpstreamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 app.include_router(api_router, prefix="/api")
