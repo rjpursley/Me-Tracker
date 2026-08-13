@@ -2723,3 +2723,146 @@ barcode branch produced **zero JavaScript errors and zero `console.error`
 calls**. Non-2xx API responses do appear in the browser's network log as
 `Failed to load resource` lines — those are the deliberate 400/502 answers being
 handled and displayed, not exceptions.
+
+---
+
+### 13.8 Additives, caffeine and micronutrients — capture, not display
+
+**Built 2026-08-13.** Two additive groups on both the lookup response
+(`barcode.py`) and the stored library item (`foods.py`).
+
+**THE POINT IS CAPTURE. The data starts accumulating now so it can be analysed
+later.** §8.4's chart is deliberately thin, and **none of this is scored** — the
+four pillars at 25% each are untouched (§11). Everything here is display-only.
+
+#### Group A — `extras`: six numbers, per serving, in milligrams
+
+`caffeine`, `potassium`, `calcium`, `iron`, `magnesium`, `zinc`.
+
+- **They convert by exactly the same serving-size logic as the macros** (§13.6's
+  four cases). The identical `factor` is applied; there is no special case for
+  them anywhere, and a future session must not add one.
+- **Auto-filled from a lookup where OFF has them, TYPEABLE BY HAND otherwise** —
+  Ryan can read caffeine off a can OFF has never heard of.
+- **Absent upstream is `null`, never `0`** (§1.7). This matters more here than
+  for macros because coverage is so poor: most products have none of these, and
+  a blank must read as "OFF does not know", never "contains none".
+
+##### Units — measured, not assumed
+
+OFF normalises all six into **grams** in the base nutriments object and says so
+in a `<field>_unit` key. **Across 800 real products, every single occurrence of
+all six read `"g"` — not one exception.** Grams → milligrams is therefore a flat
+**×1000**, the same conversion sodium already makes.
+
+A value arriving in any other unit returns **null rather than a guessed
+conversion**: a 1000× error in a caffeine figure is worse than a blank. *That
+guard has never once fired against real data* — it is insurance, not a hot path.
+A **missing** `_unit` still converts, because `_100g`/`_serving` are OFF's own
+normalised grams either way.
+
+Worked, live:
+
+| Product | raw `_100g` | × 1000 | × serving | reported |
+|---|---|---|---|---|
+| Monster, 473.18 g | caffeine 0.0338 g | 33.81 mg | × 4.73176 | **160 mg** |
+| Red Bull, 250 g | caffeine 0.032 g | 32 mg | × 2.5 | **80 mg** |
+| RXBAR, 52 g | potassium 0.712 g | 712 mg | × 0.52 | **370.24 mg** |
+| RXBAR, 52 g | iron 0.00208 g | 2.08 mg | × 0.52 | **1.08 mg** |
+| Twix, 43.1 g | calcium 0.08 g | 80 mg | × 0.431 | **34.48 mg** |
+
+160 mg for a 16 oz Monster and 80 mg for a 250 ml Red Bull are both the real
+figures off the can, which is the check that matters.
+
+##### Fill rates — measured across 2,300 real products
+
+**Coverage is poor and that is not a bug.** The counts below are "OFF has *a*
+value"; the bracketed figure is how many of those are a **genuine measured
+zero** rather than a real quantity.
+
+| | Energy drinks (n=100) | Protein bars/powders (n=300) | Everything else (n=1,900) |
+|---|---|---|---|
+| caffeine | **37.0%** | 20.0% *(59 of 60 are 0)* | 8.5% *(147 of 161 are 0)* |
+| potassium | 6.0% | 21.7% *(8 are 0)* | 4.8% *(32 are 0)* |
+| calcium | 7.0% | 23.7% *(10 are 0)* | 13.5% *(26 are 0)* |
+| iron | 2.0% | 37.3% *(47 are 0)* | 15.1% *(155 are 0)* |
+| magnesium | 7.0% | 28.3% *(54 are 0)* | 14.1% *(140 are 0)* |
+| zinc | 2.0% | 23.7% *(58 are 0)* | 10.7% *(149 are 0)* |
+
+**Caffeine on energy drinks — 37% — is the only cell that is much use**, and it
+is the one Ryan cares about. Outside that category, caffeine "coverage" is
+almost entirely genuine zeros: in the broad sample only **14 of 1,900** products
+carry a real non-zero caffeine figure. **Hand-typing will be the normal path for
+caffeine**, which is exactly why the field is typeable.
+
+#### Group B — `flags`: descriptive, lookup-only
+
+```json
+"flags": {
+  "additives": {"count": 5, "tags": ["e330", "e331"],
+                "names": ["E330 - Citric acid", "E331 - Sodium citrates"]},
+  "novaGroup": 4
+}
+```
+
+- **FLAGS DO NOT SCALE WITH SERVING SIZE.** An additive is present or it is not;
+  half a serving does not contain half an E330. Nothing here is multiplied by
+  anything. Verified identical across all four bases.
+- **FLAGS ARE NEVER HAND-TYPED.** A hand-entered item has **unknown** additives,
+  not zero additives. The client offers no way to enter them, and the server
+  refuses them on an item with no barcode — the same tie that governs `exact`
+  confidence (§13.2), for the same reason: a lookup is evidence, a typed guess
+  is not. Clearing an item's barcode clears its flags with it.
+- OFF's language prefix is stripped (`en:e129` → `e129`).
+- `count` is always **derived from the stored tags**, never taken from a client.
+
+##### `additives_original_tags`, not `additives_tags`
+
+`additives_tags` additionally carries broader **parent** tags — Red Bull US
+lists both `e500` and `e500ii` for one additive — which inflates the count.
+`additives_original_tags` is what OFF actually detected, and **it matches OFF's
+own `additives_n` exactly** on every product checked (Monster 5=5, Red Bull EU
+4=4, Red Bull US 2=2, Twix 8=8). The expanded list does not.
+
+##### THE TWO ADDITIVES STATES MUST NOT COLLAPSE
+
+| Stored | Means |
+|---|---|
+| `additives` **absent / null** | OFF has **no additives data**. Unknown. |
+| `{count: 0, tags: [], names: []}` | OFF **positively reports none**. |
+
+**These are different facts.** Both occur in real data and both were found:
+a Quest bar has `additives_tags: null` (unknown); RXBAR and Nutella have `[]`
+(positively none). Across the 2,300-product sample: **2.3–11% unknown** and
+**5–41% positively none**, depending on category. Do not "tidy" the first into
+the second.
+
+##### Names come from OFF's taxonomy, and are never invented
+
+The product record carries **bare codes only** — measured. Human names come from
+OFF's taxonomy endpoint (`/api/v2/taxonomy?tagtype=additives&tags=en:e330`),
+which returns `"E330 - Citric acid"`. OFF's string is kept **verbatim**;
+reformatting it risks mangling names that legitimately contain a dash.
+
+**Names are a convenience, not the fact.** The codes are what was looked up. A
+taxonomy call that fails, times out or returns nothing leaves names `null` and
+**never fails the lookup**. One call per lookup (the endpoint takes a
+comma-separated list), only when there are additives, and only for codes not
+already resolved. Resolved names are memoised **in memory for the process
+only** — §13.6's "nothing cached to disk" still holds; additive names are static
+reference data and re-asking on every lookup would be pure waste.
+
+#### Storage
+
+`extras` and `flags` are additive item fields alongside the §13.6 four.
+
+- **Existing items lack both. Absence is the boundary — no migration, no
+  backfill.** An item with all six extras blank stores **no `extras` key at
+  all**, rather than six nulls.
+- **A `PUT` leaves a key it does not mention alone**, the same rule the barcode
+  fields follow — the plain Edit form sends no `flags`, and a PUT that wiped an
+  item's additives because that form never heard of them would be the silent
+  data loss already fixed once for `barcode` (§13.3).
+- A present-but-unusable value is a **400**, not a silent null: negative
+  caffeine, non-numeric caffeine, `novaGroup: 9` and a non-list `tags` all
+  reject.

@@ -75,7 +75,15 @@ VALID_LENGTHS = (8, 12, 13)
 # about seven numbers.
 OFF_FIELDS = ("code,product_name,product_name_en,brands,serving_size,"
               "serving_quantity,serving_quantity_unit,product_quantity,"
-              "quantity,nutriments")
+              "quantity,nutriments,"
+              # §13.8's flags. additives_n is fetched as a cross-check on the
+              # tag list, not as the reported count.
+              "additives_tags,additives_original_tags,additives_n,nova_group")
+
+# OFF's taxonomy endpoint, which is the ONLY place human additive names come
+# from — the product record carries bare codes like "en:e330" and nothing else.
+# Measured, not assumed (2026-08-13).
+OFF_TAXONOMY_URL = "https://world.openfoodfacts.org/api/v2/taxonomy"
 
 # Me-Tracker's macro name -> OFF's nutriment base name. The suffix (_100g or
 # _serving) is added at read time.
@@ -98,6 +106,53 @@ MACRO_FIELDS = ("protein", "fat", "carbs", "sugar", "calories", "fiber", "sodium
 # Grams of salt per gram of sodium. Salt is sodium chloride; the standard
 # label conversion is salt = sodium * 2.5, so sodium = salt / 2.5.
 SALT_TO_SODIUM = 2.5
+
+# ---------------------------------------------------------------------------
+# GROUP A — `extras` (ARCHITECTURE.md §13.8). Six numeric fields, PER SERVING,
+# reported in MILLIGRAMS.
+#
+# THEY CONVERT BY EXACTLY THE SAME SERVING-SIZE LOGIC AS THE MACROS. There is no
+# special case for them anywhere: the same `factor` §13.6's four cases compute
+# for macros is applied here. If that ever diverges, one of the two is wrong.
+#
+# UNITS, MEASURED NOT ASSUMED (2026-08-13): OFF normalises all six into GRAMS in
+# the base nutriments object, and says so in a `<field>_unit` key. Across 800
+# real products every single occurrence of all six read "g" — not one exception.
+# Grams to milligrams is therefore a flat x1000, the same conversion sodium
+# already makes. A value arriving in any OTHER unit returns null rather than a
+# guessed conversion: a 1000x error in a caffeine figure is worse than a blank.
+#
+# NULL IS NOT ZERO (§1.7), exactly as for macros. Coverage is genuinely poor for
+# most of these — see §13.8's measured fill rates — and a blank must read as
+# "OFF does not know", never as "this product contains none".
+# ---------------------------------------------------------------------------
+EXTRA_FIELDS = ("caffeine", "potassium", "calcium", "iron", "magnesium", "zinc")
+
+# Me-Tracker's field name -> OFF's nutriment base name. Identical today, but
+# kept explicit so a future rename cannot silently mis-map one.
+EXTRA_KEYS = {f: f for f in EXTRA_FIELDS}
+
+EXTRA_SOURCE_UNIT = "g"
+GRAMS_TO_MG = 1000.0
+
+# ---------------------------------------------------------------------------
+# GROUP B — `flags` (§13.8). Descriptive, lookup-only.
+#
+# FLAGS DO NOT SCALE WITH SERVING SIZE. An additive is present or it is not;
+# half a serving does not contain half an E330. Nothing here is multiplied by
+# anything, and a future session must not "fix" that.
+#
+# FLAGS ARE NEVER HAND-TYPED. A hand-entered item has UNKNOWN additives, not
+# zero additives, so the client offers no way to enter them.
+# ---------------------------------------------------------------------------
+NOVA_GROUPS = (1, 2, 3, 4)
+
+# code -> human name, for this process only. NOT WRITTEN TO DISK — §13.6's "no
+# upstream response is cached to disk" still holds. Additive names are static
+# reference data, so re-asking OFF for "en:e330" on every lookup would be pure
+# waste; a bounded in-memory map is the cheapest honest answer.
+_additive_name_cache = {}
+_ADDITIVE_CACHE_MAX = 2000
 
 
 class BarcodeFormatError(Exception):
@@ -228,6 +283,117 @@ def _macros(nutriments, suffix, factor=1.0):
     return out, source
 
 
+def _extras(nutriments, suffix, factor=1.0):
+    """The six `extras` at one suffix, scaled by the SAME factor as the macros.
+
+    Grams in, milligrams out. A field OFF does not carry stays None and is never
+    scaled into a 0; a field in an unexpected unit ALSO returns None, because a
+    guessed conversion here is a 1000x error in a number Ryan would believe."""
+    out = {}
+    for field, key in EXTRA_KEYS.items():
+        raw = _num(nutriments.get(key + suffix))
+        if raw is None:
+            out[field] = None
+            continue
+        # `<field>_unit` has no _100g/_serving suffix — it describes the
+        # nutrient, not one reading of it. Absent is not "unexpected": the
+        # _100g/_serving values are OFF's own normalised grams either way.
+        unit = nutriments.get(key + "_unit")
+        if unit is not None and str(unit).strip().lower() != EXTRA_SOURCE_UNIT:
+            out[field] = None
+            continue
+        out[field] = _round(raw * GRAMS_TO_MG * factor, 2)
+    return out
+
+
+def _strip_lang(tag):
+    """`en:e129` -> `e129`. OFF prefixes every tag with a language code; the
+    prefix is about the taxonomy, not about the additive."""
+    text = _text(tag)
+    if text is None:
+        return None
+    return text.split(":", 1)[1].strip().lower() if ":" in text else text.strip().lower()
+
+
+def _additives(product):
+    """The additives block, or None.
+
+    ############ TWO STATES THAT MUST NOT COLLAPSE ############
+
+        None                              OFF HAS NO ADDITIVES DATA for this
+                                          product. Unknown.
+        {count: 0, tags: [], names: []}   OFF POSITIVELY REPORTS NONE.
+
+    Those are different facts and the difference is the whole reason this
+    returns None rather than an empty block. Both occur in real data: a Quest
+    bar has `additives_tags: null`, Nutella has `additives_tags: []`.
+
+    `additives_original_tags` is preferred over `additives_tags` because it is
+    what OFF actually detected. `additives_tags` additionally carries broader
+    parent tags — Red Bull US lists e500 AND e500ii for one additive — which
+    would inflate the count. Measured: original_tags matches OFF's own
+    `additives_n`, the expanded list does not."""
+    tags = product.get("additives_original_tags")
+    if not isinstance(tags, list):
+        tags = product.get("additives_tags")
+    if not isinstance(tags, list):
+        return None                      # NO DATA — not "none present"
+    clean = [t for t in (_strip_lang(x) for x in tags) if t]
+    return {
+        "count": len(clean),
+        "tags": clean,
+        # Filled in by _fill_additive_names() over the taxonomy endpoint. Left
+        # as None here so _build() stays pure and offline.
+        "names": [_additive_name_cache.get(t) for t in clean],
+    }
+
+
+def _nova(product):
+    """1-4, or None. A string "4" is accepted — OFF carries both shapes."""
+    value = _num(product.get("nova_group"))
+    if value is None:
+        return None
+    group = int(value)
+    return group if group in NOVA_GROUPS else None
+
+
+def _fill_additive_names(result, session=None):
+    """Resolve additive codes to human names over OFF's taxonomy endpoint.
+
+    NAMES ARE A CONVENIENCE, NOT THE FACT. The codes are what was looked up; a
+    taxonomy call that fails, times out or returns nothing leaves names null and
+    NEVER fails the lookup or touches anything else. One call per lookup
+    (the endpoint takes a comma-separated list), only when there are additives,
+    and only for codes not already in memory."""
+    flags = result.get("flags") or {}
+    additives = flags.get("additives")
+    if not additives or not additives.get("tags"):
+        return
+    unknown = [t for t in additives["tags"] if t not in _additive_name_cache]
+    if unknown:
+        try:
+            getter = session.get if session is not None else requests.get
+            res = getter(OFF_TAXONOMY_URL,
+                         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+                         params={"tagtype": "additives",
+                                 "tags": ",".join("en:" + t for t in unknown),
+                                 "lc": "en"},
+                         timeout=TIMEOUT_SECONDS)
+            body = res.json() if res.status_code == 200 else {}
+            if isinstance(body, dict):
+                for code, entry in body.items():
+                    name = None
+                    if isinstance(entry, dict) and isinstance(entry.get("name"), dict):
+                        name = _text(entry["name"].get("en"))
+                    if len(_additive_name_cache) < _ADDITIVE_CACHE_MAX:
+                        _additive_name_cache[_strip_lang(code)] = name
+        except (requests.RequestException, ValueError) as e:
+            # Names stay null. This is not worth failing a lookup over.
+            logger.info("additive name lookup failed (%s) — codes kept, names left blank",
+                        type(e).__name__)
+    additives["names"] = [_additive_name_cache.get(t) for t in additives["tags"]]
+
+
 def _has_per_serving(nutriments):
     """Does OFF carry any *_serving nutriment for this product? Case 2 hinges
     on it. Salt and sodium count — a product may print only those."""
@@ -338,6 +504,7 @@ def _build(code, matched_as, product):
     if serving_grams is not None:
         # CASE 1 — grams per serving known. Convert from per-100 g.
         macros, sodium_source = _macros(nutriments, "_100g", serving_grams / 100.0)
+        extras = _extras(nutriments, "_100g", serving_grams / 100.0)
         basis = "converted"
         reported_serving_grams = _round(serving_grams)
     elif _has_per_serving(nutriments):
@@ -346,6 +513,7 @@ def _build(code, matched_as, product):
         # same as knowing what it weighs, and inventing a weight is exactly
         # what this module refuses to do.
         macros, sodium_source = _macros(nutriments, "_serving")
+        extras = _extras(nutriments, "_serving")
         basis = "per_serving"
         reported_serving_grams = None
     else:
@@ -354,6 +522,7 @@ def _build(code, matched_as, product):
         # with it null; the client offers the two serving-size routes either
         # way and cannot save until one of them produces a number.
         macros, sodium_source = _macros(nutriments, "_100g")
+        extras = _extras(nutriments, "_100g")
         basis = "per_100g"
         reported_serving_grams = None
 
@@ -375,6 +544,10 @@ def _build(code, matched_as, product):
         "basis": basis,
         "macros": {f: macros.get(f) for f in MACRO_FIELDS},
         "sodiumSource": sodium_source,
+        # §13.8. `extras` scales with the serving exactly like macros; `flags`
+        # never scales at all.
+        "extras": {f: extras.get(f) for f in EXTRA_FIELDS},
+        "flags": {"additives": _additives(product), "novaGroup": _nova(product)},
     }
 
 
@@ -394,8 +567,15 @@ def lookup(raw_code, session=None):
         product = _fetch(code, session=session)
         if product is not None:
             result = _build(code, matched_as, product)
-            logger.info("barcode lookup: %s found as %s (%s) — basis %s, sodium from %s",
-                        digits, code, matched_as, result["basis"], result["sodiumSource"])
+            # Names only. A failure here leaves them null and changes nothing
+            # else — the codes are the fact.
+            _fill_additive_names(result, session=session)
+            add = result["flags"]["additives"]
+            logger.info("barcode lookup: %s found as %s (%s) — basis %s, sodium from %s, "
+                        "additives %s, nova %s",
+                        digits, code, matched_as, result["basis"], result["sodiumSource"],
+                        "unknown" if add is None else add["count"],
+                        result["flags"]["novaGroup"])
             return result
 
     logger.info("barcode lookup: %s not found upstream (tried %s)", digits, ", ".join(tried))

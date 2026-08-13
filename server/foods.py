@@ -101,6 +101,38 @@ BARCODE_FIELDS = ("barcode", "basis", "servingGrams", "servingSource")
 ALLOWED_BASIS = ("converted", "per_serving", "per_100g")
 ALLOWED_SERVING_SOURCE = ("off", "label", "divided")
 
+# ---------------------------------------------------------------------------
+# §13.8 — two more additive groups, and they behave differently.
+#
+# `extras`   six numeric fields in MILLIGRAMS, per serving. Auto-filled from a
+#            lookup where OFF has them, TYPEABLE BY HAND otherwise (Ryan can
+#            read caffeine off a can OFF has never heard of). They scale with
+#            the serving exactly like macros.
+#
+# `flags`    descriptive, LOOKUP-ONLY, and NEVER SCALED. An additive is present
+#            or it is not; half a serving does not contain half an E330.
+#
+# ############ flags ARE NEVER HAND-TYPED ############
+#
+# A hand-entered item has UNKNOWN additives, not zero additives. The client
+# offers no way to type them, and this module will not record them on an item
+# with no barcode — the same tie that governs 'exact' confidence, for the same
+# reason: a lookup is evidence, a typed guess is not.
+#
+# ############ additives HAS TWO STATES THAT MUST NOT COLLAPSE ############
+#
+#   absent                            OFF has NO additives data. Unknown.
+#   {count:0, tags:[], names:[]}      OFF positively reports NONE.
+#
+# Both occur in real data and they mean different things. Do not "tidy" the
+# first into the second.
+#
+# NONE OF THIS IS SCORED (§11). Capture now, analyse later.
+# ---------------------------------------------------------------------------
+EXTRA_FIELDS = ("caffeine", "potassium", "calcium", "iron", "magnesium", "zinc")
+CAPTURE_FIELDS = ("extras", "flags")
+ALLOWED_NOVA = (1, 2, 3, 4)
+
 # Serialises read-modify-write. The purge runs on a worker thread out of the
 # nightly loop while request handlers run on FastAPI's threadpool; without this
 # two of them could each read the file, each edit their own copy, and the
@@ -288,6 +320,97 @@ def _clean_serving_grams(value):
     return int(num) if float(num).is_integer() else round(num, 2)
 
 
+def _clean_extras(payload):
+    """The six `extras`, or None when not one of them is known.
+
+    Reuses _clean_macro()'s rules exactly: blank and missing mean None, a
+    present-but-unusable value is a 400 rather than a silent null, and a
+    genuine 0 is kept as 0. An all-blank block is returned as None so the item
+    simply has no `extras` key — absence stays the boundary."""
+    src = payload.get("extras")
+    if src is None:
+        return None
+    if not isinstance(src, dict):
+        raise FoodValidationError("extras must be an object.")
+    out = {f: _clean_macro(src.get(f), f) for f in EXTRA_FIELDS}
+    return out if any(v is not None for v in out.values()) else None
+
+
+def _clean_additives(src):
+    """The additives block, preserving BOTH states (see the header above).
+
+    `count` is always derived from the tags actually stored, never taken from
+    the client — a count that disagreed with its own list would be worse than
+    no count at all."""
+    if src is None:
+        return None                      # unknown — NOT "none present"
+    if not isinstance(src, dict):
+        raise FoodValidationError("flags.additives must be an object or null.")
+    tags_src = src.get("tags")
+    if not isinstance(tags_src, list):
+        raise FoodValidationError("flags.additives.tags must be a list.")
+    tags = []
+    for t in tags_src:
+        text = str(t).strip().lower() if t is not None else ""
+        if text:
+            # Strip OFF's language prefix if a client ever sends it unstripped.
+            tags.append(text.split(":", 1)[1] if ":" in text else text)
+    names_src = src.get("names") if isinstance(src.get("names"), list) else []
+    names = []
+    for i in range(len(tags)):
+        raw = names_src[i] if i < len(names_src) else None
+        text = str(raw).strip() if raw is not None else ""
+        names.append(text or None)       # an unresolved name is null, not ''
+    return {"count": len(tags), "tags": tags, "names": names}
+
+
+def _clean_flags(payload, has_barcode):
+    """The flags block, or None.
+
+    RETURNS None WITHOUT A BARCODE, whatever was sent. Flags describe what a
+    lookup found; an item typed by hand has unknown additives."""
+    src = payload.get("flags")
+    if src is None:
+        return None
+    if not isinstance(src, dict):
+        raise FoodValidationError("flags must be an object.")
+    if not has_barcode:
+        return None
+    nova = src.get("novaGroup")
+    if nova is not None and (isinstance(nova, str) and not nova.strip()):
+        nova = None
+    if nova is not None:
+        try:
+            nova = int(float(nova))
+        except (TypeError, ValueError):
+            raise FoodValidationError("flags.novaGroup must be 1, 2, 3, 4 or null.")
+        if nova not in ALLOWED_NOVA:
+            raise FoodValidationError("flags.novaGroup must be 1, 2, 3, 4 or null.")
+    additives = _clean_additives(src.get("additives"))
+    if additives is None and nova is None:
+        return None
+    return {"additives": additives, "novaGroup": nova}
+
+
+def _clean_capture_fields(payload, existing=None, has_barcode=False):
+    """`extras` and `flags`, merged over what is already stored.
+
+    Same "a key the payload does not MENTION is left alone" rule as the barcode
+    fields — the plain Edit form sends no `flags`, and a PUT that wiped an
+    item's additives because that form never heard of them would be exactly the
+    silent data loss already fixed once for `barcode`."""
+    merged = {k: (existing or {}).get(k) for k in CAPTURE_FIELDS}
+    if "extras" in payload:
+        merged["extras"] = _clean_extras(payload)
+    if "flags" in payload:
+        merged["flags"] = _clean_flags(payload, has_barcode)
+    # Clearing the barcode clears the flags with it — they were only ever
+    # admissible because a lookup produced them.
+    if not has_barcode:
+        merged["flags"] = None
+    return {k: v for k, v in merged.items() if v is not None}
+
+
 def _clean_barcode_fields(payload, existing=None):
     """The four additive fields, merged over whatever is already stored.
 
@@ -340,7 +463,7 @@ def _normalise_stored(item):
     # one, and materialising `barcode: null` on every old record would be the
     # backfill §1.4 and §13.6 both rule out. Passed through unvalidated on
     # purpose: load_items() must never raise over a hand-edited file.
-    for f in BARCODE_FIELDS:
+    for f in BARCODE_FIELDS + CAPTURE_FIELDS:
         if item.get(f) is not None:
             out[f] = item.get(f)
     return out
@@ -364,6 +487,7 @@ def create_item(payload):
     serving = _clean_text(payload.get("servingText"), "servingText")
     macros = _clean_macros(payload)
     extra = _clean_barcode_fields(payload)
+    extra.update(_clean_capture_fields(payload, has_barcode=bool(extra.get("barcode"))))
     confidence = _clean_confidence(payload.get("confidence"),
                                    has_barcode=bool(extra.get("barcode")))
     now = _now_iso()
@@ -400,6 +524,8 @@ def update_item(item_id, payload):
         for it in items:
             if it["id"] == item_id:
                 extra = _clean_barcode_fields(payload, existing=it)
+                extra.update(_clean_capture_fields(
+                    payload, existing=it, has_barcode=bool(extra.get("barcode"))))
                 it["name"] = name
                 it["servingText"] = serving
                 it["macros"] = macros
@@ -414,7 +540,7 @@ def update_item(item_id, payload):
                 conf_src = payload["confidence"] if "confidence" in payload else it.get("confidence")
                 it["confidence"] = _clean_confidence(
                     conf_src, has_barcode=bool(extra.get("barcode")))
-                for f in BARCODE_FIELDS:
+                for f in BARCODE_FIELDS + CAPTURE_FIELDS:
                     # Set what survived the merge, and genuinely remove what did
                     # not, so a cleared field leaves no null behind.
                     if f in extra:
