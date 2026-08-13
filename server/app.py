@@ -128,7 +128,11 @@ async def trigger_sync():
     # sync_range() makes real, possibly slow, blocking HTTP calls — run it off
     # the event loop so a manual sync can't stall /api/health or the static
     # file routes for whoever else is loading the app at the same moment.
-    return await asyncio.to_thread(google_health.sync_range, start.isoformat(), end.isoformat())
+    #
+    # Every type, whole-day overwrite — a manual sync is a FULL sync, the same
+    # as the nightly. Only the hourly loop below pulls a subset.
+    return await asyncio.to_thread(
+        google_health.sync_range, start.isoformat(), end.isoformat(), None, 'manual')
 
 
 @api_router.get("/sync/status")
@@ -172,7 +176,8 @@ async def _nightly_sync_loop():
         try:
             end = date.today()
             start = end - timedelta(days=SYNC_RANGE_DAYS - 1)
-            result = await asyncio.to_thread(google_health.sync_range, start.isoformat(), end.isoformat())
+            result = await asyncio.to_thread(
+                google_health.sync_range, start.isoformat(), end.isoformat(), None, 'nightly')
             google_health.logger.info("nightly sync fired: %s", result)
         except Exception as e:
             # A scheduler loop must never die from one bad night — that would
@@ -182,9 +187,99 @@ async def _nightly_sync_loop():
             google_health.logger.error("nightly sync loop raised unexpectedly: %s", e)
 
 
+# -----------------------------------------------------------------------------
+# Hourly today-only sync — ARCHITECTURE.md §6.3.
+#
+# THE PROBLEM THIS SOLVES: before it existed, 04:15 was the only sync that ever
+# fired. Its trailing 3-day window includes "today", but at 04:15 today is four
+# hours old and nearly empty — measured 2026-08-12 at 21:15 local, the stored
+# day read 8 steps with a latest heart rate from 04:04. Today's numbers were
+# blank all day, every day.
+#
+# WHY THIS IS NOT JUST "RUN THE NIGHTLY MORE OFTEN":
+#   - TODAY ONLY, not a trailing 3 days. Re-pulling two settled days eighteen
+#     times a day is pure waste; the nightly already owns that window and the
+#     late-settling reasoning behind it (§6.3) is untouched.
+#   - THREE DATA TYPES ONLY. steps, heart_rate and exercise are the values that
+#     actually move during a waking day (exercise is what feeds §9.5's
+#     hasStartedActivity). Sleep, HRV, resting HR, weight, body fat and VO2 max
+#     are daily-settling figures that Google finishes computing overnight —
+#     pulling them hourly would cost pages and return the same answer.
+#   - Because it pulls a subset, it writes a subset. sync_range(type_keys=...)
+#     merges field-by-field (google_health.merge_day) instead of overwriting the
+#     day, so the sleep and resting HR the nightly wrote for today at 04:15 are
+#     still there at 22:00. Overwriting them with the nulls of a three-type
+#     aggregate would be the classic "clobbered good data" failure.
+#
+# 06:00-23:00 LOCAL, ON THE HOUR — 18 runs a day. Nothing useful changes while
+# Ryan is asleep, and stopping at 23:00 keeps the loop clear of the 04:15
+# nightly and of the Ollama vision window (20:30-03:55, §8) having anything to
+# contend with at the moment the nightly runs.
+#
+# LOCAL CIVIL TIME, AND IT MUST SURVIVE DST (§12). Every iteration re-reads the
+# local wall clock and computes the next boundary from it; nothing assumes that
+# the time actually slept equals the time scheduled. On the two nights a year
+# the clock jumps, the long 23:00->06:00 sleep lands an hour early or an hour
+# late, and the loop simply corrects itself on the next pass instead of drifting
+# permanently. The window is checked against the wall clock at wake-up, never
+# computed from UTC.
+#
+# FAILURE IS NON-FATAL AND NEVER DESTRUCTIVE. sync_range() already leaves the
+# store untouched when a pull fails (§6.5's forced-credential-failure test), and
+# the except below keeps the loop alive for the next hour. Every attempt is
+# logged to sync.log with the same per-type page/row detail as the nightly, so a
+# loop that silently stops leaves a visible gap in the log rather than just
+# numbers that quietly stop moving.
+# -----------------------------------------------------------------------------
+HOURLY_SYNC_START_HOUR = 6
+HOURLY_SYNC_END_HOUR = 23
+HOURLY_SYNC_TYPES = ('steps', 'heart_rate', 'exercise')
+
+
+def _in_hourly_window(now):
+    """Is this local wall-clock time inside the hourly sync's window?"""
+    return HOURLY_SYNC_START_HOUR <= now.hour <= HOURLY_SYNC_END_HOUR
+
+
+def _next_hourly_run(now):
+    """The next local wall-clock instant the hourly sync should fire, strictly
+    after `now`. Pure function of a naive LOCAL datetime — no UTC anywhere, and
+    no hidden clock read, so the schedule can be tested directly instead of by
+    waiting an hour."""
+    nxt = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    if nxt.hour < HOURLY_SYNC_START_HOUR:
+        # Overnight: the 00:00-05:00 stretch folds forward to the day's first run.
+        return nxt.replace(hour=HOURLY_SYNC_START_HOUR)
+    if nxt.hour > HOURLY_SYNC_END_HOUR:
+        # Unreachable while END_HOUR is 23 (there is no later hour), kept so the
+        # function stays correct if the window is ever narrowed.
+        return (nxt + timedelta(days=1)).replace(hour=HOURLY_SYNC_START_HOUR)
+    return nxt
+
+
+async def _hourly_sync_loop():
+    while True:
+        now = datetime.now()
+        await asyncio.sleep(max(0.0, (_next_hourly_run(now) - now).total_seconds()))
+        try:
+            # Re-read the clock rather than trusting the sleep: see the DST note
+            # above. If the wake-up landed outside the window, skip this pass
+            # and let the next iteration schedule properly.
+            if not _in_hourly_window(datetime.now()):
+                continue
+            today_str = date.today().isoformat()
+            result = await asyncio.to_thread(
+                google_health.sync_range, today_str, today_str,
+                list(HOURLY_SYNC_TYPES), 'hourly')
+            google_health.logger.info("hourly sync fired: %s", result)
+        except Exception as e:
+            google_health.logger.error("hourly sync loop raised unexpectedly: %s", e)
+
+
 @app.on_event("startup")
 async def _start_nightly_sync():
     asyncio.create_task(_nightly_sync_loop())
+    asyncio.create_task(_hourly_sync_loop())
 
 
 # -----------------------------------------------------------------------------

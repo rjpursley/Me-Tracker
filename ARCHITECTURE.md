@@ -585,13 +585,21 @@ maintenance, not a bug.
 
 2. **Aggregate on ingest; the browser gets summaries only.** Per day, the
    server stores: resting HR, the single latest heart-rate reading (bpm +
-   timestamp — see §6.2 on why this one exception exists), minutes per
-   device-defined HR zone, workout avg/peak HR, sleep stage totals, steps,
-   weight, body fat %, HRV, VO2 max, and the list of started exercise
-   sessions. `GET /api/vitals/*` (§6.3) only ever returns this aggregate.
+   timestamp — see §6.2 on why this one exception exists), the day's heart
+   rate as 5-minute buckets (`hrSeries`, §6.12), minutes per device-defined
+   HR zone, workout avg/peak HR, sleep stage totals, steps, weight, body
+   fat %, HRV, VO2 max, and the list of started exercise sessions.
+   `GET /api/vitals/*` (§6.3) only ever returns this aggregate.
    Raw intraday samples are cached server-side under `server/data/raw/` for
    about 7 days for debugging (`purge_old_raw()`), then deleted, and are
    never served to the client.
+
+   **`hrSeries` does not breach this rule, and a future session should not
+   read it as one.** The rule says the browser gets aggregates rather than
+   raw samples. A 5-minute bucket carrying `{at, avg, max, n}` *is* an
+   aggregate: a full day reduces from ~8,500–17,000 raw samples to at most
+   288 objects, roughly 13 KB. What is forbidden is shipping the sample
+   stream itself, and that is still forbidden.
 
 ### 6.2 What "live HR" in the vitals header actually means
 
@@ -627,6 +635,72 @@ permanently miss a late-settling yesterday. Re-pulling a small trailing
 window is cheap and makes that class of miss self-correcting within days. The
 nightly automatic sync (`server/app.py`'s `_nightly_sync_loop`) uses the same
 window on the same schedule.
+
+#### Two sync tiers — the nightly, and an hourly today-only top-up
+
+**Added 2026-08-12.** Before it, 04:15 was the only sync that ever fired, so
+the app's numbers were only ever as fresh as 04:15. The nightly's trailing
+3-day window does include "today", but at 04:15 today is four hours old and
+nearly empty. Measured at 21:15 that evening, the stored day read **8 steps**
+with a latest heart rate from **04:04** — today's steps, HR and activities
+were effectively blank all day, every day.
+
+| | Nightly | Hourly |
+|---|---|---|
+| When | 04:15 local, once | On the hour, 06:00–23:00 local (18 runs) |
+| Window | trailing `SYNC_RANGE_DAYS` (3) days | **today only** |
+| Data types | all 10 | **`steps`, `heart_rate`, `exercise`** |
+| Writes | whole-day overwrite | field-level merge (below) |
+
+**The nightly is unchanged** — same time, same 3-day window, same ten types.
+That window exists because sleep and HRV settle late (§6.3 above) and none of
+that reasoning is affected.
+
+**The hourly is today-only on purpose.** Re-pulling two already-settled days
+eighteen times a day is waste; the nightly owns that window.
+
+**Only three types, because only three move during a waking day.** `steps`,
+`heart_rate`, and `exercise` (which feeds `hasStartedActivity()`, §9.5).
+Sleep, HRV, resting HR, weight, body fat and VO2 max are daily-settling
+figures Google finishes computing overnight — pulling them hourly costs pages
+and returns the same answer. `time_in_heart_rate_zone` is the one type in
+neither list: it does accumulate during the day, but nothing in the client
+reads it live (§6.2 calls it "a separate, historical field for later
+graphing"), so it stays with the nightly. Adding it later is a one-line
+change to `HOURLY_SYNC_TYPES`.
+
+**A partial pull must not write a whole day — this is the load-bearing part.**
+`aggregate_day()` always builds a complete day summary, so a three-type pull
+produces one where the other seven fields are null. Writing that over the
+stored day would erase the sleep, resting HR and HR-zone figures the nightly
+wrote for today at 04:15 — every hour, all day. `sync_range(type_keys=…)`
+therefore merges **field by field** via `merge_day()`, driven by
+`TYPE_OWNS_FIELDS` in `google_health.py` (the server-side twin of §6.9's
+"every metric has ONE owning source" table). Two rules there:
+
+- A full sync (`type_keys=None`) does **not** go through `merge_day()` at all.
+  It overwrites the day exactly as it always did, so the nightly's behaviour
+  is provably untouched.
+- A partial sync replaces only the fields owned by types that **actually
+  returned data for that day**. A type whose pull failed and a type that came
+  back empty are both left alone: keeping a slightly stale value costs one
+  hour, whereas overwriting costs a real measurement. The nightly full sync
+  rewrites the whole day anyway, so anything genuinely removed upstream is
+  corrected within a day.
+
+**Local civil time, and it survives DST (§12).** `_next_hourly_run()` in
+`server/app.py` is a pure function of a naive **local** datetime — no UTC
+anywhere — so the schedule can be tested directly instead of by waiting an
+hour. Every iteration re-reads the wall clock and re-checks the window rather
+than assuming the time slept equals the time scheduled, so the long
+23:00→06:00 sleep self-corrects on both DST nights instead of drifting.
+
+**Failure is non-fatal and non-destructive.** A failed hourly leaves the store
+untouched (§6.5's forced-credential-failure precedent) and the loop survives
+to try again next hour. Every attempt is logged to `sync.log` with the same
+per-type page/row detail as the nightly and a `hourly:` / `nightly:` /
+`manual:` label, so a loop that silently stops firing leaves a **visible gap
+in the log**, not just numbers that quietly stop moving.
 
 **Nightly sync runs at 04:15 local**, chosen for three reasons:
 - It sits a clean 20 minutes past the end of the Ollama vision window
@@ -976,6 +1050,90 @@ causing drift — the asymmetry is the decision.
 **Consequence Ryan accepted:** with the form retired, a night the watch missed
 *going forward* cannot be recorded by hand and falls to the 7h assumption
 (§1.1). Old manual rows still work; new ones cannot be created.
+
+### 6.12 `hrSeries` — the day's heart rate in 5-minute buckets
+
+**Added 2026-08-12.** The server was already paying to fetch every heart-rate
+sample of the day — measured at 21 pages / 8,475 samples for a single day
+(§6.6), 10,459 samples for 2026-08-11 — and then throwing all of it away:
+`aggregate_day()` reduced the whole pull to one `latestHR` (§6.2), and the raw
+samples purged after ~7 days. Ryan wants to line an exercise checkbox timestamp
+up against his heart rate after the fact, and that needs a series, not one
+reading.
+
+**The shape.** A new additive field on each day's aggregate, a list ascending
+by time:
+
+```json
+"hrSeries": [ {"at": "2026-08-11T09:00", "avg": 79, "max": 83, "n": 46}, … ]
+```
+
+| Key | Meaning |
+|---|---|
+| `at` | **Local civil time**, `YYYY-MM-DDTHH:MM`, aligned to the wall clock (:00, :05, :10 …). Deliberately **no `Z` and no offset** — it is a wall-clock reading, not an instant. |
+| `avg` | Mean bpm in the bucket, rounded to a whole beat |
+| `max` | Highest bpm in the bucket |
+| `n` | How many raw samples went into it |
+
+288 buckets for a full 24 hours, against ~8,500–17,000 raw samples.
+
+**`latestHR` is untouched and is NOT derived from this** (§1.4, §6.2). It is
+still the single most recent *raw* sample of the day, which is a different
+number from the last bucket's `avg` or `max`. Two fields, two meanings.
+Verified byte-identical across eight days before and after this change.
+
+**`at` is local; `latestHR.at` is UTC.** That asymmetry is correct and must not
+be "made consistent" — a bucket answers *when on the clock*, `latestHR`
+answers *which instant*.
+
+**Bucketing follows §6.7's boundary rule, in the time dimension.** The local
+hour and minute come from Google's own `sampleTime.civilTime.time`, never from
+the bare UTC timestamp — a 22:30 Eastern sample has a UTC hour of 02:30 the
+next day, which would scatter every evening reading into the following
+morning's buckets. **`civilTime.time` omits zero-valued fields**: a sample at
+00:00:01 arrives as `{"seconds": 1}` with no `hours` and no `minutes`, so a
+missing component means **zero**, not "unknown". Reading it as unknown and
+dropping the sample would silently delete the midnight hour from every day.
+Confirmed against live rows, not assumed.
+
+**Empty buckets are absent, never zero-filled** (§1.7). A stretch where the
+watch was off the wrist is a gap and must stay a gap; a bucket reading 0 bpm
+would be a measurement of a stopped heart. Measured on real days: 2026-08-05
+has a 400-minute gap (00:00–06:35), 2026-08-11 a 70-minute one (20:40–21:45).
+
+**A partial day is expected and correct.** The hourly sync (§6.3) at 14:00
+pulls the whole civil day, which so far contains samples only up to 14:00, so
+the series ends at 14:00. The next sync recomputes the same day from a longer
+pull and the series simply reaches further. **Nothing appends** — there is no
+incremental state to get out of step. Verified end to end: 48 → 166 → 272
+buckets across three successive syncs, each result a strict extension of the
+one before it, earlier buckets unchanged.
+
+**No backfill was run, and old days do not have the field.** Every consumer
+must treat its absence as "no series for that day" — never an error, and never
+an empty chart claiming zero heart rate. The presence of the field is the
+boundary, exactly as with `asleepMinutes` (§6.10); there is no epoch constant
+and no migration.
+
+**If a backfill is ever wanted, read this first.** Re-syncing the stored range
+(2026-05-17 → today) costs about **394 pages / 392,000 heart-rate rows**, which
+took **2 minutes 12 seconds** when it was actually run on 2026-08-11 — cheap.
+The trap is not cost. **It would also rewrite those days' sleep figures**,
+because the same re-aggregation now emits `asleepMinutes`/`awakeMinutes` — the
+history rewrite §6.10 records Ryan as having explicitly declined. A backfill
+that fills in `hrSeries` cannot avoid that side effect without new code.
+§6.8's "multi-hour run" warning is about the full 2021+ history, which is a
+different and much larger thing.
+
+**Size, measured.** ~13.6 KB of compact JSON per full day (~25 KB as stored,
+indented); 202–284 buckets on real days. A year is ~4.7 MB served / ~8.6 MB on
+disk, against a whole-store size of 28 KB for the 46 days that predate this.
+Disk is a non-issue. The number that matters is the client's: `primeVitalsCache()`
+fetches a **15-day range on every app open** (and, since the client-side commit,
+on every foreground), so once 15 days have accumulated the field that request
+grows from ~9 KB to ~200 KB. Not fatal over Tailscale, but it is the figure to
+watch. **No retention rule and no endpoint change was implemented** — both are
+Ryan's call.
 
 ---
 

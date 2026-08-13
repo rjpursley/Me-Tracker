@@ -189,6 +189,13 @@ FILTER_CATEGORY = {
 MAX_PAGE_SIZE = {'exercise': 25, 'sleep': 25}
 DEFAULT_PAGE_SIZE = 1000
 
+# hrSeries bucket width, in minutes (ARCHITECTURE.md §6.12). 5 minutes turns a
+# day's ~8,500-17,000 raw heart-rate samples into at most 288 small objects —
+# small enough to hand a phone, granular enough to sit an exercise checkbox
+# timestamp against. Buckets are aligned to the LOCAL wall clock (:00, :05,
+# :10 ...), not to an offset from the first sample of the day.
+HR_SERIES_BUCKET_MINUTES = 5
+
 
 class GoogleHealthAuthError(Exception):
     """No usable credentials. Message is safe to log/display — it never
@@ -574,6 +581,120 @@ def _civil_date_from_sample_time(sample_time):
     return _local_date_from_utc(sample_time.get('physicalTime'), sample_time.get('utcOffset'))
 
 
+def _civil_component(v):
+    """One field out of Google's `TimeOfDay` ({hours, minutes, seconds}).
+
+    PROTOBUF-JSON OMITS ZERO-VALUED FIELDS. A sample taken at 00:00:01 local
+    arrives as `"time": {"seconds": 1}` — no `hours`, no `minutes` — and a
+    sample at exactly midnight can arrive with no `time` object at all.
+    A missing component therefore means ZERO, not "unknown": reading it as
+    None and dropping the sample would silently delete the midnight hour from
+    every day's series. Confirmed against live rows in server/data/raw/.
+
+    Returns None only for a value that is present but not a number, so genuine
+    garbage still fails loudly rather than being read as midnight."""
+    if v is None:
+        return 0
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return int(v)
+    if isinstance(v, str):
+        try:
+            return int(v)
+        except ValueError:
+            return None
+    return None
+
+
+def _civil_time_of_day(sample_time):
+    """LOCAL wall-clock (hours, minutes) for a sample-shaped point.
+
+    Same precedence as _civil_date_from_sample_time(), for the same reason
+    (ARCHITECTURE.md §6.7): prefer sampleTime.civilTime.time, which is the
+    local time Google itself computed, and fall back to physicalTime +
+    utcOffset only when that is absent. NEVER reads the bare UTC timestamp —
+    a 22:30 Eastern sample has a UTC hour of 02:30 the next day, which would
+    scatter every evening reading into the following morning's buckets. That
+    is §6.7's bug in the time dimension instead of the date dimension.
+
+    Returns None when the local time cannot be determined, so the sample is
+    dropped rather than filed into a guessed bucket."""
+    if not isinstance(sample_time, dict):
+        return None
+    civil = sample_time.get('civilTime')
+    if isinstance(civil, dict) and isinstance(civil.get('date'), dict):
+        tod = civil.get('time')
+        tod = tod if isinstance(tod, dict) else {}
+        h = _civil_component(tod.get('hours'))
+        m = _civil_component(tod.get('minutes'))
+        if h is not None and m is not None and 0 <= h < 24 and 0 <= m < 60:
+            return h, m
+    ts = sample_time.get('physicalTime')
+    offset_seconds = _parse_utc_offset_seconds(sample_time.get('utcOffset'))
+    if not isinstance(ts, str) or offset_seconds is None:
+        return None
+    try:
+        utc_dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    local_dt = utc_dt + timedelta(seconds=offset_seconds)
+    return local_dt.hour, local_dt.minute
+
+
+def _hr_series(points, date_str):
+    """The day's heart-rate samples reduced to HR_SERIES_BUCKET_MINUTES-wide
+    buckets of local wall-clock time — ARCHITECTURE.md §6.12.
+
+    Returns a list of {at, avg, max, n}, ascending by time:
+      at  — LOCAL civil time, "YYYY-MM-DDTHH:MM", deliberately with NO 'Z' and
+            no offset, because it is a wall-clock reading and not an instant.
+            (latestHR.at is the opposite — a UTC instant, ending in 'Z'. The
+            two fields mean different things; do not "make them consistent".)
+      avg — mean bpm in the bucket, rounded to a whole beat
+      max — highest bpm in the bucket
+      n   — how many raw samples went into it
+
+    EMPTY BUCKETS ARE ABSENT, NOT ZERO-FILLED (§1.7). A stretch where the
+    watch was off the wrist is a gap in the data and must stay a gap; a
+    bucket reading 0 bpm would be a measurement of a stopped heart.
+
+    A PARTIAL DAY IS CORRECT, NOT TRUNCATED. An hourly sync at 14:00 pulls the
+    whole civil day, which so far only contains samples up to 14:00, so the
+    series ends at 14:00. The 15:00 sync recomputes the same day from a longer
+    pull and the series simply reaches further. Nothing here appends to a
+    previous result, so there is no incremental state to get out of step."""
+    buckets = {}
+    for dp in points:
+        _, block = _value_block(dp)
+        if not isinstance(block, dict):
+            continue
+        bpm = _numeric(block, ['beatsPerMinute'])
+        hm = _civil_time_of_day(block.get('sampleTime'))
+        if bpm is None or hm is None:
+            continue
+        minute_of_day = hm[0] * 60 + hm[1]
+        start = (minute_of_day // HR_SERIES_BUCKET_MINUTES) * HR_SERIES_BUCKET_MINUTES
+        b = buckets.get(start)
+        if b is None:
+            buckets[start] = [bpm, bpm, 1]  # total, max, n
+        else:
+            b[0] += bpm
+            if bpm > b[1]:
+                b[1] = bpm
+            b[2] += 1
+    series = []
+    for start in sorted(buckets):
+        total, peak, n = buckets[start]
+        series.append({
+            'at': f"{date_str}T{start // 60:02d}:{start % 60:02d}",
+            'avg': round(total / n),
+            'max': round(peak),
+            'n': n,
+        })
+    return series
+
+
 def _interval_minutes(interval):
     """Minutes between an ObservationTimeInterval/SessionTimeInterval's
     startTime and endTime. Used where the API gives a span but no explicit
@@ -657,6 +778,13 @@ def aggregate_day(date_str, raw):
         # last sync, never a real-time stream, but it is a genuinely small
         # daily summary field, not the raw intraday series.
         'latestHR': None,
+        # The day's heart-rate samples as 5-minute buckets — ARCHITECTURE.md
+        # §6.12. ADDITIVE (§1.4): latestHR above keeps its exact previous
+        # meaning and value and is NOT derived from this list. Days aggregated
+        # before this field existed simply do not have the key, and no
+        # backfill was run — absence means "no series for that day", never an
+        # error and never a chart of zeros.
+        'hrSeries': [],
         'hrv': None,
         'vo2Max': None,
         'weightLbs': None,
@@ -698,6 +826,11 @@ def aggregate_day(date_str, raw):
                 latest_ts, latest_bpm = ts, v
         if latest_bpm is not None:
             summary['latestHR'] = {'bpm': round(latest_bpm), 'at': latest_ts}
+        # Computed from the SAME raw pull, in a separate pass, deliberately.
+        # latestHR is not reimplemented on top of the buckets (§6.12): it is
+        # the single most recent RAW sample, which is not the same number as
+        # the last bucket's avg or max, and it must keep its exact value.
+        summary['hrSeries'] = _hr_series(raw['heart_rate'], date_str)
 
     if raw.get('daily_resting_heart_rate'):
         # DailyRestingHeartRate schema: {beatsPerMinute, date, metadata}.
@@ -868,6 +1001,75 @@ def aggregate_day(date_str, raw):
 
 
 # -----------------------------------------------------------------------------
+# WHICH DATA TYPE OWNS WHICH SUMMARY FIELD — ARCHITECTURE.md §6.3.
+#
+# This exists for the HOURLY SYNC, which pulls only three of the ten data
+# types (steps, heart_rate, exercise). aggregate_day() builds a WHOLE day's
+# summary, so a three-type pull produces a summary whose other seven fields
+# are all null — and writing that over the stored day would erase the sleep,
+# resting HR and HR-zone figures the 04:15 nightly had already written for
+# today. That is the "an hourly sync must not clobber good data" rule, and
+# this table is how merge_day() below honours it: a partial sync replaces
+# ONLY the fields owned by the types it actually pulled.
+#
+# Same idea as §6.9's "every metric has ONE owning source" table on the
+# client side, applied to the server's own store.
+# -----------------------------------------------------------------------------
+TYPE_OWNS_FIELDS = {
+    'steps': ('steps',),
+    'heart_rate': ('latestHR', 'hrSeries'),
+    'exercise': ('startedActivities', 'workout'),
+    'daily_resting_heart_rate': ('restingHR',),
+    'daily_heart_rate_variability': ('hrv',),
+    'daily_vo2_max': ('vo2Max',),
+    'weight': ('weightLbs',),
+    'body_fat': ('bodyFatPct',),
+    'time_in_heart_rate_zone': ('hrZoneMinutes',),
+    'sleep': ('sleep',),
+}
+
+# Every aggregate field except 'date' must be owned by exactly one type. A new
+# field added to aggregate_day() without a line above would be silently
+# dropped by every partial sync — this fails at import instead, the same way
+# the DATA_TYPES key assertion does.
+_OWNED = [f for fields in TYPE_OWNS_FIELDS.values() for f in fields]
+assert set(TYPE_OWNS_FIELDS) == set(DATA_TYPES), \
+    "TYPE_OWNS_FIELDS must name every data type in DATA_TYPES, and only those"
+assert len(_OWNED) == len(set(_OWNED)), "a summary field is claimed by two data types"
+assert set(_OWNED) == set(aggregate_day('1970-01-01', {})) - {'date'}, (
+    "TYPE_OWNS_FIELDS is out of step with aggregate_day()'s fields — a partial "
+    "(hourly) sync would silently fail to write the missing one"
+)
+
+
+def merge_day(previous, fresh, pulled_types):
+    """Merges one day's freshly aggregated summary into whatever was already
+    stored, for a PARTIAL sync.
+
+    Only the fields owned by `pulled_types` are replaced; everything else is
+    carried through from `previous` untouched. Passing every type is not the
+    same as calling this — a full sync deliberately does not go through here
+    at all (see sync_range) so its behaviour is byte-for-byte what it was
+    before this function existed.
+
+    `pulled_types` is the set of types that ACTUALLY RETURNED DATA for this
+    day, not merely the types that were asked for. A type whose pull failed,
+    and a type that came back empty, are both left alone: for today's numbers
+    the worst case of keeping an earlier value is staleness the next sync
+    fixes, whereas the worst case of overwriting is deleting a real
+    measurement. The 04:15 nightly is a full sync and rewrites the whole day
+    from scratch, so anything genuinely removed upstream is corrected then."""
+    if not isinstance(previous, dict):
+        return fresh
+    merged = dict(previous)
+    merged['date'] = fresh['date']
+    for type_key in pulled_types:
+        for field in TYPE_OWNS_FIELDS.get(type_key, ()):
+            merged[field] = fresh[field]
+    return merged
+
+
+# -----------------------------------------------------------------------------
 # Server-side store — the aggregated daily summaries. NOT metracker_v2 (§1.2);
 # this is the sidecar's own cache so /api/vitals doesn't block on a live pull.
 # -----------------------------------------------------------------------------
@@ -891,6 +1093,21 @@ def _save_daily_store(store):
     tmp.replace(DAILY_STORE)  # atomic rename — a crash mid-write can't corrupt the previous file
 
 
+def _load_raw_day(day):
+    """The existing raw debug cache for one day, or {} if there isn't one or
+    it can't be read. Used only so a partial sync can update its own types
+    without erasing the others."""
+    f = RAW_DIR / f"{day}.json"
+    if not f.is_file():
+        return {}
+    try:
+        existing = json.loads(f.read_text())
+        return existing if isinstance(existing, dict) else {}
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning("raw debug cache for %s unreadable (%s) — writing a fresh one", day, e)
+        return {}
+
+
 def purge_old_raw(retention_days=DEFAULT_RAW_RETENTION_DAYS):
     """Raw intraday samples are for debugging only and are discarded after
     about a week (ARCHITECTURE.md §6, module docstring rule 2)."""
@@ -909,9 +1126,21 @@ def purge_old_raw(retention_days=DEFAULT_RAW_RETENTION_DAYS):
                 logger.warning("could not purge stale raw cache %s: %s", f, e)
 
 
-def sync_range(start_date: str, end_date: str) -> dict:
-    """Pulls every data type for [start_date, end_date] (inclusive, local
-    calendar dates), aggregates per day, and merges into the daily store.
+def sync_range(start_date: str, end_date: str, type_keys=None, label='sync') -> dict:
+    """Pulls data for [start_date, end_date] (inclusive, local calendar
+    dates), aggregates per day, and merges into the daily store.
+
+    type_keys=None means EVERY data type and a whole-day overwrite — the
+    original behaviour, used by the 04:15 nightly and by POST /api/sync,
+    unchanged. Passing a subset (the hourly sync's steps/heart_rate/exercise,
+    ARCHITECTURE.md §6.3) makes this a PARTIAL sync: only those types are
+    fetched and only the fields they own are written, via merge_day(). The
+    two paths are kept separate on purpose so the full-sync path cannot be
+    changed by accident while working on the hourly one.
+
+    `label` only tags the log lines ('nightly', 'hourly', 'manual'), so a loop
+    that silently stops firing leaves a visible gap in sync.log rather than
+    just an app with stale numbers (§6.5).
 
     A failure pulling one data type does NOT block the others, and does not
     touch previously stored days — only days this call actually produced new
@@ -921,8 +1150,15 @@ def sync_range(start_date: str, end_date: str) -> dict:
 
     Returns a plain dict — counts, page counts, errors — safe to log and to
     hand back from POST /api/sync. Never contains a secret."""
-    result = {'start': start_date, 'end': end_date, 'types': {}, 'errors': [], 'daysWritten': []}
-    logger.info("sync_range(%s, %s) starting", start_date, end_date)
+    partial = type_keys is not None
+    wanted = tuple(type_keys) if partial else tuple(DATA_TYPES)
+    unknown = [t for t in wanted if t not in DATA_TYPES]
+    if unknown:
+        raise ValueError(f"unknown data type(s) requested: {unknown}")
+    result = {'start': start_date, 'end': end_date, 'label': label,
+              'types': {}, 'errors': [], 'daysWritten': []}
+    logger.info("%s: sync_range(%s, %s) starting — %s type(s): %s",
+                label, start_date, end_date, len(wanted), ', '.join(wanted))
 
     try:
         creds = get_credentials()
@@ -936,7 +1172,7 @@ def sync_range(start_date: str, end_date: str) -> dict:
     session = requests.Session()
 
     raw_by_day = {}
-    for type_key in DATA_TYPES:
+    for type_key in wanted:
         try:
             points, pages = fetch_data_points(type_key, start_dt, end_dt, creds, session)
         except GoogleHealthSyncError as e:
@@ -948,24 +1184,39 @@ def sync_range(start_date: str, end_date: str) -> dict:
             raw_by_day.setdefault(day, {})[type_key] = pts
 
     if not raw_by_day:
-        logger.warning("sync_range(%s, %s): every data type failed or returned nothing — store untouched", start_date, end_date)
+        logger.warning("%s: sync_range(%s, %s): every data type failed or returned nothing — store untouched",
+                       label, start_date, end_date)
         return result
 
     store = _load_daily_store()
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     for day, raw in raw_by_day.items():
-        store[day] = aggregate_day(day, raw)
+        fresh = aggregate_day(day, raw)
+        if partial:
+            # Field-level merge — see merge_day(). raw's keys are exactly the
+            # types that returned data for this day.
+            store[day] = merge_day(store.get(day), fresh, raw.keys())
+        else:
+            store[day] = fresh
         result['daysWritten'].append(day)
         try:
-            (RAW_DIR / f"{day}.json").write_text(json.dumps(raw, default=str))
+            raw_out = raw
+            if partial:
+                # The raw cache is debug-only and purges after ~7 days, but a
+                # partial sync must not blank the types it didn't ask for —
+                # otherwise every hourly run would delete today's sleep and
+                # HR-zone rows from the very file used to diagnose them.
+                raw_out = _load_raw_day(day)
+                raw_out.update(raw)
+            (RAW_DIR / f"{day}.json").write_text(json.dumps(raw_out, default=str))
         except OSError as e:
             logger.warning("could not write raw debug cache for %s: %s", day, e)
 
     _save_daily_store(store)
     purge_old_raw()
-    logger.info("sync_range(%s, %s) done — wrote %d day(s), %d type error(s)",
-                start_date, end_date, len(result['daysWritten']), len(result['errors']))
+    logger.info("%s: sync_range(%s, %s) done — wrote %d day(s), %d type error(s)",
+                label, start_date, end_date, len(result['daysWritten']), len(result['errors']))
     return result
 
 
