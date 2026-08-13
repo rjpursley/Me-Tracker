@@ -634,6 +634,82 @@ export function fastBroken(ds){
   return !!(d.fastDeviations&&d.fastDeviations[ds]&&d.fastDeviations[ds].broke);
 }
 
+// ---------------------------------------------------------------------------
+// A DAY'S MACROS — d.meals PLUS the Meal Tracker's serving counts (§13, §8).
+//
+// THE SNAPSHOT RULE IS LOAD-BEARING. Each entry in d.foodCounts[date] carries
+// its OWN copy of that item's per-serving macros, taken the first time the item
+// was added that day. A day's macros are computed from THAT snapshot and never
+// by looking the item up in d.foodLibrary. Two things depend on it:
+//
+//   1. The server's 120-day purge (§13.5) can delete a library item without
+//      touching any past day's numbers.
+//   2. Correcting a label today cannot silently rewrite scores Ryan has
+//      already seen — the same reasoning §6.10 records for declining the
+//      sleep backfill.
+//
+// DO NOT "normalise" d.foodCounts into an id reference. That is the change
+// that makes the purge start rewriting history.
+//
+// A NULL MACRO CONTRIBUTES NOTHING AND IS NOT TREATED AS 0 (§1.7). "Not
+// printed on the label" and "the label says zero" are different facts; only
+// the second one is a measurement.
+//
+// d.meals is NOT replaced and still works exactly as before. The two are
+// added together.
+// ---------------------------------------------------------------------------
+export const FOOD_MACRO_FIELDS=['protein','fat','carbs','sugar','calories','fiber','sodium'];
+
+// Only these four feed the Dietary score. calories, fiber and sodium are
+// stored and displayed but never scored — §11 protects the weights.
+export const SCORED_MACRO_FIELDS=['protein','fat','carbs','sugar'];
+
+// Totals contributed by d.foodCounts[ds] alone: count x snapshot macro.
+export function foodCountMacros(ds){
+  const d=db();
+  const day=(d.foodCounts&&d.foodCounts[ds]);
+  const out={};FOOD_MACRO_FIELDS.forEach(k=>{out[k]=0;});
+  out.servings=0;out.items=0;
+  if(!day||typeof day!=='object'||Array.isArray(day))return out;
+  Object.keys(day).forEach(id=>{
+    const e=day[id];if(!e)return;
+    const n=+e.count||0;if(n<=0)return;
+    out.servings+=n;out.items++;
+    const m=(e.macros&&typeof e.macros==='object')?e.macros:{};
+    FOOD_MACRO_FIELDS.forEach(k=>{
+      const v=m[k];
+      // null / undefined / '' all mean NOT ON THE LABEL — skipped, never
+      // added as a zero.
+      if(v===null||v===undefined||v==='')return;
+      const num=+v;if(!isFinite(num))return;
+      out[k]+=num*n;
+    });
+  });
+  return out;
+}
+
+// The whole day: hand-logged meals plus counted servings.
+//
+// `hasData` is what the 30-day chart uses to decide gap-vs-zero (§8.3) — a day
+// with neither a meal nor a serving is a GAP, not a zero-protein day.
+export function dayMacros(ds){
+  const d=db();
+  const meals=(d.meals||[]).filter(m=>m&&m.date===ds);
+  const fc=foodCountMacros(ds);
+  const sum=k=>meals.reduce((a,m)=>a+(+m[k]||0),0);
+  return{
+    protein:sum('protein')+fc.protein,
+    fat:sum('fat')+fc.fat,
+    carbs:sum('carbs')+fc.carbs,
+    sugar:sum('sugar')+fc.sugar,
+    // d.meals has never carried these three, so they come from counted
+    // servings only. Displayed, never scored.
+    calories:fc.calories,fiber:fc.fiber,sodium:fc.sodium,
+    mealCount:meals.length,servings:fc.servings,countedItems:fc.items,
+    hasData:meals.length>0||fc.servings>0
+  };
+}
+
 export function calcScore(ds){
   ds=ds||today();const d=db();const tgts=d.targets||{};
   // FASTING DEFAULTS TO COMPLIANT — §1.1 per-pillar defaults, §7.1 binary.
@@ -656,7 +732,12 @@ export function calcScore(ds){
   // API activity. The old category table lives on inside it as the fallback
   // for rest days and for days that were never touched.
   const trainingScore=calcTrainingScore(ds);
-  const meals=d.meals.filter(m=>m.date===ds);const ts=meals.reduce((a,m)=>a+(+m.sugar||0),0);const tp=meals.reduce((a,m)=>a+(+m.protein||0),0);const protGoal=+(tgts.protein)||180;let dietScore=100;if(ts>0&&ts<=10)dietScore=Math.max(70,100-(ts/10)*30);else if(ts>10&&ts<=25)dietScore=Math.max(40,70-((ts-10)/15)*30);else if(ts>25)dietScore=10;if(tp>=protGoal)dietScore=Math.min(100,dietScore+10);dietScore=Math.round(dietScore);
+  // ONE READ PATH FOR A DAY'S MACROS (§6.9's checklist). This used to sum
+  // d.meals inline here while the Dietary page summed it separately — two
+  // readers of the same fact, which is precisely how §6.9's bug happened.
+  // dayMacros() is now the single source for the score, the Dietary page's
+  // four cards and the 30-day chart, so they cannot disagree.
+  const dm=dayMacros(ds);const ts=dm.sugar;const tp=dm.protein;const protGoal=+(tgts.protein)||180;let dietScore=100;if(ts>0&&ts<=10)dietScore=Math.max(70,100-(ts/10)*30);else if(ts>10&&ts<=25)dietScore=Math.max(40,70-((ts-10)/15)*30);else if(ts>25)dietScore=10;if(tp>=protGoal)dietScore=Math.min(100,dietScore+10);dietScore=Math.round(dietScore);
   return{total:Math.round(fastScore*.25+sleepScore*.25+trainingScore*.25+dietScore*.25),fast:fastScore,sleep:sleepScore,training:trainingScore,diet:dietScore};
 }
 

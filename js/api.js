@@ -110,6 +110,59 @@ export async function fetchSyncStatus(){
   return await fetchJSON('/api/sync/status');
 }
 
+// ---------------------------------------------------------------------------
+// Food library — ARCHITECTURE.md §13. The server OWNS this data; that is the
+// one recorded exception to §1.2, and the phone keeps a read-only mirror.
+//
+// THESE FIVE ARE THE EXCEPTION TO THIS FILE'S "resolve to null" HABIT, and the
+// reason is §1.7. A vitals reader that gets nothing can honestly fall back to a
+// placeholder. A LIBRARY WRITE THAT FAILED MUST BE REPORTED AS FAILED — telling
+// Ryan a food was saved when it was not is exactly the lie this project keeps
+// legislating against. So every call resolves to an ENVELOPE:
+//
+//   {ok:true,  body}                      the server answered
+//   {ok:false, status, error}             it did not, and `error` says so
+//
+// They still never throw past their own boundary, which is the part of this
+// file's contract that matters.
+//
+// THE DAILY COUNTS ARE NOT HERE AND MUST NEVER BE. They live in localStorage
+// with everything else that feeds the score (§1.2). There is no counts
+// endpoint on the server either.
+// ---------------------------------------------------------------------------
+async function requestJSON(path, method, payload){
+  try{
+    const opts={method:method||'GET', headers:{'Accept':'application/json'}};
+    if(payload!==undefined){
+      opts.headers['Content-Type']='application/json';
+      opts.body=JSON.stringify(payload);
+    }
+    const res=await fetch(API_BASE+path, opts);
+    let body=null;
+    try{ body=await res.json(); }catch(e){ /* empty or non-JSON reply */ }
+    if(!res.ok){
+      const detail=body&&typeof body.detail==='string'?body.detail:null;
+      return {ok:false, status:res.status, error:detail||('The server refused that request ('+res.status+').')};
+    }
+    return {ok:true, status:res.status, body};
+  }catch(e){
+    // Server stopped, Tailscale off, phone offline — one honest answer.
+    return {ok:false, status:0, error:'The server could not be reached.'};
+  }
+}
+
+export async function fetchFoods(){ return await requestJSON('/api/foods'); }
+export async function createFood(item){ return await requestJSON('/api/foods','POST',item); }
+export async function updateFood(id,item){ return await requestJSON('/api/foods/'+encodeURIComponent(id),'PUT',item); }
+export async function deleteFood(id){ return await requestJSON('/api/foods/'+encodeURIComponent(id),'DELETE'); }
+
+// FIRE AND FORGET, on purpose. This only pushes an item's 120-day purge date
+// out (§13.5). The count it accompanies is local data that has ALREADY been
+// written and always succeeds; a failure here must never block or undo it.
+export function markFoodUsed(id){
+  return requestJSON('/api/foods/'+encodeURIComponent(id)+'/used','POST',{});
+}
+
 // POST /api/sync — a manual sync. Re-primes the cache for the same range
 // afterward so a caller sees the results immediately rather than on next
 // reload. Returns the server's result object (counts/pages/errors) or null on

@@ -520,13 +520,20 @@ Verified at a 393pt viewport: all five buttons measure 44px tall (the `.back-btn
 minimum, §1.5), all five land on Home with the topbar reading "Me-Tracker",
 from **both** the score box and the drawer where applicable.
 
-**One deliberate third level: Training → Personal Records** (§10.1). It is the
-only one, and it was a choice between two rules. The drawer was the natural home
-for a rarely-used logging page, but §11 protects drawer structure; 1RMs are
-training data, so they sit behind Training. Logging a tested max happens roughly
-once per 12-week cycle, so burying it one level deeper costs nothing daily.
-**This is not a licence to nest further.** If a third level is ever wanted
-again, that is a conversation with Ryan.
+**Two deliberate third levels, and only two.**
+
+| Third level | Why it sits there |
+|---|---|
+| **Training → Personal Records** (§10.1) | The drawer was the natural home for a rarely-used logging page, but §11 protects drawer structure; 1RMs are training data. Logging a tested max happens roughly once per 12-week cycle, so one level deeper costs nothing daily. |
+| **Dietary → Meal Tracker** (§13) | Added 2026-08-12. Counting servings is daily, but it belongs *under* Dietary because that is where its macros land. Ryan made this call explicitly; §4 says a third level requires a decision, and this is the record of it. |
+
+Both are reached from a `.score-box` / `.score-row` nav row on their parent
+page — the same component the score box itself uses — and both carry a back
+button up **one** level: Records → Training, Meal Tracker → Dietary. The full
+path is **Home → Dietary → Meal Tracker**, with a back button at every step.
+
+**This is still not a licence to nest further.** A fourth level, or a third one
+somewhere else, is a conversation with Ryan.
 
 Vitals keeps **3 days of history maximum** on screen. Longer ranges exist only
 as graphs and averages, not as scrollable detail. **BUILT:** the Vitals
@@ -1311,6 +1318,115 @@ button that would contend for VRAM.
 
 Plate estimates use a 3D-printed fiducial of known width **and height**, shot at
 an angle so height projects into the frame.
+
+### 8.0 The Meal Tracker — counting servings of saved foods
+
+**Built 2026-08-12.** This is HANDOFF §5's "food rotation checklist", built
+without vision or barcode — those remain a later, separate job, and **there are
+deliberately no stub buttons for them**. `js/pages/meals.js`, reached from a nav
+row at the bottom of the Dietary page (§4).
+
+**Three new additive top-level keys** in `metracker_v2` (§1.4):
+`d.foodCounts`, `d.foodLibrary`, `d.foodLibraryFetchedAt`.
+
+#### The counter
+
+One row per library item — `[ADD] [REMOVE]  2  RXBAR Chocolate Sea Salt` — with
+the item's own `servingText` under the name, so it is always clear what one
+press means. ADD increments, REMOVE decrements with a **floor of 0**. Buttons
+measure 48×84px, clear of the 44pt minimum (§1.5).
+
+**Counts are per local civil day via `today()` (§12) and apply to TODAY ONLY.**
+There is no date picker and no retroactive editing on this page.
+
+```js
+d.foodCounts["2026-08-12"] = {
+  "fd_abc123": { count: 2, name: "...", servingText: "...", macros: {...} }
+}
+```
+
+**COUNTING WORKS FULLY OFFLINE.** Every ADD and REMOVE writes localStorage and
+nothing else; nothing about the counter waits on a server response. ADD also
+fires `POST /api/foods/{id}/used` **fire-and-forget** — that call only pushes
+the item's purge date out (§13.5), and its failure must never block or undo the
+local count.
+
+An item counted today that has since left the library still gets a row, marked
+as such. Its macros are still in today's total, so hiding it would leave Ryan
+with numbers he cannot account for.
+
+#### THE SNAPSHOT RULE — this is the load-bearing part
+
+**An item's per-serving macros are COPIED into the day's record the first time
+it is added that day.** From then on that day is independent of the library: its
+macros are computed from **its own snapshot**, never by looking the item up in
+`d.foodLibrary`.
+
+Two things depend on it, and both are reasons this app already exists in the
+shape it does:
+
+1. **It makes the server's 120-day purge safe (§13.5).** Deleting a library item
+   cannot change a past day's numbers.
+2. **It stops a later correction to a label from silently rewriting past
+   scores** — the same reasoning §6.10 records for declining the sleep backfill.
+
+**DO NOT "normalise" `d.foodCounts` into an id reference.** That single change
+is what would make the purge start rewriting history.
+
+A count that drops to 0 **keeps** its entry and its snapshot, so re-adding the
+same item later that day cannot silently re-snapshot from a library that was
+edited in between.
+
+Verified: with an item counted, doubling every macro on the library item left
+today's Dietary totals and the stored snapshot **byte-identical**; deleting a
+library item that had counts on a past day left that day's record and its score
+unchanged.
+
+#### Macro wiring — one read path
+
+`derive.js`'s **`dayMacros(ds)`** is now the single source for a day's macros:
+`d.meals` **plus** `sum(count × snapshot macro)` across `d.foodCounts[ds]`.
+**`d.meals` still works and is not replaced** — the two are added together.
+
+The same function feeds the Dietary page's four cards, `calcScore()`, and the
+30-day consistency chart, so they cannot disagree. Three separate readers of the
+same fact is precisely the shape of the §6.9 bug, and this is the fix applied in
+advance rather than after.
+
+- **Only protein / fat / carbs / sugar feed the score.** Calories, fiber and
+  sodium are displayed on the Meal Tracker page and never scored. **Scoring
+  weights are untouched (§11).**
+- **A null macro contributes nothing and is NOT treated as 0** (§1.7). Blank in
+  the form means "not printed on the label".
+- A day with neither a logged meal nor a counted serving is still a **gap** in
+  the chart, never a zero (§8.3).
+
+Verified: a 12P/9F/24C/13S item moved today's totals by exactly `+0`, `+12/9/24/13`
+and `+36/27/72/39` at counts 0, 1 and 3, with hand-logged meals still counting
+alongside. With `d.foodCounts` empty, scores across a 10-date spread were
+identical before and after the change.
+
+#### The library, and the offline path
+
+**The server owns the library (§13.1). The phone keeps a read-only MIRROR.**
+
+- On page open the page **renders from the mirror first, always**, so it paints
+  instantly and works with the server down. The `GET /api/foods` refresh happens
+  in the background and only ever improves what is already on screen.
+- Create / update / delete go to the server, and the mirror is refreshed **from
+  the response**.
+- **If the server is unreachable, the app says so plainly and says the change
+  was NOT saved** (§1.7). Writes are **never queued locally** and the mirror is
+  **never allowed to diverge** — it is a cache, not a second source of truth.
+- **If the mirror is empty AND the server is unreachable**, the page says so and
+  points Ryan at the Dietary page's existing Log Meal form as the fallback —
+  never a blank page and never a bare error.
+
+Verified with the server stopped: the page rendered from the mirror, ADD/REMOVE
+kept working and persisted across a reload, a library edit failed with a plain
+message, the mirror did not move by a single byte, and no queue key appeared in
+the store. Emptying the mirror with the server still down produced the stated
+fallback message on a page with 1,164 characters of content, not a blank one.
 
 ### 8.1 Supplements are user-editable
 

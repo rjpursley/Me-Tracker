@@ -80,7 +80,34 @@ export function seedSupplements(){return SEED_SUPPLEMENTS.map(s=>({...s}));}
 // is null, not the PROGRAM_START code constant (schedule.js): a fresh store
 // must read as "not started", never as "already running since a hardcoded
 // date". See derive.js's programStart()/isProgramStarted()/programWeek().
-export function init(){return{fasts:[],workouts:[],sleeps:[],meals:[],hrs:[],targets:{},activeFast:null,deviations:{},fastDeviations:{},body:{},programPauses:[],exerciseLogs:{},oneRepMaxes:{},supplements:seedSupplements(),programStart:null};}
+// ---------------------------------------------------------------------------
+// Meal Tracker — three new additive keys (ARCHITECTURE.md §8, §13).
+//
+// foodCounts  OBJECT keyed by date, then by food id:
+//   {"2026-08-12": {"fd_abc123": {count, name, servingText, macros}}}
+//
+//   THE macros ARE A SNAPSHOT, per serving, copied in the FIRST time that item
+//   is added on that day. From then on the day is independent of the library:
+//   its macros are computed from its own snapshot, NEVER by looking the item up
+//   in foodLibrary. That is what makes the server's 120-day purge (§13.5) safe
+//   and what stops a later label correction from rewriting a past score. DO NOT
+//   normalise this into an id reference.
+//
+//   A count that drops to 0 KEEPS its entry and its snapshot, so re-adding the
+//   same item later the same day cannot silently re-snapshot from an edited
+//   library. It contributes no macros at 0.
+//
+//   These counts are LOCAL DATA and are never sent to the server (§1.2). There
+//   is no counts endpoint and there must not be one.
+//
+// foodLibrary          ARRAY — a READ-ONLY MIRROR of the server's food library.
+//                      A cache, never a second source of truth. If a write to
+//                      the server fails, the app says so and the mirror is left
+//                      alone; writes are never queued locally.
+// foodLibraryFetchedAt STRING (UTC ISO instant) or null — when the mirror was
+//                      last refreshed from the server. An instant, so UTC (§12).
+// ---------------------------------------------------------------------------
+export function init(){return{fasts:[],workouts:[],sleeps:[],meals:[],hrs:[],targets:{},activeFast:null,deviations:{},fastDeviations:{},body:{},programPauses:[],exerciseLogs:{},oneRepMaxes:{},supplements:seedSupplements(),programStart:null,foodCounts:{},foodLibrary:[],foodLibraryFetchedAt:null};}
 export function db(){try{return JSON.parse(localStorage.getItem(DB_KEY))||init();}catch(e){return init();}}
 export function save(d){localStorage.setItem(DB_KEY,JSON.stringify(d));}
 

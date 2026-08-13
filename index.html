@@ -274,6 +274,24 @@
       <div class="form-note" id="macro-chart-note"></div>
     </div>
   </div>
+  <!-- Meal Tracker (§4, §13) — a third nav level, which §4 says is a decision;
+       Ryan made it. Reuses the same .score-box / .score-row nav component as
+       the Personal Records row on the Training page, so it looks like every
+       other nav row in the app. -->
+  <div class="score-box" style="margin-top:12px">
+    <button class="score-row" onclick="showPage('meals','Meal Tracker')"><span class="score-row-label">Meal Tracker</span><span class="score-row-chev">›</span></button>
+  </div>
+</div>
+
+<!-- Home -> Dietary -> Meal Tracker, each level with a back button up ONE
+     level (§4). This one goes to Dietary, not Home — same shape as
+     #page-prs, which goes back to Training. -->
+<div class="page" id="page-meals">
+  <button class="back-btn" onclick="showPage('diet','Dietary')"><span class="back-chev">‹</span>Dietary</button>
+  <div class="section-title">Count Today's Servings</div>
+  <div id="meal-counter"></div>
+  <div class="section-title">Food Library</div>
+  <div id="meal-library"></div>
 </div>
 
 <div class="page" id="page-log">

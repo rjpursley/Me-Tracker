@@ -26,6 +26,7 @@ import { renderCalendar, setCalView, getCalView } from './pages/calendar.js';
 import { renderHealth, saveBodyHeight, saveBodyAge, logBodyMeasurement, runSync } from './pages/health.js';
 import { renderBody, logSleep, logHR } from './pages/vitals.js';
 import { renderDiet, logMeal, addSupplement, deleteSupplement, moveSupplement, toggleMacroChart } from './pages/dietary.js';
+import { openMeals, mealAdd, mealRemove, mealSaveFood, mealEditFood, mealCancelEdit, mealDeleteFood } from './pages/meals.js';
 import { initLogForms, setLogType, logWorkout, saveTargets } from './pages/log.js';
 import { logFast, startActiveFast, stopActiveFast, renderFastingPage, toggleFastFail, saveFastFailNote } from './pages/fasting.js';
 import { renderTrainingPage, openPauseGate, closePauseGate, pauseGateKey, pauseGateBack, toggleExercise } from './pages/training.js';
@@ -66,6 +67,9 @@ function renderPageById(id){
   if(id==='health')renderHealth();
   if(id==='body')renderBody();
   if(id==='diet')renderDiet();
+  // openMeals() paints from the local mirror FIRST and only then refreshes it
+  // from the server, so the page is instant and works with the server down.
+  if(id==='meals')openMeals();
   if(id==='log')initLogForms();
 }
 
@@ -122,6 +126,13 @@ window.deleteSupplement=deleteSupplement;
 window.moveSupplement=moveSupplement;
 window.toggleMacroChart=toggleMacroChart;
 
+window.mealAdd=mealAdd;
+window.mealRemove=mealRemove;
+window.mealSaveFood=mealSaveFood;
+window.mealEditFood=mealEditFood;
+window.mealCancelEdit=mealCancelEdit;
+window.mealDeleteFood=mealDeleteFood;
+
 window.toggleFastFail=toggleFastFail;
 window.saveFastFailNote=saveFastFailNote;
 
@@ -157,6 +168,13 @@ document.getElementById('import-file-input').addEventListener('change', handleIm
   // this field for the first time must read as "not started", not silently
   // become "already running since a hardcoded date". See derive.js.
   if(!('programStart' in d)){d.programStart=null;changed=true;}
+  // Meal Tracker (§13). foodCounts is the day's servings — LOCAL data that
+  // feeds the score (§1.2). foodLibrary is a read-only mirror of the server's
+  // library, and foodLibraryFetchedAt is when it was last refreshed. All three
+  // are additive and backfill empty, never with invented content.
+  if(!d.foodCounts||typeof d.foodCounts!=='object'||Array.isArray(d.foodCounts)){d.foodCounts={};changed=true;}
+  if(!Array.isArray(d.foodLibrary)){d.foodLibrary=[];changed=true;}
+  if(!('foodLibraryFetchedAt' in d)){d.foodLibraryFetchedAt=null;changed=true;}
   if(changed)save(d);
 })();
 
@@ -192,7 +210,12 @@ function rerenderAfterRefresh(){
   // 'log' is deliberately skipped: it shows no synced value at all, and
   // initLogForms() resets the date inputs to today, which would quietly
   // rewrite a date Ryan had typed but not yet saved.
-  if(id && id !== 'home' && id !== 'log') renderPageById(id);
+  //
+  // 'meals' is skipped for the SAME reason: it shows no synced value either,
+  // and openMeals() clears the add/edit form and any in-flight message, which
+  // would silently discard a food Ryan had typed but not yet saved. Its counter
+  // re-renders on every ADD/REMOVE anyway, so nothing goes stale for long.
+  if(id && id !== 'home' && id !== 'log' && id !== 'meals') renderPageById(id);
 }
 
 primeRecentVitals().then(rerenderAfterRefresh);

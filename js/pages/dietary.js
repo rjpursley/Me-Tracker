@@ -20,7 +20,7 @@
 
 import { db, save } from '../store.js';
 import { today, dateStr, addDays, esc } from '../util.js';
-import { macroSuggestions } from '../derive.js';
+import { macroSuggestions, dayMacros } from '../derive.js';
 import { renderHome } from './home.js';
 
 let macroChartInstance=null;
@@ -28,9 +28,13 @@ let macroChartOpen=false;
 
 export function renderDiet(){
   const d=db(),t=today();
-  const meals=d.meals.filter(m=>m.date===t);
-  const sum=k=>meals.reduce((a,m)=>a+(+m[k]||0),0);
-  const tp=sum('protein'),tf=sum('fat'),tc=sum('carbs'),ts=sum('sugar');
+  // ONE READ PATH (§6.9's checklist). dayMacros() sums d.meals AND the Meal
+  // Tracker's counted servings (§13) from each day's own snapshot. The same
+  // function feeds calcScore() and the 30-day chart, so the number on this card
+  // and the number in the score can never disagree — which is exactly the class
+  // of bug §6.9 records. d.meals is not replaced; the two are added together.
+  const dm=dayMacros(t);
+  const tp=dm.protein,tf=dm.fat,tc=dm.carbs,ts=dm.sugar;
   const tgts=d.targets||{},pG=+(tgts.protein)||180,fG=+(tgts.fat)||80,sG=+(tgts.sugar)||10;
   // Carbs has NO hardcoded fallback (§8.2) — 200 was an invented placeholder
   // with no basis, added the same day the carbs card was. Protein (180), fat
@@ -180,21 +184,24 @@ export function toggleMacroChart(){
 function renderMacroChart(){
   const canvas=document.getElementById('macro-chart');
   if(!canvas||typeof Chart==='undefined')return;
-  const d=db(),now=new Date();
+  const now=new Date();
   const labels=[],protein=[],fat=[],carbs=[],sugar=[];
   let anyData=false;
   for(let i=MACRO_CHART_DAYS-1;i>=0;i--){
     const dt=addDays(now,-i),ds=dateStr(dt);
     labels.push((dt.getMonth()+1)+'/'+dt.getDate());
-    const meals=d.meals.filter(m=>m.date===ds);
-    if(meals.length)anyData=true;
-    const sum=k=>meals.length?meals.reduce((a,m)=>a+(+m[k]||0),0):null;
-    protein.push(sum('protein'));fat.push(sum('fat'));carbs.push(sum('carbs'));sugar.push(sum('sugar'));
+    // Same one read path as the cards and the score. `hasData` is true when the
+    // day has a logged meal OR a counted serving; anything else stays a GAP,
+    // never a zero — an unlogged day is not a zero-protein day (§8.3).
+    const dm=dayMacros(ds);
+    if(dm.hasData)anyData=true;
+    protein.push(dm.hasData?dm.protein:null);fat.push(dm.hasData?dm.fat:null);
+    carbs.push(dm.hasData?dm.carbs:null);sugar.push(dm.hasData?dm.sugar:null);
   }
   const note=document.getElementById('macro-chart-note');
   if(note)note.textContent=anyData
-    ? 'Days with no meals logged are gaps, not zeroes — an unlogged day is not a zero-protein day.'
-    : 'No meals logged yet. Log a meal and this fills in.';
+    ? 'Days with nothing logged or counted are gaps, not zeroes — an unlogged day is not a zero-protein day.'
+    : 'Nothing logged or counted yet. Log a meal or count a serving and this fills in.';
 
   // Chart.js colour literals — see the file header. They mirror --accent,
   // --accent3, --accent2 and --danger from tokens.css.
