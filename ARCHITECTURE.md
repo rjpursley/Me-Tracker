@@ -1526,6 +1526,68 @@ Chart.js colour literals are the documented §1.6 exception — canvas cannot
 resolve `var()`. They stay confined to the chart config; the on-page legend uses
 real tokens.
 
+### 8.4 The intake chart — caffeine and additives
+
+**Built 2026-08-13.** One chart on the Dietary page, below the macro graph,
+behind its own toggle in the same pattern as §8.3. **Default collapsed.**
+
+**CAPTURE, NOT JUDGEMENT.** Two lines and three numbers, deliberately thin:
+
+- 30 days of **7-day rolling average** for **caffeine (mg/day)** and **additive
+  count (per day)**, on two y-axes.
+- A summary line above it: the current 7-day averages for caffeine, additive
+  count, and **NOVA-4 items per day**.
+
+**THERE IS NO THRESHOLD, NO WARNING COLOUR AND NO "TOO MUCH" LINE.** That
+decision has not been made and must not be invented in a chart config — it is a
+conversation with Ryan once he has seen real numbers. **Minerals are captured
+and visible per item but are NOT charted here;** charting them is a later call.
+**Nothing here is scored** (§11).
+
+#### THE AVERAGE IS A RATE OVER LOGGED DAYS, NOT A SUM OVER SEVEN
+
+Dividing by seven calendar days would make **forgetting to log look like
+consuming less** — the same lie §8.3 refuses for macros. The divisor is the
+number of days in the window that actually have data **for that metric**, and
+the card says how many that was, in words, on screen.
+
+**Below `INTAKE_MIN_DAYS` (3) a window shows nothing, not 0.** A "7-day average"
+computed from one day is noise wearing a trend's clothing. Verified: windows
+with 1, 1 and 2 known days all returned `null`.
+
+**Known-ness is per metric, not per day.** A day can be known for additives and
+unknown for NOVA — an item whose `novaGroup` OFF never recorded still carries an
+additives list. Each of the three figures therefore has its own divisor, and the
+card prints all three.
+
+**Gaps come from two places and both are gaps, never zeroes:**
+
+1. A day with nothing counted at all.
+2. A day counted **before §13.8 shipped**, whose snapshot has no `extras` or
+   `flags`. **The card says so explicitly** when any fall in the window —
+   *"1 day in this window was counted before caffeine and additives were
+   recorded, so it is a gap here — not a zero."*
+
+**A genuine measured zero is NOT a gap.** A product whose label says 0 mg
+caffeine counts as a known day contributing 0. That is the whole reason §13.8
+keeps null and 0 apart, and it is what stops "days I drank no coffee" from
+quietly vanishing out of the divisor.
+
+#### Worked, against a controlled spread
+
+Seven days ending today: 100 mg, *(no entry)*, 200 mg, *(legacy day)*, **0 mg
+measured**, 300 mg, 302 mg.
+
+```
+caffeine  (100 + 200 + 0 + 300 + 302) / 5 logged days = 180.4 mg/day
+additives (  2 +   1 + 0 +   3 +   5) / 5 logged days =   2.2 /day
+NOVA-4    (  1 +   0 +       1 +   1) / 4 KNOWN days  =   0.75/day
+```
+
+The NOVA divisor is **4, not 5**: the 0 mg day's item had `novaGroup: null`, so
+that day is known for additives and unknown for NOVA. All three matched
+hand-computation exactly.
+
 ---
 
 ## 9. Training page

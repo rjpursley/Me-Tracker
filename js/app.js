@@ -25,7 +25,8 @@ import {
 import { renderCalendar, setCalView, getCalView } from './pages/calendar.js';
 import { renderHealth, saveBodyHeight, saveBodyAge, logBodyMeasurement, runSync } from './pages/health.js';
 import { renderBody, logSleep, logHR } from './pages/vitals.js';
-import { renderDiet, logMeal, addSupplement, deleteSupplement, moveSupplement, toggleMacroChart } from './pages/dietary.js';
+import { renderDiet, logMeal, addSupplement, deleteSupplement, moveSupplement, toggleMacroChart,
+         toggleIntakeChart } from './pages/dietary.js';
 import { openMeals, mealAdd, mealRemove, mealSaveFood, mealEditFood, mealCancelEdit, mealDeleteFood,
          mealBarcodeTyped, mealBarcodeLookup, mealScanRecalc, mealScanEdited, mealScanServingTouched,
          mealScanRoute, mealScanCancel, mealScanSave, mealClearPendingBarcode } from './pages/meals.js';
@@ -127,6 +128,7 @@ window.addSupplement=addSupplement;
 window.deleteSupplement=deleteSupplement;
 window.moveSupplement=moveSupplement;
 window.toggleMacroChart=toggleMacroChart;
+window.toggleIntakeChart=toggleIntakeChart;
 
 window.mealAdd=mealAdd;
 window.mealRemove=mealRemove;

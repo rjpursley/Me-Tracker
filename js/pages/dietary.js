@@ -20,7 +20,7 @@
 
 import { db, save } from '../store.js';
 import { today, dateStr, addDays, esc } from '../util.js';
-import { macroSuggestions, dayMacros } from '../derive.js';
+import { macroSuggestions, dayMacros, dayIntake, rollingIntake } from '../derive.js';
 import { renderHome } from './home.js';
 
 let macroChartInstance=null;
@@ -74,6 +74,7 @@ export function renderDiet(){
   document.getElementById('sugar-damage-display').innerHTML=`<div class="sugar-damage ${sdClass}"><span class="sd-icon">${sdIcon}</span><span>${sdMsg}</span></div>`;
 
   if(macroChartOpen)renderMacroChart();
+  if(intakeChartOpen)renderIntakeChart();
 }
 
 // ---------------------------------------------------------------------------
@@ -221,6 +222,119 @@ function renderMacroChart(){
       scales:{
         y:{beginAtZero:true,ticks:{color:'#6b6b8a',font:{size:9}},grid:{color:'rgba(255,255,255,.04)'},title:{display:true,text:'grams',color:'#6b6b8a',font:{size:9}}},
         x:{ticks:{color:'#6b6b8a',font:{size:8},maxRotation:45,autoSkip:true,maxTicksLimit:10},grid:{color:'rgba(255,255,255,.02)'}}
+      }}
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Caffeine & additives — ARCHITECTURE.md §8.4, §13.8.
+//
+// CAPTURE, NOT JUDGEMENT. Deliberately thin: two lines and three numbers. There
+// is NO threshold, NO warning colour and NO "too much" marker anywhere in here,
+// because that decision has not been made — it is a conversation with Ryan once
+// he has seen real numbers, not something to invent in a chart config.
+//
+// MINERALS ARE CAPTURED AND VISIBLE PER ITEM BUT NOT CHARTED HERE. Charting
+// them is a later call.
+//
+// THE AVERAGE IS A RATE OVER LOGGED DAYS (rollingIntake(), derive.js). Dividing
+// by seven calendar days would make forgetting to log look like consuming less,
+// which is exactly the lie §8.3 refuses for macros.
+// ---------------------------------------------------------------------------
+const INTAKE_CHART_DAYS=30;
+let intakeChartInstance=null;
+let intakeChartOpen=false;
+
+export function toggleIntakeChart(){
+  intakeChartOpen=!intakeChartOpen;
+  const card=document.getElementById('intake-chart-card');
+  const btn=document.getElementById('intake-chart-btn');
+  if(card)card.style.display=intakeChartOpen?'block':'none';
+  if(btn)btn.textContent=intakeChartOpen?'Hide caffeine & additive intake':'Show caffeine & additive intake';
+  if(intakeChartOpen)renderIntakeChart();
+}
+
+// How many days in the window carry counted servings but NO §13.8 data at all —
+// i.e. days recorded before the snapshot carried extras/flags. They are gaps,
+// and the card says so rather than letting them read as quiet zeroes.
+function legacyDaysInWindow(days){
+  const now=new Date();
+  let n=0;
+  for(let i=days-1;i>=0;i--){
+    const ds=dateStr(addDays(now,-i));
+    const iv=dayIntake(ds);
+    if(dayMacros(ds).hasData&&!iv.caffeineKnown&&!iv.additivesKnown&&!iv.novaKnown)n++;
+  }
+  return n;
+}
+
+function renderIntakeChart(){
+  const canvas=document.getElementById('intake-chart');
+  if(!canvas||typeof Chart==='undefined')return;
+  const now=new Date();
+  const labels=[],caffeine=[],additives=[];
+  for(let i=INTAKE_CHART_DAYS-1;i>=0;i--){
+    const dt=addDays(now,-i),ds=dateStr(dt);
+    labels.push((dt.getMonth()+1)+'/'+dt.getDate());
+    // null below the minimum — a "7-day average" from one day is noise wearing
+    // a trend's clothing, and a gap draws as a break rather than a zero.
+    const r=rollingIntake(ds);
+    caffeine.push(r.caffeine===null?null:Math.round(r.caffeine*10)/10);
+    additives.push(r.additives===null?null:Math.round(r.additives*10)/10);
+  }
+
+  const cur=rollingIntake(today());
+  const num=(v,unit)=>v===null?'—':(Math.round(v*10)/10)+unit;
+  const summary=document.getElementById('intake-summary');
+  if(summary){
+    summary.textContent=
+      'Last 7 days — caffeine '+num(cur.caffeine,' mg/day')+
+      ' (from '+cur.caffeineDays+' logged day'+(cur.caffeineDays===1?'':'s')+')'+
+      ' · additives '+num(cur.additives,'/day')+
+      ' (from '+cur.additiveDays+' day'+(cur.additiveDays===1?'':'s')+')'+
+      ' · NOVA-4 items '+num(cur.nova4,'/day')+
+      ' (from '+cur.nova4Days+' day'+(cur.nova4Days===1?'':'s')+').';
+  }
+
+  const note=document.getElementById('intake-chart-note');
+  if(note){
+    const legacy=legacyDaysInWindow(INTAKE_CHART_DAYS);
+    let text='Averaged over the days that actually have entries, not over seven calendar days — '+
+             'forgetting to log is not the same as consuming less. A window with fewer than '+
+             cur.minDays+' such days shows nothing rather than a noisy average.';
+    if(legacy)text+=' '+legacy+' day'+(legacy===1?'':'s')+' in this window '+
+             (legacy===1?'was':'were')+' counted before caffeine and additives were recorded, so '+
+             (legacy===1?'it is a gap here — not a zero.':'they are gaps here — not zeroes.');
+    if(cur.caffeine===null&&cur.additives===null)
+      text='Nothing to average yet. Count a few servings of foods with a barcode, or type caffeine '+
+           'in by hand, and this fills in.';
+    note.textContent=text;
+  }
+
+  // Chart.js colour literals — the documented §1.6 exception, confined to this
+  // config. They mirror --accent3 and --accent2; the legend above uses the real
+  // tokens. NO red and no threshold band, on purpose.
+  const line=(label,data,color,axis)=>({label,data,borderColor:color,backgroundColor:'transparent',
+    tension:.3,pointRadius:2,pointBackgroundColor:color,spanGaps:false,borderWidth:2,yAxisID:axis});
+  const ctx=canvas.getContext('2d');
+  if(intakeChartInstance)intakeChartInstance.destroy();
+  intakeChartInstance=new Chart(ctx,{
+    type:'line',
+    data:{labels,datasets:[
+      line('Caffeine',caffeine,'#f7a46a','y'),
+      line('Additives',additives,'#4fd8c4','y1')
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{
+        y:{beginAtZero:true,position:'left',ticks:{color:'#6b6b8a',font:{size:9}},
+           grid:{color:'rgba(255,255,255,.04)'},
+           title:{display:true,text:'caffeine mg/day',color:'#6b6b8a',font:{size:9}}},
+        y1:{beginAtZero:true,position:'right',ticks:{color:'#6b6b8a',font:{size:9}},
+            grid:{drawOnChartArea:false},
+            title:{display:true,text:'additives/day',color:'#6b6b8a',font:{size:9}}},
+        x:{ticks:{color:'#6b6b8a',font:{size:8},maxRotation:45,autoSkip:true,maxTicksLimit:10},
+           grid:{color:'rgba(255,255,255,.02)'}}
       }}
   });
 }

@@ -274,6 +274,23 @@
       <div class="form-note" id="macro-chart-note"></div>
     </div>
   </div>
+  <!-- Caffeine and additives (§8.4, §13.8). CAPTURE, NOT JUDGEMENT: there is
+       deliberately no threshold line, no warning colour and no "too much"
+       marker. Those are a decision for Ryan once he has seen real numbers. -->
+  <div class="section-title">Caffeine &amp; Additives</div>
+  <div id="intake-chart-wrap">
+    <button class="btn btn-secondary" id="intake-chart-btn" onclick="toggleIntakeChart()">Show caffeine &amp; additive intake</button>
+    <div class="card" id="intake-chart-card" style="display:none;margin-top:10px">
+      <div class="card-title">Last 30 days · 7-day rolling average</div>
+      <div class="form-note" id="intake-summary"></div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin:8px 0;font-size:11px;font-family:var(--font-mono);color:var(--muted)">
+        <span><span class="lg-swatch" style="background:var(--accent3)"></span>Caffeine (mg/day)</span>
+        <span><span class="lg-swatch" style="background:var(--accent2)"></span>Additives (per day)</span>
+      </div>
+      <div class="chart-wrap"><canvas id="intake-chart"></canvas></div>
+      <div class="form-note" id="intake-chart-note"></div>
+    </div>
+  </div>
   <!-- Meal Tracker (§4, §13) — a third nav level, which §4 says is a decision;
        Ryan made it. Reuses the same .score-box / .score-row nav component as
        the Personal Records row on the Training page, so it looks like every
