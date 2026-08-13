@@ -29,10 +29,18 @@ Written 2026-08-11. Ryan is not a programmer — explain findings plainly.
   `C:\Users\Ryan`. `METRACKER_SECRETS_DIR` is set in the launcher to
   compensate — that fix has never run in the conditions it was written for.
 
+**Built since this file was written (2026-08-12 / 08-13):**
+- The food rotation checklist — the Meal Tracker page and the server-owned food
+  library (ARCHITECTURE.md §8.0, §13).
+- Barcode lookup (`server/barcode.py`) — Open Food Facts, **typed digits only**,
+  with a review-before-save card (ARCHITECTURE.md §13.6, §13.7).
+
 **Not built:**
 - Ollama vision (`server/vision.py`) — plate photos and label OCR.
-- Barcode lookup (`server/barcode.py`) — Open Food Facts.
-- The food rotation checklist (see §5).
+- **Camera/live barcode scanning. This is deliberately not "the next small
+  step" on the barcode work** — ARCHITECTURE.md §13.6 records why a vision
+  model must never decode a barcode: a misread digit returns a different
+  product's macros with full confidence, silently.
 
 ---
 
@@ -185,7 +193,11 @@ otherwise (§7.1). Note the Log Entry page's fast-type `<select>` already
 offers 24h / 36h / 48h and still works; this would be a one-tap version of
 something that is currently a small form.
 
-**Then — food rotation checklist (specified, not built):**
+**Food rotation checklist — BUILT 2026-08-12/13.** The specification below is
+kept as the record of what was asked for; ARCHITECTURE.md §8.0, §13, §13.6 and
+§13.7 describe what actually exists. Barcode capture is built (typed digits);
+label OCR is not.
+
 Ryan eats from a fixed rotation. A checklist of those foods with known macros
 bypasses vision entirely for everyday meals — exact numbers, not estimates.
 

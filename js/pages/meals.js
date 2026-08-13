@@ -36,14 +36,29 @@
 // never queued locally and the mirror is never allowed to diverge from the
 // server — it is a cache, not a second source of truth.
 //
-// NOT BUILT HERE, DELIBERATELY: barcode scanning and label OCR (§8). They are a
-// later, separate build. There are no stub buttons for them.
+// ############ THE BARCODE PATH — REVIEW BEFORE SAVE (§13.6, §13.7) ############
+//
+// Typed digits only. NO CAMERA, NO LIVE SCANNING, NO IMAGE DECODING, AND NO
+// VISION MODEL — a misread digit returns a different product's macros with full
+// confidence and nothing downstream can tell. Label OCR is still a later,
+// separate build and there is deliberately no stub button for it.
+//
+// A lookup NEVER writes anything. It produces a review card; Ryan checks it
+// against the package in his hand, edits whatever is wrong, and only an
+// explicit Save tap creates the item — through the EXISTING POST /api/foods,
+// not a second create path.
+//
+// When Open Food Facts only knows the product per 100 g (about one lookup in
+// four, measured — §13.6), the card says so and offers two routes to a serving
+// size. Both produce the same single output: GRAMS PER SERVING. Only that is
+// stored; the net weight and servings-per-container that may have produced it
+// are inputs to a calculation, not facts, and must not be persisted.
 // ---------------------------------------------------------------------------
 
 import { db, save } from '../store.js';
 import { today, esc } from '../util.js';
 import { dayMacros, foodCountMacros, FOOD_MACRO_FIELDS } from '../derive.js';
-import { fetchFoods, createFood, updateFood, deleteFood, markFoodUsed } from '../api.js';
+import { fetchFoods, createFood, updateFood, deleteFood, markFoodUsed, lookupBarcode } from '../api.js';
 import { renderHome } from './home.js';
 
 // Label and unit per stored macro field. The first four are scored; the last
@@ -64,6 +79,13 @@ let editingId=null;          // null = the form is in "add" mode
 let libraryMsg=null;         // {text, kind:'info'|'err'|'success'}
 let libraryBusy=false;
 let fetchState='idle';       // 'idle' | 'fetching' | 'ok' | 'failed'
+
+// The barcode path. All three are module state, never stored: an abandoned
+// review or a stale error must not survive the page.
+let barcodeInput='';         // what is typed in the lookup box, kept across re-renders
+let scan=null;               // the open review card, or null. NOTHING IS SAVED FROM IT
+                             // until mealScanSave() runs.
+let pendingBarcode=null;     // a NOT-FOUND code, kept so the manual form keeps it
 
 // ---------------------------------------------------------------------------
 // Reads
@@ -199,6 +221,11 @@ export async function mealSaveFood(){
     libraryMsg={text:'Give the food a name.',kind:'err'};
     renderMeals();return;
   }
+  // A barcode Open Food Facts did not have is kept with the item Ryan types, so
+  // he enters the panel once and a later lookup finds his own entry. Confidence
+  // is deliberately NOT sent: a hand-typed panel stays `high` (§8), barcode or
+  // not — only a lookup earns `exact`.
+  if(pendingBarcode&&!editingId)payload.barcode=pendingBarcode;
   libraryBusy=true;
   libraryMsg={text:editingId?'Saving the change…':'Saving…',kind:'info'};
   renderMeals();
@@ -213,6 +240,8 @@ export async function mealSaveFood(){
   adoptLibrary(res.body);
   const wasEditing=!!editingId;
   editingId=null;
+  pendingBarcode=null;
+  barcodeInput='';
   clearForm();
   libraryMsg={text:wasEditing?'Saved. Days already counted keep the macros they were counted with.':'Added to the library.',kind:'success'};
   renderMeals();
@@ -266,6 +295,305 @@ function fillForm(item){
   set('food-in-name',item.name);set('food-in-serving',item.servingText);
   const m=item.macros||{};
   MACRO_META.forEach(f=>set('food-in-'+f.key,m[f.key]));
+}
+
+// ---------------------------------------------------------------------------
+// The barcode path — §13.6, §13.7. Lookup, review, and only then save.
+// ---------------------------------------------------------------------------
+
+// A number strictly greater than zero, or null. BLANK, ZERO, TEXT, A NEGATIVE
+// AND Infinity ALL COME BACK null — this is the one gate every serving-size
+// figure passes through, so a division can never emit NaN or Infinity into the
+// card. Number('') is 0 and Number('Infinity') is Infinity, which is exactly
+// why this is not a bare Number() call.
+function positiveNum(v){
+  const s=String(v==null?'':v).trim();
+  if(s==='')return null;
+  const n=Number(s);
+  return (isFinite(n)&&n>0)?n:null;
+}
+
+function round2(n){return Math.round(n*100)/100;}
+
+// The comparison key for two barcodes. The server canonicalises what it returns
+// (§13.6), but an item saved before that — or typed in the other form — must
+// still be recognised as the same product, or the duplicate guard has a hole
+// exactly where it is needed. Leading zeros are the only thing that differs
+// between a UPC-A and its EAN-13, so they are what gets stripped.
+function barcodeKey(code){
+  const digits=String(code==null?'':code).replace(/[\s-]/g,'');
+  if(!digits||!/^\d+$/.test(digits))return null;
+  return digits.replace(/^0+/,'')||'0';
+}
+
+function findByBarcode(code){
+  const key=barcodeKey(code);
+  if(!key)return null;
+  return mirror().find(i=>barcodeKey(i.barcode)===key)||null;
+}
+
+export function mealBarcodeTyped(v){barcodeInput=v;}
+
+// Grams in one serving, as the card currently stands, or null if not known yet.
+// For a converted candidate that is Open Food Facts' own figure; for a per-100g
+// one it is whichever route Ryan is using.
+function scanGrams(){
+  if(!scan)return null;
+  if(scan.basis!=='per_100g')return positiveNum(scan.servingGrams);
+  if(scan.route==='A')return positiveNum(scan.grams);
+  const net=positiveNum(scan.net), per=positiveNum(scan.per);
+  if(net===null||per===null)return null;      // blank or zero -> NOTHING, per §13.7
+  const g=net/per;
+  return (isFinite(g)&&g>0)?g:null;
+}
+
+function scanSource(){
+  if(!scan)return null;
+  if(scan.basis!=='per_100g')return 'off';
+  return scan.route==='A'?'label':'divided';
+}
+
+// Reads whatever is currently in the card's inputs back into module state, so a
+// re-render (a background library refresh, an ADD tap) cannot lose an edit.
+function captureScan(){
+  if(!scan)return;
+  const val=id=>{const el=document.getElementById(id);return el?el.value:null;};
+  const name=val('sc-name');           if(name!==null)scan.name=name;
+  const st=val('sc-serving');          if(st!==null)scan.servingText=st;
+  const g=val('sc-grams');             if(g!==null)scan.grams=g;
+  const net=val('sc-net');             if(net!==null)scan.net=net;
+  const per=val('sc-per');             if(per!==null)scan.per=per;
+  FOOD_MACRO_FIELDS.forEach(k=>{
+    const v=val('sc-m-'+k);
+    if(v!==null)scan.macros[k]=v;
+  });
+}
+
+export async function mealBarcodeLookup(){
+  if(libraryBusy)return;
+  captureScan();
+  const typed=(barcodeInput||'').trim();
+  if(!typed){
+    libraryMsg={text:'Type the barcode digits first.',kind:'err'};
+    renderMeals();return;
+  }
+  libraryBusy=true;scan=null;pendingBarcode=null;
+  libraryMsg={text:'Looking up '+typed+'…',kind:'info'};
+  renderMeals();
+  const res=await lookupBarcode(typed);
+  libraryBusy=false;
+
+  if(!res.ok){
+    // 400 (not a barcode), 502 (Open Food Facts down or slow), or 0 (this
+    // server unreachable). SAY SO PLAINLY AND SHOW NOTHING — no half product,
+    // no invented macros (§1.7). Manual entry is still right there below.
+    libraryMsg={text:res.error+' Nothing was looked up and nothing was saved. '+
+                     'You can still type the label in by hand below.',kind:'err'};
+    renderMeals();return;
+  }
+
+  const body=res.body||{};
+  if(body.found===false){
+    // A PRODUCT OPEN FOOD FACTS DOES NOT HAVE IS A NORMAL OUTCOME. Keep the
+    // code and drop straight into the manual form so Ryan types the panel once.
+    const code=body.barcode||typed;
+    const already=findByBarcode(code);
+    if(already){
+      // He has already saved this one himself. Don't hand him a blank form
+      // that would create a second copy of it.
+      //
+      // Opened inline rather than via mealEditFood(), which clears libraryMsg —
+      // that would drop him into a prefilled form with nothing saying why.
+      editingId=already.id;
+      libraryMsg={text:'Open Food Facts still does not have '+code+', but you already saved it as “'+
+                       (already.name||'(unnamed)')+'”. That item is open for editing below — '+
+                       'a second copy was not created.',kind:'info'};
+      renderMeals();return;
+    }
+    pendingBarcode=code;
+    editingId=null;
+    libraryMsg={text:'Open Food Facts has no product with barcode '+code+'. Type the label in below — '+
+                     'the barcode is saved with it, so looking it up again finds your own entry.',kind:'info'};
+    renderMeals();return;
+  }
+
+  const per=(body.macros&&typeof body.macros==='object')?body.macros:{};
+  const dup=findByBarcode(body.barcode);
+  scan={
+    barcode:body.barcode||typed,
+    matchedAs:body.matchedAs||'',
+    basis:body.basis||'per_100g',
+    brand:body.brand||'',
+    sodiumSource:body.sodiumSource||null,
+    packageGrams:body.packageGrams,
+    servingGrams:body.servingGrams,
+    // The upstream numbers, KEPT UNTOUCHED as the thing every recalculation
+    // works from. scan.macros is what the inputs show and what gets saved.
+    source:per,
+    macros:{},
+    name:body.name||'',
+    servingText:body.servingText||'',
+    servingTouched:false,
+    route:'A',
+    grams:'',
+    // Prefilled so Ryan does not re-type a net weight the lookup already knew.
+    // He can overwrite it.
+    net:(body.packageGrams===null||body.packageGrams===undefined)?'':String(body.packageGrams),
+    per:'',
+    dupId:dup?dup.id:null
+  };
+  if(scan.basis!=='per_100g'){
+    // Already per serving — show exactly what came back.
+    FOOD_MACRO_FIELDS.forEach(k=>{
+      const v=per[k];
+      scan.macros[k]=(v===null||v===undefined)?'':String(v);
+    });
+  }else{
+    // PER 100 g. The editable fields stay EMPTY until a serving size exists, so
+    // a per-100g figure can never be mistaken for a per-serving one. The raw
+    // per-100g numbers are shown separately, read-only, as reference.
+    FOOD_MACRO_FIELDS.forEach(k=>{scan.macros[k]='';});
+  }
+  libraryMsg=null;
+  renderMeals();
+}
+
+// Recomputes from the per-100g figures. Bound ONLY to the serving-size inputs —
+// never to the macro inputs themselves, or typing a corrected macro would be
+// overwritten by the computed value on the very next keystroke.
+export function mealScanRecalc(){
+  if(!scan)return;
+  captureScan();
+  const g=scanGrams();
+  if(scan.basis==='per_100g'){
+    FOOD_MACRO_FIELDS.forEach(k=>{
+      const v=scan.source[k];
+      // NO SERVING SIZE MEANS NO PER-SERVING NUMBER. Clearing the serving size
+      // clears these too, rather than leaving the figures from the last valid
+      // one on screen — a per-serving column that no longer matches any serving
+      // is exactly the kind of quietly wrong number this feature exists to
+      // avoid. Save is already blocked; this stops it LOOKING right as well.
+      const shown=(g===null||v===null||v===undefined)?'':String(round2(v*g/100));
+      scan.macros[k]=shown;
+      const el=document.getElementById('sc-m-'+k);
+      if(el)el.value=shown;
+    });
+    if(!scan.servingTouched){
+      scan.servingText=(g===null)?'':'1 serving ('+round2(g)+'g)';
+      const el=document.getElementById('sc-serving');
+      if(el)el.value=scan.servingText;
+    }
+  }
+  const line=document.getElementById('sc-derived');
+  if(line)line.innerHTML=derivedLineHtml(g);
+  syncSaveState();
+}
+
+// Any other edit on the card: capture it, and re-check whether Save is allowed.
+export function mealScanEdited(){
+  if(!scan)return;
+  captureScan();
+  syncSaveState();
+}
+
+export function mealScanServingTouched(){
+  if(!scan)return;
+  scan.servingTouched=true;
+  captureScan();
+}
+
+export function mealScanRoute(route){
+  if(!scan)return;
+  captureScan();
+  scan.route=(route==='B')?'B':'A';
+  renderMeals();
+  mealScanRecalc();
+}
+
+function scanCanSave(){
+  if(!scan)return false;
+  if(!String(scan.name||'').trim())return false;
+  // THE HARD RULE (§13.7): a per-100g candidate cannot be saved until one of
+  // the two routes has produced a grams-per-serving number.
+  if(scan.basis==='per_100g')return scanGrams()!==null;
+  return true;
+}
+
+// Flips the Save button without re-rendering the card, so the keyboard stays up
+// and the caret stays put while Ryan types.
+function syncSaveState(){
+  const btn=document.getElementById('sc-save');
+  if(btn)btn.disabled=!scanCanSave()||libraryBusy;
+}
+
+export function mealScanCancel(){
+  // NOTHING WAS EVER WRITTEN, so there is nothing to undo — that is the whole
+  // point of reviewing before saving.
+  scan=null;
+  libraryMsg={text:'Discarded. Nothing was saved.',kind:'info'};
+  renderMeals();
+}
+
+export async function mealScanSave(){
+  if(!scan||libraryBusy)return;
+  captureScan();
+  if(!scanCanSave()){
+    libraryMsg={text:scan.basis==='per_100g'
+      ? 'These numbers are per 100 grams. Give a serving size first — either type the grams, or divide a net weight by the servings in the container.'
+      : 'Give the food a name.',kind:'err'};
+    renderMeals();return;
+  }
+
+  const grams=scanGrams();
+  const payload={
+    name:String(scan.name).trim(),
+    servingText:String(scan.servingText||'').trim(),
+    macros:{},
+    // §8's tiers: a lookup is deterministic, so it is `exact` — including a
+    // per-100g candidate Ryan converted himself. Hand-typed stays `high`.
+    confidence:'exact',
+    barcode:scan.barcode,
+    basis:scan.basis,
+    servingSource:scanSource()
+  };
+  FOOD_MACRO_FIELDS.forEach(k=>{
+    const raw=String(scan.macros[k]==null?'':scan.macros[k]).trim();
+    payload.macros[k]=raw===''?null:raw;   // blank means NOT ON THE LABEL, not 0
+  });
+  // ONLY GRAMS PER SERVING IS STORED. The net weight and servings-per-container
+  // that may have produced it are inputs to a calculation, not facts — and a
+  // future session must not be able to recompute from them (§13.7).
+  if(grams!==null)payload.servingGrams=round2(grams);
+
+  // DUPLICATE GUARD, re-checked at the last moment in case the mirror moved
+  // since the lookup. A scanned duplicate is the most likely way this library
+  // gets junked up, so this never creates a second copy — it updates.
+  const dup=findByBarcode(scan.barcode);
+  const targetId=scan.dupId||(dup?dup.id:null);
+
+  libraryBusy=true;
+  libraryMsg={text:targetId?'Updating…':'Saving…',kind:'info'};
+  renderMeals();
+  const res=targetId?await updateFood(targetId,payload):await createFood(payload);
+  libraryBusy=false;
+
+  if(!res.ok){
+    libraryMsg={text:res.error+' NOTHING was saved. Your counts are local and are unaffected.',kind:'err'};
+    renderMeals();return;
+  }
+  adoptLibrary(res.body);
+  const name=payload.name;
+  scan=null;pendingBarcode=null;barcodeInput='';
+  libraryMsg={text:targetId
+    ? 'Updated “'+name+'”. Days already counted keep the macros they were counted with.'
+    : 'Saved “'+name+'” to the library. It is in the counter above, ready to ADD.',kind:'success'};
+  renderMeals();
+}
+
+export function mealClearPendingBarcode(){
+  pendingBarcode=null;
+  libraryMsg=null;
+  renderMeals();
 }
 
 // ---------------------------------------------------------------------------
@@ -339,6 +667,121 @@ function mirrorAgeLabel(){
   return t.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})+' · '+rel;
 }
 
+// The lookup box. inputmode="numeric" so the phone shows a number pad; the
+// button clears the 44pt minimum (§1.5).
+function barcodeEntryHtml(){
+  return '<div class="card">'+
+    '<div class="card-title">Look up a barcode</div>'+
+    '<div class="bc-entry">'+
+      '<input type="text" id="bc-in" inputmode="numeric" pattern="[0-9]*" autocomplete="off" '+
+        'placeholder="8, 12 or 13 digits" value="'+esc(barcodeInput)+'" oninput="mealBarcodeTyped(this.value)">'+
+      '<button class="bc-btn" onclick="mealBarcodeLookup()"'+(libraryBusy?' disabled':'')+'>Look Up</button>'+
+    '</div>'+
+    '<div class="form-note">Type the digits printed under the barcode. Nothing is saved by a lookup — '+
+      'you get a card to check against the package first. There is no camera here on purpose: '+
+      'a misread digit would return a different product’s macros.</div>'+
+  '</div>';
+}
+
+// The grams-per-serving result, or an honest blank. NEVER NaN, NEVER Infinity —
+// a garbage number on this line would be read as a real serving size.
+function derivedLineHtml(g){
+  if(g===null){
+    return '<span class="sc-derived-none">Grams per serving: not set yet — Save stays off until it is.</span>';
+  }
+  return '<span class="sc-derived-val">1 serving = '+round2(g)+' g</span>';
+}
+
+function basisLine(b){
+  if(b==='converted')return 'Converted for you: Open Food Facts knew the serving size in grams, so its per-100g figures were scaled to one serving.';
+  if(b==='per_serving')return 'Taken per serving, exactly as Open Food Facts reports it. No conversion was done.';
+  return 'THESE NUMBERS ARE PER 100 GRAMS, not per serving. Give a serving size below and they will be converted.';
+}
+
+function reviewCardHtml(){
+  const s=scan;
+  const g=scanGrams();
+  const dup=s.dupId?mirrorItem(s.dupId):null;
+  let html='<div class="card sc-card">';
+  html+='<div class="card-title">'+(dup?'Already in your library':'Check this before saving')+'</div>';
+
+  if(dup){
+    html+='<div class="alert warn">Barcode '+esc(s.barcode)+' is already saved as “'+esc(dup.name||'(unnamed)')+
+          '”. A second copy will not be created — saving will UPDATE that item instead. '+
+          'Days you have already counted keep the macros they were counted with.</div>';
+  }
+
+  html+='<div class="bc-meta">'+esc(s.barcode)+' · matched as '+esc(s.matchedAs||'—')+
+        (s.brand?' · '+esc(s.brand):'')+'</div>';
+  html+='<div class="sc-basis'+(s.basis==='per_100g'?' is-warn':'')+'">'+esc(basisLine(s.basis))+'</div>';
+
+  html+='<div class="form-row"><div class="form-label">Name</div>'+
+        '<input type="text" id="sc-name" value="'+esc(s.name)+'" placeholder="name this food" oninput="mealScanEdited()"></div>';
+  html+='<div class="form-row"><div class="form-label">Serving</div>'+
+        '<input type="text" id="sc-serving" value="'+esc(s.servingText)+'" placeholder="e.g. 1 bar (52g)" oninput="mealScanServingTouched()"></div>';
+
+  if(s.basis==='per_100g'){
+    const per100=FOOD_MACRO_FIELDS.map(k=>{
+      const v=s.source[k];
+      if(v===null||v===undefined)return null;
+      const m=MACRO_META.find(x=>x.key===k);
+      return m.label+' '+v+(m.unit||'');
+    }).filter(Boolean).join(' · ');
+    html+='<div class="sc-per100"><div class="sc-per100-head">Open Food Facts, per 100 g</div>'+
+          '<div class="sc-per100-body">'+(per100||'no figures at all')+'</div></div>';
+
+    html+='<div class="sc-routes">'+
+      '<button class="sc-route'+(s.route==='A'?' is-on':'')+'" onclick="mealScanRoute(\'A\')">Serving size (g)</button>'+
+      '<button class="sc-route'+(s.route==='B'?' is-on':'')+'" onclick="mealScanRoute(\'B\')">Net weight ÷ servings</button>'+
+    '</div>';
+
+    if(s.route==='A'){
+      html+='<div class="form-row"><div class="form-label">Serving size, in grams, off the panel</div>'+
+            '<input type="number" id="sc-grams" step="0.1" inputmode="decimal" value="'+esc(s.grams)+
+            '" placeholder="e.g. 52" oninput="mealScanRecalc()"></div>';
+    }else{
+      html+='<div class="mt-macro-grid">'+
+        '<div class="form-row"><div class="form-label">Net weight (g)</div>'+
+          '<input type="number" id="sc-net" step="0.1" inputmode="decimal" value="'+esc(s.net)+
+          '" placeholder="e.g. 340" oninput="mealScanRecalc()"></div>'+
+        '<div class="form-row"><div class="form-label">Servings per container</div>'+
+          '<input type="number" id="sc-per" step="0.1" inputmode="decimal" value="'+esc(s.per)+
+          '" placeholder="e.g. 4" oninput="mealScanRecalc()"></div>'+
+      '</div>';
+      html+='<div class="form-note">Manufacturers round servings per container, so this route carries real '+
+            'rounding slop. Ryan asked for it anyway — it is a deliberate choice, not an oversight.</div>';
+    }
+    html+='<div class="sc-derived" id="sc-derived">'+derivedLineHtml(g)+'</div>';
+  }
+
+  html+='<div class="form-label sc-macro-head">'+
+        (s.basis==='per_100g'?'Per serving, converted — check against the panel':'Per serving — check against the panel')+
+        '</div>';
+  html+='<div class="mt-macro-grid">';
+  MACRO_META.forEach(m=>{
+    html+='<div class="form-row"><div class="form-label">'+m.label+(m.unit?' ('+m.unit+')':'')+
+          (m.scored?'':' <span class="mt-unscored-tag">not scored</span>')+'</div>'+
+          '<input type="number" id="sc-m-'+m.key+'" step="0.01" inputmode="decimal" value="'+
+          esc(s.macros[m.key])+'" placeholder="blank if not on the label" oninput="mealScanEdited()"></div>';
+  });
+  html+='</div>';
+
+  html+='<div class="form-note">Every number here is editable and what you leave is what gets saved. '+
+        'Blank means “not on the label” — it is never counted as 0.'+
+        (s.sodiumSource==='salt'?' Sodium was worked out from the salt figure, not read directly.':'')+
+        (s.sodiumSource==='sodium'?' Sodium came straight from Open Food Facts.':'')+
+        (s.basis==='per_100g'?' Changing the serving size re-fills these from the per-100g figures above.':'')+
+        '</div>';
+
+  html+='<button class="btn btn-primary" id="sc-save" onclick="mealScanSave()"'+
+        ((!scanCanSave()||libraryBusy)?' disabled':'')+'>'+
+        (dup?'Update “'+esc(dup.name||'(unnamed)')+'”':'Save to library')+'</button>';
+  html+='<button class="btn btn-secondary" onclick="mealScanCancel()">Cancel — save nothing</button>';
+  html+='<div class="form-note">Nothing has been written yet. Cancel leaves the library exactly as it is.</div>';
+  html+='</div>';
+  return html;
+}
+
 function libraryHtml(){
   const items=mirror();
   let html='';
@@ -355,8 +798,20 @@ function libraryHtml(){
     html+=`<div class="alert ${cls}">${esc(libraryMsg.text)}</div>`;
   }
 
+  html+=barcodeEntryHtml();
+
+  // THE REVIEW CARD REPLACES THE ADD FORM while it is open. Two Save buttons on
+  // one phone screen, meaning two different things, is a mis-tap waiting to
+  // happen — and the card is the thing Ryan is being asked to check.
+  if(scan)return html+reviewCardHtml();
+
   html+='<div class="card">';
   html+=`<div class="card-title">${editingId?'Edit food':'Add a food'}</div>`;
+  if(pendingBarcode&&!editingId){
+    html+=`<div class="alert info">Barcode <strong>${esc(pendingBarcode)}</strong> will be saved with this food, `+
+          `so looking it up again finds your entry. Typed macros stay marked as hand-typed, not exact.`+
+          ` <button class="bc-chip-clear" onclick="mealClearPendingBarcode()">save without it</button></div>`;
+  }
   html+=`<div class="form-row"><div class="form-label">Name</div><input type="text" id="food-in-name" placeholder="e.g. RXBAR Chocolate Sea Salt"></div>`;
   html+=`<div class="form-row"><div class="form-label">Serving size, as printed on the label</div><input type="text" id="food-in-serving" placeholder="e.g. 1 bar (52g)"></div>`;
   html+='<div class="mt-macro-grid">';
@@ -383,10 +838,17 @@ function libraryHtml(){
       const v=m[f.key];
       return (v===null||v===undefined)?null:`${f.label} ${v}${f.unit}`;
     }).filter(Boolean).join(' · ');
+    // The barcode line appears only on items that have one. An item saved
+    // before the barcode path simply has no such field and shows nothing —
+    // absence is the boundary (§13.2), never an em dash or a fabricated blank.
+    const prov=i.barcode
+      ? `<div class="fl-serving">barcode ${esc(i.barcode)}${i.servingGrams?' · '+esc(i.servingGrams)+'g per serving':''}</div>`
+      : '';
     return `<div class="fl-row">`+
       `<div class="fl-body">`+
         `<div class="fl-name">${esc(i.name||'(unnamed)')}</div>`+
         `<div class="fl-serving">${i.servingText?esc(i.servingText):'serving size not recorded'}</div>`+
+        prov+
         `<div class="fl-macros">${line||'no macros recorded'}</div>`+
       `</div>`+
       `<button class="fl-btn" onclick="mealEditFood('${esc(i.id)}')">Edit</button>`+
@@ -405,6 +867,10 @@ export function renderMeals(){
   const counter=document.getElementById('meal-counter');
   const library=document.getElementById('meal-library');
   if(!counter||!library)return;
+  // Read the open review card's inputs back into state FIRST. This function is
+  // also called by ADD/REMOVE and by the background library refresh, and either
+  // would otherwise throw away an edit Ryan had typed but not yet saved.
+  captureScan();
   counter.innerHTML=counterHtml();
   library.innerHTML=libraryHtml();
   if(editingId)fillForm(mirrorItem(editingId));
@@ -415,6 +881,11 @@ export function renderMeals(){
 export function openMeals(){
   libraryMsg=null;
   editingId=null;
+  // An abandoned review, a half-typed barcode and a not-found code all die with
+  // the page. None of them was ever written anywhere.
+  scan=null;
+  pendingBarcode=null;
+  barcodeInput='';
   renderMeals();
   refreshLibrary();
 }

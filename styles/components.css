@@ -358,6 +358,41 @@
 .fl-btn:active{background:var(--surface3)}
 .fl-btn.fl-del{color:var(--danger)}
 
+/* ---------------------------------------------------------------------------
+   Barcode lookup and its review card (ARCHITECTURE.md §13.6, §13.7).
+   Every colour is a token — no new literals (§1.6). The Look Up button and the
+   two route buttons are 48px tall, clear of the 44pt tap minimum (§1.5).
+   --------------------------------------------------------------------------- */
+.bc-entry{display:flex;gap:8px;align-items:center}
+.bc-entry input{flex:1;min-height:48px;margin:0}
+.bc-btn{min-height:48px;min-width:96px;flex-shrink:0;padding:0 14px;border:1px solid var(--border);border-radius:11px;background:var(--surface2);color:var(--accent2);font-family:var(--font-mono);font-size:13px;font-weight:500;letter-spacing:.04em;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.bc-btn:active{background:var(--surface3)}
+.bc-btn[disabled]{opacity:.35;cursor:default}
+.bc-meta{font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-bottom:8px;word-break:break-all}
+.bc-chip-clear{background:none;border:none;padding:0;font-family:var(--font-mono);font-size:12px;color:var(--muted);text-decoration:underline;cursor:pointer}
+
+/* What the numbers ARE. The per-100g state is the one that can silently wreck a
+   macro total, so it is the one that gets the warning colour. */
+.sc-basis{font-family:var(--font-mono);font-size:11.5px;line-height:1.5;color:var(--muted);border-left:2px solid var(--border);padding-left:9px;margin-bottom:12px}
+.sc-basis.is-warn{color:var(--warn);border-left-color:var(--warn)}
+.sc-per100{background:var(--surface2);border:1px solid var(--border);border-radius:11px;padding:9px 11px;margin-bottom:10px}
+.sc-per100-head{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+.sc-per100-body{font-family:var(--font-mono);font-size:11.5px;line-height:1.5;color:var(--text);margin-top:3px}
+
+/* The two routes to a serving size. Both produce grams per serving. */
+.sc-routes{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.sc-route{min-height:48px;padding:6px 8px;border:1px solid var(--border);border-radius:11px;background:var(--surface2);color:var(--muted);font-family:var(--font-mono);font-size:12px;line-height:1.35;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.sc-route:active{background:var(--surface3)}
+.sc-route.is-on{border-color:var(--accent);color:var(--accent)}
+.sc-derived{margin-bottom:12px;font-family:var(--font-mono);font-size:13px}
+.sc-derived-val{color:var(--accent2);font-weight:500}
+.sc-derived-none{color:var(--muted)}
+.sc-macro-head{margin-top:4px;margin-bottom:6px}
+/* The global input padding lands at 40px, under the 44pt minimum (§1.5). Raised
+   for this card only, exactly as .pr-entry does, rather than changing every
+   form in the app — this is the card Ryan taps while holding a package. */
+.sc-card input{min-height:44px}
+
 /* Score pillars */
 .score-pillars{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
 .pillar-item{background:var(--surface2);border-radius:10px;padding:10px 12px}

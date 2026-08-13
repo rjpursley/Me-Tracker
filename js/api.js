@@ -151,6 +151,21 @@ async function requestJSON(path, method, payload){
   }
 }
 
+// GET /api/barcode/{code} — ARCHITECTURE.md §13.6. Returns a CANDIDATE FOR
+// REVIEW; it creates nothing. Same envelope as the library calls, for the same
+// §1.7 reason: a lookup that failed must read as failed, never as an empty or
+// half-filled product.
+//
+//   {ok:true,  body:{found:true,  ...}}   a candidate to show Ryan
+//   {ok:true,  body:{found:false, ...}}   OFF does not have it — a NORMAL
+//                                         outcome, not an error
+//   {ok:false, status:400, error}         the digits are not a barcode
+//   {ok:false, status:502, error}         OFF timed out or was unreachable
+//   {ok:false, status:0,   error}         this server was unreachable
+export async function lookupBarcode(code){
+  return await requestJSON('/api/barcode/'+encodeURIComponent(code));
+}
+
 export async function fetchFoods(){ return await requestJSON('/api/foods'); }
 export async function createFood(item){ return await requestJSON('/api/foods','POST',item); }
 export async function updateFood(id,item){ return await requestJSON('/api/foods/'+encodeURIComponent(id),'PUT',item); }

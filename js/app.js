@@ -26,7 +26,9 @@ import { renderCalendar, setCalView, getCalView } from './pages/calendar.js';
 import { renderHealth, saveBodyHeight, saveBodyAge, logBodyMeasurement, runSync } from './pages/health.js';
 import { renderBody, logSleep, logHR } from './pages/vitals.js';
 import { renderDiet, logMeal, addSupplement, deleteSupplement, moveSupplement, toggleMacroChart } from './pages/dietary.js';
-import { openMeals, mealAdd, mealRemove, mealSaveFood, mealEditFood, mealCancelEdit, mealDeleteFood } from './pages/meals.js';
+import { openMeals, mealAdd, mealRemove, mealSaveFood, mealEditFood, mealCancelEdit, mealDeleteFood,
+         mealBarcodeTyped, mealBarcodeLookup, mealScanRecalc, mealScanEdited, mealScanServingTouched,
+         mealScanRoute, mealScanCancel, mealScanSave, mealClearPendingBarcode } from './pages/meals.js';
 import { initLogForms, setLogType, logWorkout, saveTargets } from './pages/log.js';
 import { logFast, startActiveFast, stopActiveFast, renderFastingPage, toggleFastFail, saveFastFailNote } from './pages/fasting.js';
 import { renderTrainingPage, openPauseGate, closePauseGate, pauseGateKey, pauseGateBack, toggleExercise } from './pages/training.js';
@@ -132,6 +134,17 @@ window.mealSaveFood=mealSaveFood;
 window.mealEditFood=mealEditFood;
 window.mealCancelEdit=mealCancelEdit;
 window.mealDeleteFood=mealDeleteFood;
+// The barcode path (§13.6, §13.7). A lookup writes nothing; only mealScanSave()
+// creates or updates anything, and only from an explicit tap.
+window.mealBarcodeTyped=mealBarcodeTyped;
+window.mealBarcodeLookup=mealBarcodeLookup;
+window.mealScanRecalc=mealScanRecalc;
+window.mealScanEdited=mealScanEdited;
+window.mealScanServingTouched=mealScanServingTouched;
+window.mealScanRoute=mealScanRoute;
+window.mealScanCancel=mealScanCancel;
+window.mealScanSave=mealScanSave;
+window.mealClearPendingBarcode=mealClearPendingBarcode;
 
 window.toggleFastFail=toggleFastFail;
 window.saveFastFailNote=saveFastFailNote;

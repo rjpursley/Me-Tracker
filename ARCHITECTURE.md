@@ -451,7 +451,8 @@ Me-Tracker/
 │   ├── google_health_auth.py # BUILT (§6.4) — one-time, by-hand consent flow
 │   ├── data/               # gitignored — vitals_daily.json + raw/ (§6)
 │   ├── vision.py           # NOT YET BUILT — Ollama minicpm-v job queue
-│   └── barcode.py          # NOT YET BUILT — Open Food Facts lookup
+│   ├── foods.py            # BUILT (§13) — the food library + the 120-day purge
+│   └── barcode.py          # BUILT (§13.6) — Open Food Facts lookup, typed digits only
 │
 └── archive/                # Superseded files. Never read these as current.
 ```
@@ -1321,10 +1322,15 @@ an angle so height projects into the frame.
 
 ### 8.0 The Meal Tracker — counting servings of saved foods
 
-**Built 2026-08-12.** This is HANDOFF §5's "food rotation checklist", built
-without vision or barcode — those remain a later, separate job, and **there are
-deliberately no stub buttons for them**. `js/pages/meals.js`, reached from a nav
-row at the bottom of the Dietary page (§4).
+**Built 2026-08-12.** This is HANDOFF §5's "food rotation checklist".
+`js/pages/meals.js`, reached from a nav row at the bottom of the Dietary page
+(§4).
+
+**Barcode lookup was added 2026-08-13** — see §13.6 (server) and §13.7 (the
+review card). **Vision is still not built, and there is deliberately no stub
+button for it.** A camera-based barcode read is not part of the barcode path
+either, and must not be added to it: §13.6 records why a vision model must
+never decode a barcode.
 
 **Three new additive top-level keys** in `metracker_v2` (§1.4):
 `d.foodCounts`, `d.foodLibrary`, `d.foodLibraryFetchedAt`.
@@ -2565,11 +2571,155 @@ before "fixing" it:
 the two disagree by more than ~10× would catch these, at the cost of overriding
 a value OFF actually reports.
 
-#### What this endpoint does not touch
+#### What this endpoint does not touch (§13.6)
 
-`google_health.py`, the sync loops, `foods.py`'s storage and every pre-existing
-route are untouched. Verified after the change: `/api/health`, `/api/foods`,
-`/api/sync/status`, `/api/vitals/{date}`, `/api/vitals?from=&to=`, `/`,
-`/index.html`, `/js/*`, `/styles/*` all still answer 200; `/api/counts` and
-`/api/foodCounts` still 404 (§13.1); and `server/data/` was **byte-identical**
-before and after a full test run.
+`google_health.py`, the sync loops and every pre-existing route are untouched.
+Verified after the change: `/api/health`, `/api/foods`, `/api/sync/status`,
+`/api/vitals/{date}`, `/api/vitals?from=&to=`, `/`, `/index.html`, `/js/*`,
+`/styles/*` all still answer 200; `/api/counts` and `/api/foodCounts` still 404
+(§13.1); and `server/data/` was **byte-identical** before and after a full test
+run.
+
+---
+
+### 13.7 The review card — nothing is saved until Ryan taps Save
+
+**Built 2026-08-13, client side.** `js/pages/meals.js`, in the Meal Tracker's
+library section, alongside the manual add form that was already there.
+
+#### The flow
+
+```
+[ barcode digits ] [ Look Up ]
+        |
+        +-- found      -> REVIEW CARD -> Ryan checks/edits -> [Save] -> POST /api/foods
+        +-- not found  -> plain message + the manual form, BARCODE KEPT
+        +-- 400 / 502  -> plain message, NOTHING shown, manual entry still there
+```
+
+**A LOOKUP WRITES NOTHING.** It produces a card. Verified: after a lookup that
+was then cancelled, `metracker_v2` was byte-identical and `foods.json` hashed
+identically (`861D74DD…`) before and after.
+
+**The review card replaces the add form while it is open**, rather than sitting
+above it. Two Save buttons on one phone screen meaning two different things is a
+mis-tap waiting to happen, and the card is the thing Ryan is being asked to
+check.
+
+**Saving goes through the EXISTING `POST /api/foods`** (or `PUT` for the
+duplicate case). There is no second create path.
+
+**Every macro on the card is editable and what Ryan leaves is what gets saved.**
+Verified: upstream protein 12 edited to 13 on the card stored as 13.
+
+#### The per-100g case — two routes, one output
+
+About one lookup in four (§13.6). The card says plainly that the numbers are per
+100 grams and offers two routes. **Both produce the same single output: GRAMS
+PER SERVING.**
+
+| Route | Inputs | `servingSource` |
+|---|---|---|
+| **A** | Serving size in grams, typed off the panel | `label` |
+| **B** | Net weight ÷ servings per container | `divided` |
+
+- Route B's net weight is **prefilled from `packageGrams`** when the lookup knew
+  it, so Ryan does not re-type a number the server already has. He can overwrite
+  it.
+- The card shows the resulting grams per serving and **recomputes every macro
+  live from the per-100g figures**, so the converted numbers can be checked
+  against the panel before saving.
+- **The macro fields start EMPTY and are cleared again if the serving size
+  becomes invalid.** A per-serving column that no longer matches any serving is
+  the kind of quietly wrong number this whole feature exists to prevent — so it
+  never LOOKS right either, not just "Save is blocked".
+- **Blank, zero, negative and non-numeric servings-per-container all produce
+  NOTHING** — never `Infinity`, never `NaN`. One `positiveNum()` gate every
+  serving-size figure passes through. Verified for each: no number, Save
+  disabled, no `Infinity`/`NaN` anywhere in the card.
+- **Save stays disabled until one route has produced a number.** The server
+  refuses it too (§13.2) — the button is the UI, the 400 is the guarantee.
+
+Worked, on real Nutella data (per 100 g: protein 6.3, fat 30.9, carbs 57.5,
+sugar 56.3, calories 539, fiber **null**, sodium 43 mg):
+
+| | Route A: 40 g typed | Route B: 400 g ÷ 10 |
+|---|---|---|
+| grams/serving | 40 | 40 |
+| protein | 6.3 × 40/100 = **2.52** | **2.52** |
+| fat | 30.9 × 0.4 = **12.36** | **12.36** |
+| carbs | 57.5 × 0.4 = **23** | **23** |
+| sugar | 56.3 × 0.4 = **22.52** | **22.52** |
+| calories | 539 × 0.4 = **215.6** | **215.6** |
+| fiber | **blank** (null upstream) | **blank** |
+| sodium | 43 × 0.4 = **17.2** | **17.2** |
+
+##### ROUTE B CARRIES REAL ROUNDING SLOP — THIS WAS RYAN'S EXPLICIT CALL
+
+Manufacturers round servings per container. "About 4 servings" on a 340 g jar
+could be anything from 3.5 to 4.4, so the grams-per-serving it divides out to is
+approximate in a way route A's printed number is not. **Ryan asked for route B
+anyway, knowing this. It is a deliberate choice, not an oversight**, and the
+card says so on screen. Do not "fix" it by removing the route.
+
+##### Only grams per serving is stored
+
+**The net weight and the servings-per-container are NOT persisted.** They are
+inputs to a calculation, not facts worth keeping, and **a future session must
+not be able to recompute from them** — a stored "4 servings" would invite
+exactly the re-derivation that makes the rounding slop compound. Only
+`servingGrams` survives.
+
+**The stored macros are the CONVERTED per-serving values. The per-100g figures
+are not stored.** Verified on a saved route-B item: 12 keys total, none of them
+a net weight, a servings count or a `packageGrams`.
+
+`servingText` defaults to an honest `1 serving (40g)` and is editable; once Ryan
+types in it, recalculation stops overwriting it.
+
+#### The duplicate guard
+
+**A scanned duplicate is the most likely way this library gets junked up**, so a
+barcode already in the library never creates a second item. The card says which
+item it is and its Save button becomes **Update “that item”**.
+
+**Compared by numeric value, not string.** `barcodeKey()` strips leading zeros,
+because that is the only difference between a UPC-A and its EAN-13 — an item
+saved from the 12-digit form must still match a later 13-digit lookup. Verified:
+saved by typing 12 digits, looked up again as 13, caught as a duplicate, library
+count unchanged at 2, one item with that barcode.
+
+The same guard covers the **not-found** path: if Ryan already typed that product
+in himself, he gets that item open for editing and a message saying why, not a
+blank form that would create a second copy.
+
+#### Not found, and the server being down
+
+- **Not found** — a plain message, and the manual add form with the **barcode
+  retained** as a chip, so the panel is typed once and the code is kept.
+  **Confidence stays `high`**: a hand-typed panel is hand-typed whether or not a
+  barcode is attached to it. Only a lookup earns `exact`.
+- **Server unreachable / 400 / 502** — says so plainly, shows **no card and no
+  numbers**, and the manual form is still fully available (§1.7). Verified with
+  `fetch` forced to reject: honest message, no card, `metracker_v2` unchanged.
+
+#### Confidence
+
+**A saved Open Food Facts result is `exact`** (§8) — in all four cases,
+including a per-100g candidate Ryan converted himself, because the *lookup* was
+deterministic. A hand-typed item stays `high`.
+
+#### What this did not touch
+
+The counter, `d.foodCounts`, the snapshot rule (§8.0) and scoring are all
+unchanged. `index.html` was not touched — the page mounts already existed. All
+`fetch()` stays in `js/api.js` (`lookupBarcode()`). **No new colour literals**
+(§1.6): every new style in `components.css` uses existing tokens.
+
+Verified at a 393pt viewport: all 12 review-card inputs measure 44px and the
+five buttons 44–48px (§1.5), with no horizontal overflow. All ten pages render,
+the Meal Tracker → Dietary → Home back chain works, and a full sweep of every
+barcode branch produced **zero JavaScript errors and zero `console.error`
+calls**. Non-2xx API responses do appear in the browser's network log as
+`Failed to load resource` lines — those are the deliberate 400/502 answers being
+handled and displayed, not exceptions.
