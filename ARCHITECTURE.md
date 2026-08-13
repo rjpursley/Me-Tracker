@@ -2032,3 +2032,142 @@ drawer, because §11 protects drawer structure and 1RMs are training data.
   logs with tomorrow's date. Do not "simplify" them back. A deviation's
   `timestamp` is a separate thing — an instant, correctly stored as UTC ISO.
 - Never read, print, or copy the contents of the secrets files.
+
+---
+
+## 13. The food library — server-owned, and a deliberate exception to §1.2
+
+**Built 2026-08-12.** `server/foods.py` plus five endpoints in `server/app.py`.
+A persistent store of the items Ryan eats often, each carrying the macros off
+its package label. This is the "food rotation checklist" HANDOFF §5 specified,
+built without vision or barcode — those are still a later, separate job.
+
+### 13.1 The ownership rule — read this before touching anything else here
+
+**§1.2 says localStorage is the source of truth and the server owns nothing.
+THIS IS THE ONE EXCEPTION, agreed with Ryan, and it is recorded as an exception
+rather than quietly softening §1.2.**
+
+| Thing | Owner | Why |
+|---|---|---|
+| The food **library** | **The server**, authoritative, persists indefinitely | A reference table, not a measurement |
+| The phone's **mirror** (`d.foodLibrary`) | A read-only **cache** | So the page opens instantly and works offline |
+| The daily **counts** (`d.foodCounts`) | **localStorage**, per §1.2, never sent to the server | They feed the Dietary score |
+
+**Why the exception is safe:** the library is a reference table. Losing it costs
+Ryan some retyping. Losing a day's counts would change his score, which is
+exactly what §1.2 exists to protect — so the counts stay where every other
+scored fact lives.
+
+**THERE IS NO COUNTS ENDPOINT AND THERE MUST NOT BE ONE.** Verified: `/api/counts`
+and `/api/foodCounts` both 404.
+
+**The mirror is a cache, never a second source of truth.** A client whose write
+fails must say so and leave the mirror alone — never queue the write locally,
+never let the mirror drift from the server (§13.5, §1.7).
+
+### 13.2 Storage and item shape
+
+`server/data/foods.json`, already gitignored via `server/data/`. **No data file
+is ever committed.**
+
+```json
+{
+  "id": "fd_<uuid4hex12>",
+  "name": "RXBAR Chocolate Sea Salt",
+  "servingText": "1 bar (52g)",
+  "macros": {"protein": 12, "fat": 9, "carbs": 24, "sugar": 13,
+             "calories": 210, "fiber": 5, "sodium": 260},
+  "confidence": "high",
+  "createdAt": "<UTC ISO>", "updatedAt": "<UTC ISO>", "lastUsedAt": "<UTC ISO or null>"
+}
+```
+
+- **`protein` / `fat` / `carbs` / `sugar` are the four the Dietary score reads.
+  `calories`, `fiber` and `sodium` are stored and displayed but NEVER scored.**
+  Do not wire them into scoring — §11 protects the weights.
+- **Any macro may be `null`, meaning "not printed on the label". Never `0`.**
+  Zero is a measurement of zero (§1.7). A value that is present but not a
+  non-negative number is a **400**, not a silent `null` — quietly discarding a
+  typo would store "no data" for something Ryan believes he entered.
+- **`confidence` is `"high"`** — hand-typed, per §8's tiers. **`"exact"` is
+  reserved for a future Open Food Facts hit and is never emitted here;** a
+  client that sends it gets `"high"` recorded instead.
+- **The server generates `id`, `createdAt` and `updatedAt`.** A client cannot
+  set them.
+
+### 13.3 Endpoints
+
+Same-origin, no CORS, loopback bind unchanged (§2).
+
+| Route | Method | Returns |
+|---|---|---|
+| `/api/foods` | GET | `{items:[...], updatedAt}` |
+| `/api/foods` | POST | create — `{item, items, updatedAt}` |
+| `/api/foods/{id}` | PUT | update — bumps `updatedAt` **only** |
+| `/api/foods/{id}` | DELETE | `{deleted, items, updatedAt}` |
+| `/api/foods/{id}/used` | POST | sets `lastUsedAt = now`; called on ADD |
+
+`updatedAt` at the envelope level is the newest `updatedAt` across the library,
+or `null` when it is empty. Every mutating route returns the whole library so a
+client can refresh its mirror from the response rather than re-fetching.
+
+**`PUT` replaces the editable fields wholesale** (name, serving text, macros,
+confidence) and carries `createdAt` and `lastUsedAt` through untouched — an
+edit is not a use. **`/used` sets `lastUsedAt` and nothing else**: bumping
+`updatedAt` there would make every mirror look stale after lunch.
+
+**A missing or malformed `foods.json` yields an EMPTY library, never a 500.**
+Same reasoning as `_load_daily_store()` in `google_health.py`, and the
+unreadable file is left on disk rather than overwritten.
+
+### 13.4 Writes are atomic
+
+`_save_items()` writes to a temp file **in the same directory** (so the swap is
+a same-filesystem rename) and `os.replace()`s it onto `foods.json` — the same
+pattern `_save_daily_store()` already uses. A crash mid-write cannot leave a
+truncated library.
+
+**Tested by actually forcing it**, not just by reading the code: a fault
+injected halfway through the temp-file write left `foods.json`
+**byte-identical**, the library still parsed, and the next successful write
+cleaned up the stale temp file.
+
+A `threading.Lock` serialises read-modify-write, because the purge runs on a
+worker thread out of the nightly loop while request handlers run on FastAPI's
+threadpool.
+
+### 13.5 The 120-day purge
+
+**`FOOD_PURGE_DAYS = 120`**, a named module constant in `foods.py`, never a
+literal at the call site.
+
+- An item whose `lastUsedAt` is **strictly older** than 120 days is deleted; so
+  is one whose `lastUsedAt` is `null` and whose `createdAt` is strictly older
+  than 120 days.
+- **Runs ONCE PER DAY inside the existing nightly loop in `server/app.py` at
+  04:15. NO NEW SCHEDULER WAS ADDED** — that loop already fires exactly once a
+  day, which is exactly the cadence the purge wants. It sits in its own
+  `try`/`except` so a failed purge is never reported as a failed sync and a
+  failed sync never skips the purge.
+- **Every removal is logged by name and id** to `server/logs/sync.log`, the log
+  file the server already keeps, so a deletion is never silent.
+- **An item whose timestamps cannot be read is KEPT, and the fact is logged.**
+  Deleting on ambiguity is how silent data loss starts.
+
+Verified against a spread of ages: 0 / 119 / **120 exactly** / 121 / 365 days
+since last use, plus null-`lastUsedAt` items created 0 / 119 / 120 / 121 days
+ago, plus one recently-used item created 900 days ago, plus one with unreadable
+timestamps. Exactly three were selected — 121-day-used, 365-day-used, and
+121-day-created-never-used. **120 days exactly survives; 121 does not.**
+
+#### Purging is safe ONLY because the client snapshots macros
+
+The Meal Tracker page copies an item's macros into `d.foodCounts[date][id]` the
+first time it is added that day (§8, "the snapshot rule"). A day's macros are
+computed from **its own snapshot**, never by looking the item up in the library.
+That is what makes deleting a library item harmless to history — and it is also
+what stops a later correction to a label from silently rewriting past scores.
+
+**If a future session ever "normalises" `d.foodCounts` into an id reference,
+this purge starts rewriting history and must be turned off first.**

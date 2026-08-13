@@ -26,11 +26,12 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import uvicorn
-from fastapi import APIRouter, FastAPI, Query, Request
+from fastapi import APIRouter, Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 import google_health
+import foods
 
 HOST = "127.0.0.1"
 PORT = 8123
@@ -140,6 +141,71 @@ async def sync_status():
     return google_health.last_sync_info()
 
 
+# -----------------------------------------------------------------------------
+# Food library — ARCHITECTURE.md §13. All real work lives in foods.py.
+#
+# THE SERVER OWNS THIS DATA. That is a deliberate, recorded exception to §1.2
+# (localStorage is the source of truth) and the only one — see foods.py's
+# docstring for why it is safe. The phone keeps a read-only mirror so the Meal
+# Tracker page opens instantly and works with this server down.
+#
+# THE DAILY COUNTS ARE NOT SERVER DATA and there is deliberately NO COUNTS
+# ENDPOINT. How many servings Ryan ate today feeds the Dietary score, so it
+# lives in localStorage with everything else that does (§1.2). Do not add one.
+#
+# These handlers are plain `def`, not `async def`, on purpose: they do blocking
+# file IO, and FastAPI runs a sync handler on its threadpool instead of on the
+# event loop, so a write cannot stall /api/health or the static routes.
+#
+# Same-origin over Tailscale, loopback bind unchanged — no CORS, no preflight
+# (§2). Nothing here reads .metracker/ or touches google_health's sync.
+# -----------------------------------------------------------------------------
+@api_router.get("/foods")
+def foods_list():
+    return foods.snapshot()
+
+
+@api_router.post("/foods")
+def foods_create(payload: dict = Body(...)):
+    try:
+        item = foods.create_item(payload)
+    except foods.FoodValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"item": item, **foods.snapshot()}
+
+
+@api_router.put("/foods/{item_id}")
+def foods_update(item_id: str, payload: dict = Body(...)):
+    try:
+        item = foods.update_item(item_id, payload)
+    except foods.FoodValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except foods.FoodNotFound:
+        raise HTTPException(status_code=404, detail="No food with that id.")
+    return {"item": item, **foods.snapshot()}
+
+
+@api_router.delete("/foods/{item_id}")
+def foods_delete(item_id: str):
+    try:
+        gone = foods.delete_item(item_id)
+    except foods.FoodNotFound:
+        raise HTTPException(status_code=404, detail="No food with that id.")
+    return {"deleted": gone["id"], **foods.snapshot()}
+
+
+@api_router.post("/foods/{item_id}/used")
+def foods_used(item_id: str):
+    """Called on every ADD from the Meal Tracker page, fire-and-forget. It only
+    pushes the item's purge date out; the count itself is local data that has
+    already succeeded, and a failure here must never undo it."""
+    try:
+        item = foods.mark_used(item_id)
+    except foods.FoodNotFound:
+        raise HTTPException(status_code=404, detail="No food with that id.")
+    return {"id": item["id"], "lastUsedAt": item["lastUsedAt"]}
+
+
 app.include_router(api_router, prefix="/api")
 
 
@@ -185,6 +251,20 @@ async def _nightly_sync_loop():
             # restarts," which is exactly the kind of silent failure §2.3's
             # boot.log and this file's sync.log both exist to avoid.
             google_health.logger.error("nightly sync loop raised unexpectedly: %s", e)
+        # ---------------------------------------------------------------
+        # The 120-day food-library purge (ARCHITECTURE.md §13) rides along
+        # here rather than getting a scheduler of its own — this loop already
+        # fires exactly once a day at 04:15, which is exactly the cadence the
+        # purge wants. DO NOT ADD A SECOND SCHEDULER FOR IT.
+        #
+        # Its own try/except, deliberately: a purge that fails must not be
+        # reported as a failed sync, and a failed sync must not skip the
+        # purge. Every removal is logged by name and id inside purge_stale().
+        # ---------------------------------------------------------------
+        try:
+            await asyncio.to_thread(foods.purge_stale)
+        except Exception as e:
+            google_health.logger.error("food library purge raised unexpectedly: %s", e)
 
 
 # -----------------------------------------------------------------------------
