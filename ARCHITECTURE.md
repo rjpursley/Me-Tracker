@@ -1383,6 +1383,35 @@ A count that drops to 0 **keeps** its entry and its snapshot, so re-adding the
 same item later that day cannot silently re-snapshot from a library that was
 edited in between.
 
+#### The snapshot carries `extras` and `flags` too (added 2026-08-13)
+
+§13.8's two capture groups are snapshotted at the **same moment and by the same
+rule** as `macros` — two keys added beside it, the existing shape untouched:
+
+```js
+d.foodCounts["2026-08-13"]["fd_abc123"] = {
+  count: 1, name: "...", servingText: "...",
+  macros: {...}, extras: {caffeine: 160, ...}, flags: {additives: {...}, novaGroup: 4}
+}
+```
+
+**Without this the purge and any later label edit would silently rewrite a past
+day's caffeine and additives** — exactly what the snapshot rule exists to stop.
+Verified: with a day counted, editing the library item to caffeine 999 and then
+**deleting it outright** left the day's snapshot **byte-identical** and its
+intake figures unchanged.
+
+**Days counted before this have neither key. Absence is the boundary** — a
+reader must treat a missing group as "not known for that day", **never as zero
+and never by looking the item up in the library now.** No migration, no
+backfill, same rule as `asleepMinutes` (§6.10) and `times` (§9.4).
+
+An item with no extras and no flags adds **no keys at all**, so a hand-typed
+food still produces exactly the record shape it did yesterday. Verified: scores
+and macros across a 10-date spread — including a day in the old format and a day
+in the new one — were **byte-identical** before and after this change (2,341
+characters each way, first differing index −1).
+
 Verified: with an item counted, doubling every macro on the library item left
 today's Dietary totals and the stored snapshot **byte-identical**; deleting a
 library item that had counts on a past day left that day's record and its score

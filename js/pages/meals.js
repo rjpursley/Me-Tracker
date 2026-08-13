@@ -57,7 +57,7 @@
 
 import { db, save } from '../store.js';
 import { today, esc } from '../util.js';
-import { dayMacros, foodCountMacros, FOOD_MACRO_FIELDS } from '../derive.js';
+import { dayMacros, foodCountMacros, FOOD_MACRO_FIELDS, FOOD_EXTRA_FIELDS } from '../derive.js';
 import { fetchFoods, createFood, updateFood, deleteFood, markFoodUsed, lookupBarcode } from '../api.js';
 import { renderHome } from './home.js';
 
@@ -71,6 +71,19 @@ const MACRO_META=[
   {key:'calories',label:'Calories', unit:'',   scored:false},
   {key:'fiber',   label:'Fiber',    unit:'g',  scored:false},
   {key:'sodium',  label:'Sodium',   unit:'mg', scored:false}
+];
+
+// §13.8's six extras. All milligrams, all optional, NONE scored. Auto-filled by
+// a lookup where Open Food Facts has them and typed by hand otherwise — caffeine
+// especially, which OFF carries for only about a third of energy drinks and
+// almost nothing else.
+const EXTRA_META=[
+  {key:'caffeine', label:'Caffeine'},
+  {key:'potassium',label:'Potassium'},
+  {key:'calcium',  label:'Calcium'},
+  {key:'iron',     label:'Iron'},
+  {key:'magnesium',label:'Magnesium'},
+  {key:'zinc',     label:'Zinc'}
 ];
 
 // Module state, not stored: an abandoned edit or a stale error must not
@@ -134,6 +147,46 @@ function snapshotMacros(src){
   return out;
 }
 
+// The six §13.8 extras, copied out of a library item the same way and for the
+// same reason as the macros. Returns null when the item carries none at all, so
+// the snapshot simply has no `extras` key — absence stays the boundary.
+function snapshotExtras(src){
+  const m=(src&&typeof src==='object')?src:null;
+  if(!m)return null;
+  const out={};let any=false;
+  FOOD_EXTRA_FIELDS.forEach(k=>{
+    const v=m[k];
+    if(v===null||v===undefined||v===''){out[k]=null;return;}
+    const num=+v;
+    if(isFinite(num)){out[k]=num;any=true;}else{out[k]=null;}
+  });
+  return any?out:null;
+}
+
+// The flags, deep-copied so the snapshot cannot share structure with the mirror
+// — a later library refresh replacing d.foodLibrary must not be able to reach
+// into a stored day through a shared array reference.
+//
+// NOT SCALED, EVER (§13.8). This is a copy, not a calculation.
+function snapshotFlags(src){
+  const f=(src&&typeof src==='object')?src:null;
+  if(!f)return null;
+  const a=f.additives;
+  let additives=null;
+  if(a&&typeof a==='object'&&Array.isArray(a.tags)){
+    // The count:0 / empty-tags case is PRESERVED, not dropped: it means OFF
+    // positively reported no additives, which is a different fact from not
+    // knowing (§13.8).
+    additives={count:+a.count||0,
+               tags:a.tags.map(t=>String(t)),
+               names:Array.isArray(a.names)?a.names.map(n=>n==null?null:String(n)):[]};
+  }
+  const nova=+f.novaGroup;
+  const novaGroup=(isFinite(nova)&&nova>=1&&nova<=4)?nova:null;
+  if(!additives&&novaGroup===null)return null;
+  return {additives,novaGroup};
+}
+
 // Returns the day's record, creating the containers if they are absent. Never
 // migrates or rewrites anything that already exists (§1.4).
 function dayRecord(d){
@@ -159,6 +212,14 @@ export function mealAdd(id){
       return;
     }
     entry={count:0,name:item.name||'',servingText:item.servingText||'',macros:snapshotMacros(item.macros)};
+    // §13.8's two groups are snapshotted at the SAME moment and by the same
+    // rule. Added as two keys beside `macros` — the existing shape is not
+    // restructured. An item carrying neither leaves the entry exactly as days
+    // recorded before this shipped look, which is what makes absence readable.
+    const ex=snapshotExtras(item.extras);
+    if(ex)entry.extras=ex;
+    const fl=snapshotFlags(item.flags);
+    if(fl)entry.flags=fl;
     day[id]=entry;
   }
   entry.count=(+entry.count||0)+1;
@@ -198,9 +259,16 @@ function readForm(){
     const raw=(val('food-in-'+m.key)||'').trim();
     macros[m.key]=raw===''?null:raw;   // blank means NOT ON THE LABEL, not 0
   });
+  // §13.8's extras are typeable here. FLAGS ARE NOT AND MUST NOT BE — a
+  // hand-entered item has unknown additives, not zero.
+  const extras={};
+  EXTRA_META.forEach(m=>{
+    const raw=(val('food-in-x-'+m.key)||'').trim();
+    extras[m.key]=raw===''?null:raw;
+  });
   return {name:(val('food-in-name')||'').trim(),
           servingText:(val('food-in-serving')||'').trim(),
-          macros};
+          macros,extras};
 }
 
 // Replaces the mirror wholesale from a server response. Only ever called with
@@ -287,6 +355,7 @@ function clearForm(){
   const set=(id,v)=>{const el=document.getElementById(id);if(el)el.value=v;};
   set('food-in-name','');set('food-in-serving','');
   MACRO_META.forEach(m=>set('food-in-'+m.key,''));
+  EXTRA_META.forEach(m=>set('food-in-x-'+m.key,''));
 }
 
 function fillForm(item){
@@ -295,6 +364,8 @@ function fillForm(item){
   set('food-in-name',item.name);set('food-in-serving',item.servingText);
   const m=item.macros||{};
   MACRO_META.forEach(f=>set('food-in-'+f.key,m[f.key]));
+  const x=item.extras||{};
+  EXTRA_META.forEach(f=>set('food-in-x-'+f.key,x[f.key]));
 }
 
 // ---------------------------------------------------------------------------
@@ -367,6 +438,10 @@ function captureScan(){
     const v=val('sc-m-'+k);
     if(v!==null)scan.macros[k]=v;
   });
+  FOOD_EXTRA_FIELDS.forEach(k=>{
+    const v=val('sc-x-'+k);
+    if(v!==null)scan.extras[k]=v;
+  });
 }
 
 export async function mealBarcodeLookup(){
@@ -431,6 +506,11 @@ export async function mealBarcodeLookup(){
     // works from. scan.macros is what the inputs show and what gets saved.
     source:per,
     macros:{},
+    // §13.8. `sourceExtras` scales with the serving exactly like `source`;
+    // `flags` is copied through untouched and NEVER scaled or edited.
+    sourceExtras:(body.extras&&typeof body.extras==='object')?body.extras:{},
+    extras:{},
+    flags:(body.flags&&typeof body.flags==='object')?body.flags:null,
     name:body.name||'',
     servingText:body.servingText||'',
     servingTouched:false,
@@ -448,11 +528,17 @@ export async function mealBarcodeLookup(){
       const v=per[k];
       scan.macros[k]=(v===null||v===undefined)?'':String(v);
     });
+    FOOD_EXTRA_FIELDS.forEach(k=>{
+      const v=scan.sourceExtras[k];
+      scan.extras[k]=(v===null||v===undefined)?'':String(v);
+    });
   }else{
     // PER 100 g. The editable fields stay EMPTY until a serving size exists, so
     // a per-100g figure can never be mistaken for a per-serving one. The raw
-    // per-100g numbers are shown separately, read-only, as reference.
+    // per-100g numbers are shown separately, read-only, as reference. The
+    // extras follow the macros exactly — same rule, same moment.
     FOOD_MACRO_FIELDS.forEach(k=>{scan.macros[k]='';});
+    FOOD_EXTRA_FIELDS.forEach(k=>{scan.extras[k]='';});
   }
   libraryMsg=null;
   renderMeals();
@@ -476,6 +562,14 @@ export function mealScanRecalc(){
       const shown=(g===null||v===null||v===undefined)?'':String(round2(v*g/100));
       scan.macros[k]=shown;
       const el=document.getElementById('sc-m-'+k);
+      if(el)el.value=shown;
+    });
+    // The extras convert by the SAME factor. No special case (§13.8).
+    FOOD_EXTRA_FIELDS.forEach(k=>{
+      const v=scan.sourceExtras[k];
+      const shown=(g===null||v===null||v===undefined)?'':String(round2(v*g/100));
+      scan.extras[k]=shown;
+      const el=document.getElementById('sc-x-'+k);
       if(el)el.value=shown;
     });
     if(!scan.servingTouched){
@@ -560,6 +654,14 @@ export async function mealScanSave(){
     const raw=String(scan.macros[k]==null?'':scan.macros[k]).trim();
     payload.macros[k]=raw===''?null:raw;   // blank means NOT ON THE LABEL, not 0
   });
+  // §13.8. extras are editable and go up as typed; flags go up EXACTLY as the
+  // lookup returned them — they are never edited here and there is no UI to.
+  payload.extras={};
+  FOOD_EXTRA_FIELDS.forEach(k=>{
+    const raw=String(scan.extras[k]==null?'':scan.extras[k]).trim();
+    payload.extras[k]=raw===''?null:raw;
+  });
+  if(scan.flags)payload.flags=scan.flags;
   // ONLY GRAMS PER SERVING IS STORED. The net weight and servings-per-container
   // that may have produced it are inputs to a calculation, not facts — and a
   // future session must not be able to recompute from them (§13.7).
@@ -698,6 +800,36 @@ function basisLine(b){
   return 'THESE NUMBERS ARE PER 100 GRAMS, not per serving. Give a serving size below and they will be converted.';
 }
 
+// Flags, READ-ONLY. There is deliberately no input here and no way to type one
+// anywhere in this app: a hand-entered item has UNKNOWN additives, not zero
+// (§13.8). Unknown renders as a plain sentence, never as 0 and never as "none".
+function flagsHtml(flags){
+  const f=(flags&&typeof flags==='object')?flags:null;
+  const a=f?f.additives:null;
+  let body='';
+  if(!a){
+    body+='<div class="sc-flag-row"><span class="sc-flag-key">Additives</span>'+
+          '<span class="sc-flag-unknown">not known — Open Food Facts has no additives data for this product</span></div>';
+  }else if(!a.count){
+    body+='<div class="sc-flag-row"><span class="sc-flag-key">Additives</span>'+
+          '<span class="sc-flag-val">none — Open Food Facts reports no additives</span></div>';
+  }else{
+    const listed=(a.tags||[]).map((t,i)=>{
+      const n=(a.names||[])[i];
+      return esc(n||String(t).toUpperCase());
+    }).join(' · ');
+    body+='<div class="sc-flag-row"><span class="sc-flag-key">Additives</span>'+
+          '<span class="sc-flag-val">'+a.count+'</span></div>'+
+          '<div class="sc-flag-list">'+listed+'</div>';
+  }
+  const nova=f?f.novaGroup:null;
+  body+='<div class="sc-flag-row"><span class="sc-flag-key">NOVA group</span>'+
+        (nova?('<span class="sc-flag-val">'+nova+' of 4</span>')
+             :'<span class="sc-flag-unknown">not known</span>')+'</div>';
+  return '<div class="sc-flags"><div class="sc-flags-head">From Open Food Facts — not editable, not scored</div>'+
+         body+'</div>';
+}
+
 function reviewCardHtml(){
   const s=scan;
   const g=scanGrams();
@@ -766,6 +898,21 @@ function reviewCardHtml(){
   });
   html+='</div>';
 
+  // §13.8's extras — editable, all milligrams, none scored.
+  html+='<div class="form-label sc-macro-head">Caffeine and minerals (mg) — optional, never scored</div>';
+  html+='<div class="mt-macro-grid">';
+  EXTRA_META.forEach(m=>{
+    html+='<div class="form-row"><div class="form-label">'+m.label+' (mg)</div>'+
+          '<input type="number" id="sc-x-'+m.key+'" step="0.01" inputmode="decimal" value="'+
+          esc(s.extras[m.key])+'" placeholder="blank if unknown" oninput="mealScanEdited()"></div>';
+  });
+  html+='</div>';
+  html+='<div class="form-note">Open Food Facts carries caffeine for only about a third of energy '+
+        'drinks and almost nothing else, so this is usually blank — type it off the can if you want it '+
+        'recorded. Blank means unknown, not zero.</div>';
+
+  html+=flagsHtml(s.flags);
+
   html+='<div class="form-note">Every number here is editable and what you leave is what gets saved. '+
         'Blank means “not on the label” — it is never counted as 0.'+
         (s.sodiumSource==='salt'?' Sodium was worked out from the salt figure, not read directly.':'')+
@@ -821,6 +968,15 @@ function libraryHtml(){
   });
   html+='</div>';
   html+=`<div class="form-note">Leave a field blank if it is not printed on the label. Blank means "not on the label" — it is not the same as 0, and it is never counted as 0.</div>`;
+  // §13.8's extras, optional and blank by default. No flags here, deliberately:
+  // additives can only come from a lookup.
+  html+='<div class="form-label sc-macro-head">Caffeine and minerals (mg) — optional, never scored</div>';
+  html+='<div class="mt-macro-grid">';
+  EXTRA_META.forEach(m=>{
+    html+=`<div class="form-row"><div class="form-label">${m.label} (mg)</div>`+
+          `<input type="number" id="food-in-x-${m.key}" step="0.01" inputmode="decimal" placeholder="blank if unknown"></div>`;
+  });
+  html+='</div>';
   html+=`<button class="btn btn-primary" onclick="mealSaveFood()"${libraryBusy?' disabled':''}>${editingId?'Save changes':'Add to library'}</button>`;
   if(editingId)html+=`<button class="btn btn-secondary" onclick="mealCancelEdit()">Cancel</button>`;
   html+='</div>';

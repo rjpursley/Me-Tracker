@@ -393,6 +393,18 @@
    form in the app — this is the card Ryan taps while holding a package. */
 .sc-card input{min-height:44px}
 
+/* §13.8 flags — READ-ONLY. No inputs here on purpose: additives can only come
+   from a lookup, and a hand-entered item has unknown additives, not zero.
+   Deliberately no warning colour and no threshold styling — there is no
+   "too much" line yet, and inventing one would be a decision Ryan has not made. */
+.sc-flags{background:var(--surface2);border:1px solid var(--border);border-radius:11px;padding:10px 12px;margin:10px 0}
+.sc-flags-head{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:6px}
+.sc-flag-row{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-family:var(--font-mono);font-size:12px;padding:3px 0}
+.sc-flag-key{color:var(--muted)}
+.sc-flag-val{color:var(--text);text-align:right}
+.sc-flag-unknown{color:var(--muted);text-align:right;font-style:italic}
+.sc-flag-list{font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--muted);margin-top:4px}
+
 /* Score pillars */
 .score-pillars{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
 .pillar-item{background:var(--surface2);border-radius:10px;padding:10px 12px}

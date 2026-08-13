@@ -688,6 +688,132 @@ export function foodCountMacros(ds){
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// §13.8's two capture groups, read off each day's OWN SNAPSHOT.
+//
+// THE SNAPSHOT RULE APPLIES TO THESE EXACTLY AS IT DOES TO MACROS. A day's
+// caffeine and additives come from what was copied into d.foodCounts[ds] at the
+// first ADD that day — NEVER by looking the item up in d.foodLibrary now. That
+// is what keeps the 120-day purge (§13.5) and any later label correction from
+// rewriting a past day.
+//
+// ABSENCE IS THE BOUNDARY. Days counted before this shipped have no `extras`
+// and no `flags` in their snapshots. They are GAPS — "not known for that day" —
+// never zero, and never resolved by a lookup in today's library.
+//
+// NONE OF THIS IS SCORED (§11). It is captured and displayed only.
+// ---------------------------------------------------------------------------
+export const FOOD_EXTRA_FIELDS=['caffeine','potassium','calcium','iron','magnesium','zinc'];
+
+// Every counted entry for a day that still has a positive count.
+function countedEntries(ds){
+  const d=db();
+  const day=(d.foodCounts&&d.foodCounts[ds]);
+  if(!day||typeof day!=='object'||Array.isArray(day))return [];
+  return Object.keys(day).map(id=>day[id]).filter(e=>e&&(+e.count||0)>0);
+}
+
+// Totals of the six extras: count x snapshot extra, in mg.
+//
+// `known` is per field: true only if at least one counted item actually carried
+// a number for it. A day where nothing knew its caffeine is a GAP, not 0 mg —
+// an RXBAR whose caffeine is null is "not printed on the label", not decaf.
+// A GENUINE measured 0 does count as known, which is the whole reason §13.8
+// keeps null and 0 apart.
+export function foodCountExtras(ds){
+  const out={known:{}};
+  FOOD_EXTRA_FIELDS.forEach(k=>{out[k]=0;out.known[k]=false;});
+  countedEntries(ds).forEach(e=>{
+    const n=+e.count||0;
+    const x=(e.extras&&typeof e.extras==='object')?e.extras:null;
+    if(!x)return;
+    FOOD_EXTRA_FIELDS.forEach(k=>{
+      const v=x[k];
+      if(v===null||v===undefined||v==='')return;   // not known — never 0
+      const num=+v;if(!isFinite(num))return;
+      out[k]+=num*n;out.known[k]=true;
+    });
+  });
+  return out;
+}
+
+// The day's flags, from each entry's own snapshot.
+//
+// ADDITIVES ARE COUNTED DISTINCTLY ACROSS THE DAY, not per serving. Eating two
+// identical bars does not expose Ryan to ten additives; the question worth
+// asking is how many DIFFERENT ones he ate. (The brief said "additive count per
+// day" without settling this — recorded here because it is a real choice.)
+// Flags never scale with servings (§13.8), so multiplying by count would also
+// contradict the group's own rule.
+//
+// nova4 counts ITEMS, not servings, for the same reason.
+export function foodCountFlags(ds){
+  const tags={};
+  let additivesKnown=false,novaKnown=false,nova4=0,items=0;
+  countedEntries(ds).forEach(e=>{
+    const f=(e.flags&&typeof e.flags==='object')?e.flags:null;
+    if(!f)return;
+    items++;
+    const a=f.additives;
+    // The count:0 block means OFF positively reported none — that IS data.
+    // A missing/null additives block means unknown and contributes nothing.
+    if(a&&typeof a==='object'&&Array.isArray(a.tags)){
+      additivesKnown=true;
+      a.tags.forEach(t=>{if(t)tags[String(t)]=true;});
+    }
+    const nova=+f.novaGroup;
+    if(isFinite(nova)&&nova>=1&&nova<=4){novaKnown=true;if(nova===4)nova4++;}
+  });
+  return {additiveCount:Object.keys(tags).length,additivesKnown,
+          nova4Items:nova4,novaKnown,flaggedItems:items};
+}
+
+// One day of §13.8 intake, with per-metric "is this known at all" flags so a
+// chart can draw a GAP rather than a zero (§8.3's rule, applied to these).
+export function dayIntake(ds){
+  const x=foodCountExtras(ds);
+  const f=foodCountFlags(ds);
+  return {
+    caffeine:x.caffeine, caffeineKnown:x.known.caffeine,
+    additiveCount:f.additiveCount, additivesKnown:f.additivesKnown,
+    nova4Items:f.nova4Items, novaKnown:f.novaKnown
+  };
+}
+
+// ---------------------------------------------------------------------------
+// THE ROLLING AVERAGE IS A RATE OVER LOGGED DAYS, NOT A SUM OVER SEVEN.
+//
+// Dividing by 7 calendar days would make FORGETTING TO LOG look like consuming
+// less, which is the same lie §8.3 refuses for macros. The divisor is the
+// number of days in the window that actually have data for that metric, and the
+// card says how many that was.
+//
+// Below `minDays` the window returns null — nothing, not 0. A "7-day average"
+// computed from one day is noise wearing a trend's clothing.
+// ---------------------------------------------------------------------------
+export const INTAKE_WINDOW_DAYS=7;
+export const INTAKE_MIN_DAYS=3;
+
+export function rollingIntake(endDs,windowDays,minDays){
+  windowDays=windowDays||INTAKE_WINDOW_DAYS;
+  minDays=minDays===undefined?INTAKE_MIN_DAYS:minDays;
+  const end=new Date(endDs+'T12:00:00');
+  const acc={caffeine:{sum:0,n:0},additives:{sum:0,n:0},nova4:{sum:0,n:0}};
+  for(let i=0;i<windowDays;i++){
+    const iv=dayIntake(dateStr(addDays(end,-i)));
+    if(iv.caffeineKnown){acc.caffeine.sum+=iv.caffeine;acc.caffeine.n++;}
+    if(iv.additivesKnown){acc.additives.sum+=iv.additiveCount;acc.additives.n++;}
+    if(iv.novaKnown){acc.nova4.sum+=iv.nova4Items;acc.nova4.n++;}
+  }
+  const avg=a=>a.n>=minDays?a.sum/a.n:null;
+  return {
+    caffeine:avg(acc.caffeine), caffeineDays:acc.caffeine.n,
+    additives:avg(acc.additives), additiveDays:acc.additives.n,
+    nova4:avg(acc.nova4), nova4Days:acc.nova4.n,
+    minDays
+  };
+}
+
 // The whole day: hand-logged meals plus counted servings.
 //
 // `hasData` is what the 30-day chart uses to decide gap-vs-zero (§8.3) — a day
