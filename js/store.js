@@ -22,7 +22,19 @@ const DB_KEY = 'metracker_v2';
 // setting its end, and a later pause pushes a new entry. History is never
 // rewritten, so "how long was the program dormant" stays answerable.
 //
-// exerciseLogs is an OBJECT keyed by date: {touched:true, checked:[name,...]}.
+// exerciseLogs is an OBJECT keyed by date:
+//   {touched:true, checked:[name,...], times:{name:'<UTC ISO>', ...}}
+//
+// `times` was ADDED 2026-08-12 as a third sibling key (§9.4). `touched` and
+// `checked` are unchanged in shape and meaning. A tick writes times[name]; an
+// UNTICK DELETES it; a re-tick writes a fresh stamp — so `times` can never
+// hold a name that is not also in `checked`.
+//
+// THE VALUE IS A UTC ISO INSTANT, deliberately unlike hrSeries.at, which is
+// local wall clock (§6.12). Convert to local for display only.
+//
+// ABSENCE IS THE BOUNDARY. Days logged before that commit have no `times` key
+// at all and are never given one — no migration, no backfill, no default {}.
 //
 // `touched` and `checked` are two DIFFERENT FACTS. They used to score
 // differently — no record meant "assumed done" and fell through to the schedule

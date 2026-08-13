@@ -13,7 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import { db, save } from '../store.js';
-import { today } from '../util.js';
+import { today, pad } from '../util.js';
 import { CATEGORY_COLORS, CATEGORY_BORDER, CATEGORY_COLOR_TEXT, PROGRESSION } from '../schedule.js';
 // isPaused is no longer imported: the prescription card used to render a
 // "ticks do not count while paused" state line, and pause no longer changes
@@ -232,6 +232,26 @@ function startProgram(){
 // re-checks that date against today() before it writes anything.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Displaying a tick timestamp — ARCHITECTURE.md §9.4.
+//
+// Returns local HH:MM (24-hour) for a stored UTC ISO instant, or '' when there
+// is nothing honest to show. NEVER toISOString() for display: that would print
+// the UTC hour, which from 20:00 Eastern onward is also tomorrow's date — the
+// same class of bug §12 records three times over.
+//
+// AN EXERCISE WITH NO STORED TIMESTAMP RENDERS NOTHING AT ALL — not an em
+// dash, not "00:00". Every day ticked before this feature existed is in that
+// state, and inventing a placeholder for them would be a fabricated
+// measurement (§1.7).
+// ---------------------------------------------------------------------------
+function tickTimeLabel(iso){
+  if(typeof iso!=='string'||!iso)return '';
+  const t=new Date(iso);
+  if(isNaN(t.getTime()))return '';
+  return pad(t.getHours())+':'+pad(t.getMinutes());
+}
+
 // The "3 of 12" line above the exercises.
 //
 // Its old job was to make untouched vs touched-but-empty visible, because the
@@ -308,6 +328,31 @@ function rerenderAfterToggle(){
 // `touched` is still written on the first tap and never cleared. Post-epoch
 // scoring no longer reads it, but the frozen legacy path does (§9.5) and §1.4
 // forbids dropping the field.
+//
+// ############ THE `times` MAP — ADDED 2026-08-12 (§9.4) ############
+// A third, additive sibling key alongside `touched` and `checked`, recording
+// WHEN each box was ticked so a future feature can line a tick up against that
+// day's hrSeries (§6.12). Neither existing field changes shape or meaning.
+//
+//   TICK    writes times[name] = new Date().toISOString()
+//   UNTICK  DELETES times[name] outright
+//   RE-TICK writes a fresh, later stamp
+//
+// The value is a UTC ISO INSTANT, and that is DELIBERATELY different from
+// hrSeries.at, which is local wall clock with no offset (§6.12). A bucket
+// answers "when on the clock"; a tick answers "which instant". Do NOT make
+// these consistent — converting either to match the other loses the thing it
+// was chosen to record. Local time is produced for DISPLAY ONLY, in
+// tickTimeLabel() below.
+//
+// INVARIANT: `times` may never hold a key that is not also in `checked`. It is
+// maintained by construction here — this is the one and only write path — and
+// is asserted in verification.
+//
+// `times` is written only when it would be non-empty. A day that has never had
+// a tick timestamped does not gain an empty {}, and unticking the last
+// timestamped exercise removes the key again. There is no migration, no
+// backfill and no epoch constant: absence is the boundary.
 export function toggleExercise(ds,idx){
   // Refuses to write, exactly as before — but now it SAYS so instead of doing
   // nothing visible. The re-render inside showLockNotice() also repaints the
@@ -320,9 +365,19 @@ export function toggleExercise(ds,idx){
   if(!d.exerciseLogs||typeof d.exerciseLogs!=='object'||Array.isArray(d.exerciseLogs))d.exerciseLogs={};
   const cur=d.exerciseLogs[ds];
   const checked=Array.isArray(cur&&cur.checked)?cur.checked.slice():[];
+  // Carried forward as-is when the day already has one; started empty when it
+  // does not. A day that predates this feature is NOT given a times key here —
+  // it only gains one if a tick actually happens on it, which the same-day lock
+  // means can only be today.
+  const times={};
+  const prev=cur&&cur.times;
+  if(prev&&typeof prev==='object'&&!Array.isArray(prev))Object.keys(prev).forEach(k=>{times[k]=prev[k];});
   const at=checked.indexOf(ex.name);
-  if(at>=0)checked.splice(at,1);else checked.push(ex.name);
-  d.exerciseLogs[ds]={touched:true,checked};
+  if(at>=0){checked.splice(at,1);delete times[ex.name];}
+  else{checked.push(ex.name);times[ex.name]=new Date().toISOString();}
+  const rec={touched:true,checked};
+  if(Object.keys(times).length)rec.times=times;
+  d.exerciseLogs[ds]=rec;
   save(d);
   // A successful tick clears any lingering refusal notice — it is no longer
   // true, and leaving it up would be its own kind of lie.
@@ -389,6 +444,13 @@ export function renderPrescription(ds,containerId,interactive){
         idx++;
         const marker=isGiant?String.fromCharCode(65+i):(i+1);
         const done=log.checked.includes(ex.name);
+        // The tick timestamp (§9.4). Only ever shown on a ticked exercise, and
+        // only when this day actually has one stored — log.times is null for
+        // every day logged before the feature existed, and those render exactly
+        // as they always did. Rendered through the SAME renderer for Home and
+        // Training; there is no fork.
+        const tickAt=done&&log.times?tickTimeLabel(log.times[ex.name]):'';
+        const timeLine=tickAt?`<div class="rx-ex-time">Ticked ${tickAt}</div>`:'';
         let line='';
         if(ex.main&&rx)line=`<div class="rx-main-line${rx.weight==='set TM'?' rx-no-tm':''}"><div class="rx-main-rx">Week ${rx.week} — ${rx.phase} — ${rx.setsReps} @ ${rx.pctLabel} — ${rx.weight}</div><div class="rx-main-meta">Rest ${rx.rest} · ${rx.objective}</div></div>`;
         // Home renders this card with editable=false: no onclick attribute at
@@ -400,7 +462,7 @@ export function renderPrescription(ds,containerId,interactive){
         html+=`<button type="button" class="rx-exercise-item rx-ex-toggle${done?' is-done':''}" aria-pressed="${done?'true':'false'}"${clickAttr}${disabledAttr}>`+
           `<span class="rx-ex-box">${done?'✓':''}</span>`+
           `<span class="rx-ex-num">${marker}</span>`+
-          `<div style="flex:1"><div class="rx-ex-name">${ex.name}</div><div class="rx-ex-equip">${ex.equip}</div>${ex.detail?`<div class="rx-ex-detail">${ex.detail}</div>`:''}${line}</div>`+
+          `<div style="flex:1"><div class="rx-ex-name">${ex.name}</div><div class="rx-ex-equip">${ex.equip}</div>${ex.detail?`<div class="rx-ex-detail">${ex.detail}</div>`:''}${timeLine}${line}</div>`+
         `</button>`;
       });
     });

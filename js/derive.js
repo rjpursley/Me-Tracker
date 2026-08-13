@@ -347,10 +347,21 @@ export function getWorkoutForDate(ds){const d=db();const dev=d.deviations&&d.dev
 // any date, including locked ones.
 // ---------------------------------------------------------------------------
 
-// {touched, checked[]} for a date, normalised so callers never see undefined.
+// {touched, checked[], times} for a date, normalised so callers never see
+// undefined.
+//
+// `times` is the tick-timestamp map added 2026-08-12 (§9.4): exercise name ->
+// UTC ISO instant of the tap that ticked it. It is returned as NULL, never as
+// {}, when the stored day has no such key — ABSENCE IS THE BOUNDARY. Every day
+// logged before that commit has no `times`, and a caller must be able to tell
+// "this day predates timestamps" from "this day has timestamps, none of them
+// for this exercise". Normalising the absent case to {} would erase that
+// difference, which is the same mistake §6.10 records for asleepMinutes.
 export function exerciseLog(ds){
   const d=db();const log=(d.exerciseLogs||{})[ds];
-  return{touched:!!(log&&log.touched),checked:Array.isArray(log&&log.checked)?log.checked:[]};
+  const t=log&&log.times;
+  const times=(t&&typeof t==='object'&&!Array.isArray(t))?t:null;
+  return{touched:!!(log&&log.touched),checked:Array.isArray(log&&log.checked)?log.checked:[],times};
 }
 
 // {touched, checked, total} against the exercises actually scheduled that day.

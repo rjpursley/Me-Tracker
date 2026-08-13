@@ -1520,11 +1520,81 @@ finisher), matching `{name, equip, detail, block}` in `schedule.js`.
   handler is given the date the card was rendered for, never `today()`, and
   `toggleExercise()` re-checks that date against `today()` before writing.
 - **Stored as `d.exerciseLogs{}`**, keyed by date:
-  `{ touched: true, checked: ["Goblet Squat", ...] }`
+  `{ touched: true, checked: ["Goblet Squat", ...], times: {"Goblet Squat": "2026-08-13T03:25:06.614Z", ...} }`
 - Exercises are stored **by name, not by index**, so reordering `schedule.js`
   cannot silently re-point a tick at a different movement. Only names still on
   that day's card are counted, so a renamed or removed exercise is ignored
   rather than inflating the total.
+
+#### `times` — when each box was ticked (added 2026-08-12)
+
+A third, **additive** sibling key (§1.4). `touched` and `checked` are unchanged
+in shape and in meaning; nothing was renamed or retyped. It exists so a future
+feature can line a tick up against that day's `hrSeries` (§6.12). **This commit
+stores and displays only — there is no chart and no analysis.**
+
+| Operation | Effect on `times` |
+|---|---|
+| Tick | writes `times[name] = new Date().toISOString()` |
+| **Untick** | **DELETES `times[name]`** |
+| Re-tick | writes a **fresh, later** stamp |
+
+**INVARIANT: `times` may never contain a key that is not also in `checked`.**
+It holds by construction — `toggleExercise()` in `js/pages/training.js` is the
+one and only write path — and it is asserted in verification, not assumed.
+Measured: 8 mixed tick/untick operations produced 0 orphaned keys after every
+single operation, on every stored day.
+
+The converse is deliberately allowed: `checked` may contain a name with no
+entry in `times`. That is what a day ticked earlier today, before this shipped,
+looks like.
+
+##### The UTC-vs-local asymmetry against `hrSeries` is deliberate
+
+`times[name]` is a **UTC ISO instant** (`2026-08-13T03:25:06.614Z`).
+`hrSeries.at` is **local wall clock with no offset and no `Z`** (§6.12).
+**These must not be made consistent.** A bucket answers *when on the clock*; a
+tick answers *which instant*. Converting either to match the other destroys the
+thing it was chosen to record. This is the same shape of intentional asymmetry
+§6.12 already records between `hrSeries.at` and `latestHR.at`, and the same
+split `util.js` documents: a calendar **day** is local, an **instant** is UTC.
+
+**Local time is produced for DISPLAY ONLY**, by `tickTimeLabel()` in
+`pages/training.js`, which renders `HH:MM` 24-hour local. Never `toISOString()`
+for display — measured live at 23:25 local on 2026-08-12, the stored stamp
+reads `03:25` and belongs to 2026-08-13 in UTC. Printing that is the §12 date
+bug in a new costume.
+
+##### Absence is the boundary
+
+Days logged before this commit have **no `times` key** and render **exactly** as
+they did before — no timestamp line, **not an em dash, not `00:00`** (§1.7).
+There is **no migration, no backfill, no epoch constant** (unlike training's
+`STRICT_TRAINING_FROM`, §9.5) **and no default of `{}`** — the same rule
+`asleepMinutes` follows in §6.10. `derive.js`'s `exerciseLog()` returns
+`times: null`, never `{}`, so a caller can still tell "this day predates
+timestamps" from "this day has timestamps, none for this exercise".
+
+A day gains a `times` key only when a tick actually lands on it, and the
+same-day lock means that can only ever be today. Unticking the last timestamped
+exercise removes the key again rather than leaving an empty `{}` behind.
+
+Verified: a pre-existing day's card HTML is **byte-identical** before and after
+this change, on both Home and Training (2,649 characters each way, first
+differing index −1).
+
+##### What this commit did not touch
+
+The same-day lock (§9.5) is unchanged. `toggleExercise()` still returns early
+when `ds !== today()` **before** touching the store, and Home's read-only path
+still emits no `onclick` attribute and a native `disabled`. Measured after the
+change: a tap on a locked day left `metracker_v2` byte-identical and still
+raised the refusal notice; Home's card renders 3 buttons, 0 `onclick`
+attributes, 3 disabled.
+
+The timestamp renders on **both** Home (read-only) and Training through the
+same `renderPrescription()`. It is not forked. New styling is `.rx-ex-time` in
+`styles/components.css`, using `--muted` — **no new colour literal** (§1.6).
 
 **`touched` and `checked` are still two different facts, but only one of them
 scores now.**
