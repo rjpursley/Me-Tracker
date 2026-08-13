@@ -492,6 +492,34 @@ days — suppression was chosen deliberately.
 The drawer is unchanged. The score box is an additional entry point, not a
 replacement.
 
+### Every score-box destination carries a back button — there is no history stack
+
+**Added 2026-08-12.** All five score-box destinations — `#page-training`,
+`#page-diet`, `#page-body`, `#page-fasting`, `#page-health` — open with a back
+button as the **first element on the page, above everything including the
+vitals header mounts.** It reuses the existing `.back-btn` / `.back-chev`
+pattern `#page-prs` already had; nothing new was styled.
+
+```html
+<button class="back-btn" onclick="showPage('home','Me-Tracker')"><span class="back-chev">‹</span>Home</button>
+```
+
+**The destination is static. There is no history stack and must not be one.**
+Three of these five (Dietary, Sleep/HR, Health Status) are also reachable from
+the drawer, and the button still goes Home from there. That is intended — a
+back button that guessed where you came from would need state this app
+deliberately does not keep, and Home is the honest answer either way.
+
+- **`#page-prs` keeps its own button pointing at Training** (§10.1) — it is the
+  one page whose parent is not Home. Do not change it.
+- **No back button on `#page-home`, `#page-calendar` or `#page-log`.** Home has
+  nowhere to go; the other two are drawer-only pages with no parent.
+- Drawer markup and `showPage()` behaviour are untouched (§11).
+
+Verified at a 393pt viewport: all five buttons measure 44px tall (the `.back-btn`
+minimum, §1.5), all five land on Home with the topbar reading "Me-Tracker",
+from **both** the score box and the drawer where applicable.
+
 **One deliberate third level: Training → Personal Records** (§10.1). It is the
 only one, and it was a choice between two rules. The drawer was the natural home
 for a rarely-used logging page, but §11 protects drawer structure; 1RMs are

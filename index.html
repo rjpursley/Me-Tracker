@@ -73,6 +73,12 @@
 </div>
 
 <div class="page" id="page-training">
+  <!-- Back to Home (§4). The five score-box destinations each carry one, at the
+       very top of the page, ABOVE the vitals header mount. Static destination —
+       there is no history stack, so a page reached from the drawer instead of
+       the score box still goes Home. Reuses the existing .back-btn /
+       .back-chev already on #page-prs; nothing new was styled. -->
+  <button class="back-btn" onclick="showPage('home','Me-Tracker')"><span class="back-chev">‹</span>Home</button>
   <div id="vitals-header-training"></div>
   <div class="section-title">Program</div>
   <div id="training-pause"></div>
@@ -104,6 +110,7 @@
 </div>
 
 <div class="page" id="page-fasting">
+  <button class="back-btn" onclick="showPage('home','Me-Tracker')"><span class="back-chev">‹</span>Home</button>
   <div class="section-title">Fasting</div>
   <div id="fasting-page-status"></div>
   <div class="section-title">Log a Deviation</div>
@@ -130,6 +137,7 @@
 </div>
 
 <div class="page" id="page-health">
+  <button class="back-btn" onclick="showPage('home','Me-Tracker')"><span class="back-chev">‹</span>Home</button>
   <div class="section-title">Body</div>
   <div id="body-summary"></div>
 
@@ -197,6 +205,7 @@
 </div>
 
 <div class="page" id="page-body">
+  <button class="back-btn" onclick="showPage('home','Me-Tracker')"><span class="back-chev">‹</span>Home</button>
   <div class="section-title">15-Day Averages</div>
   <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
     <div class="card" style="text-align:center;padding:12px"><div class="card-title" style="margin-bottom:4px">Resting HR</div><div class="stat-big" id="avg-rhr" style="font-size:26px">—</div><div class="stat-sub">bpm</div></div>
@@ -218,6 +227,7 @@
 </div>
 
 <div class="page" id="page-diet">
+  <button class="back-btn" onclick="showPage('home','Me-Tracker')"><span class="back-chev">‹</span>Home</button>
   <div class="section-title">Today's Macros</div>
   <!-- Four across on a 2x2 grid: three-across would put each card near 110px
        wide on a 393pt phone (§1.5). -->
