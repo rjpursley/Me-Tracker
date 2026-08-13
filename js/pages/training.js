@@ -242,7 +242,7 @@ function startProgram(){
 //
 // `editable` is the same-day lock (§9.4): true only when the card is showing
 // today. Plain, unemotional wording; no confirmation dialogs anywhere near it.
-function progressHtml(prog,log,editable){
+function progressHtml(prog,log,editable,ds){
   let state,cls;
   if(!editable){
     state=prog.checked?'Locked — this day is closed':'Locked — nothing was logged on this day';
@@ -251,7 +251,47 @@ function progressHtml(prog,log,editable){
   else if(prog.checked===prog.total&&prog.total>0){state='All done';cls=' is-done';}
   else if(!prog.checked){state='Nothing ticked yet — an empty day scores 0. Editable until midnight.';cls='';}
   else state=`${prog.total-prog.checked} still open · editable until midnight`,cls=' is-partial';
-  return `<div class="rx-progress${cls}"><span class="rx-progress-count">${prog.checked} of ${prog.total}</span><span class="rx-progress-state">${state}</span></div>`;
+  // The refusal notice (see toggleExercise). Same muted style as the state
+  // line — plain, no dialog, no alarm colour, and it clears itself.
+  const notice=(lockNotice&&lockNotice.ds===ds)?`<span class="rx-progress-state">${lockNotice.msg}</span>`:'';
+  return `<div class="rx-progress${cls}"><span class="rx-progress-count">${prog.checked} of ${prog.total}</span><span class="rx-progress-state">${state}</span>${notice}</div>`;
+}
+
+// ---------------------------------------------------------------------------
+// THE SILENT-REFUSAL BUG — fixed 2026-08-12.
+//
+// The lock is decided at RENDER time from today(). Leave the app open
+// overnight — which is exactly what a phone in a gym bag does — and yesterday's
+// card is still on screen rendered interactive, because nothing re-rendered it
+// when the date rolled over. toggleExercise()'s guard correctly refused to
+// write, but it refused SILENTLY: the box did not tick and nothing said why.
+// That looks like a broken app, and Ryan had no way to tell the difference.
+//
+// Two halves, and both were needed:
+//   - app.js re-renders on visibilitychange, so a rolled-over day comes back
+//     rendered locked instead of falsely interactive.
+//   - this notice, so the one tap that lands on a stale card before that
+//     happens gets an honest answer.
+//
+// THE LOCK ITSELF IS NOT WEAKENED. Same-day only, no grace window (§9.5, Ryan's
+// explicit decision). This is about honest feedback, not access.
+// ---------------------------------------------------------------------------
+let lockNotice=null;      // {ds, msg} — module state; a notice must not outlive the page
+let lockNoticeTimer=null;
+const LOCK_NOTICE_MS=6000;
+
+function showLockNotice(ds){
+  lockNotice={ds,msg:'That day is closed — boxes can only be ticked on the day itself.'};
+  if(lockNoticeTimer)clearTimeout(lockNoticeTimer);
+  lockNoticeTimer=setTimeout(function(){lockNotice=null;lockNoticeTimer=null;rerenderAfterToggle();},LOCK_NOTICE_MS);
+  rerenderAfterToggle();
+}
+
+// Re-render whichever page the tap came from. Home owns the day strip, the
+// score box and the status grid, all of which move when a box is ticked.
+function rerenderAfterToggle(){
+  if(document.getElementById('page-training').classList.contains('active'))renderTrainingPage();
+  else renderHome();
 }
 
 // Toggle one exercise on one date. Writes {touched, checked[]} additively.
@@ -269,7 +309,11 @@ function progressHtml(prog,log,editable){
 // scoring no longer reads it, but the frozen legacy path does (§9.5) and §1.4
 // forbids dropping the field.
 export function toggleExercise(ds,idx){
-  if(ds!==today())return;
+  // Refuses to write, exactly as before — but now it SAYS so instead of doing
+  // nothing visible. The re-render inside showLockNotice() also repaints the
+  // card through the read-only path, so a stale interactive card from before a
+  // midnight rollover corrects itself on the first tap.
+  if(ds!==today()){showLockNotice(ds);return;}
   const ex=(getActiveScheduleForDate(ds).exercises||[])[idx];
   if(!ex)return;
   const d=db();
@@ -280,10 +324,10 @@ export function toggleExercise(ds,idx){
   if(at>=0)checked.splice(at,1);else checked.push(ex.name);
   d.exerciseLogs[ds]={touched:true,checked};
   save(d);
-  // Re-render whichever page the tap came from. Home owns the day strip, the
-  // score box and the status grid, all of which move when a box is ticked.
-  if(document.getElementById('page-training').classList.contains('active'))renderTrainingPage();
-  else renderHome();
+  // A successful tick clears any lingering refusal notice — it is no longer
+  // true, and leaving it up would be its own kind of lie.
+  if(lockNotice){lockNotice=null;if(lockNoticeTimer){clearTimeout(lockNoticeTimer);lockNoticeTimer=null;}}
+  rerenderAfterToggle();
 }
 
 // ---------------------------------------------------------------------------
@@ -337,7 +381,7 @@ export function renderPrescription(ds,containerId,interactive){
     let idx=-1;
     const blocks=[];sched.exercises.forEach(ex=>{let b=blocks[blocks.length-1];if(!b||b.name!==ex.block){b={name:ex.block,items:[]};blocks.push(b);}b.items.push(ex);});
     html+=`<div class="rx-exercises">`;
-    html+=progressHtml(prog,log,editable);
+    html+=progressHtml(prog,log,editable,ds);
     blocks.forEach(b=>{
       const isGiant=/Giant Set/i.test(b.name);
       html+=`<div class="rx-block-head">${b.name}</div>`;

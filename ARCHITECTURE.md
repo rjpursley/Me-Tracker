@@ -702,6 +702,48 @@ per-type page/row detail as the nightly and a `hourly:` / `nightly:` /
 `manual:` label, so a loop that silently stops firing leaves a **visible gap
 in the log**, not just numbers that quietly stop moving.
 
+#### The client side — Sync now, and refreshing on foreground
+
+**Added 2026-08-12, client only.** `triggerSync()` and `fetchVitalsDay()` had
+been exported from `js/api.js` since §6 was built and were **called by
+nothing** — the server could sync on demand and the app had no way to ask.
+
+**Sync now lives on the Health Status page**, directly under the "Awaiting
+Sync" panel, because that panel is the thing that goes stale and this is the
+control that fixes it. (The drawer was the alternative and was rejected: it
+holds navigation and backup/restore, and a sync button there would be
+invisible from the page whose numbers it refreshes.) `runSync()` in
+`js/pages/health.js`:
+
+- Re-primes the cache and re-renders on success, so the new numbers appear
+  **without a reload**.
+- Says so plainly on failure, and says the numbers did not change. It never
+  presents a stale reading as fresh (§1.7).
+- Shows `GET /api/sync/status`'s `lastWriteUtc` as a "Server data last
+  written" line, in local time. That is the **server's** last write, not this
+  browser's last fetch — the honest answer to "how old is this".
+- Guards double-taps twice: the button carries `disabled` while a sync is in
+  flight, and `runSync()` itself returns early on a `syncBusy` flag. Same
+  defence-in-depth split as the same-day lock (§9.4) — the attribute is UI,
+  the flag is the guarantee.
+
+**The cache re-primes when the app returns to the foreground.** It used to be
+primed once at boot and never again, so a session left open overnight showed
+yesterday's numbers indefinitely — and Ryan opens this app from his pocket.
+A `visibilitychange` listener in `js/app.js` now handles it, at **two
+speeds, deliberately**:
+
+- The **re-render** runs on every return to the foreground. It is local, costs
+  nothing, and it is what re-evaluates the same-day lock — so a day rollover is
+  caught **even with the server down or Tailscale off**.
+- The **network re-prime** is debounced to once a minute, so flicking between
+  apps does not fire a range fetch each time. Measured: six rapid switches
+  produce exactly one fetch; three more inside the window produce none.
+
+The Log Entry page is deliberately excluded from the foreground re-render: it
+displays no synced value, and `initLogForms()` resets its date inputs to today,
+which would quietly rewrite a date Ryan had typed but not yet saved.
+
 **Nightly sync runs at 04:15 local**, chosen for three reasons:
 - It sits a clean 20 minutes past the end of the Ollama vision window
   (20:30–03:55, §8), which shares the Alienware's GPU/VRAM with a trading
@@ -1588,6 +1630,31 @@ consequence: a dead phone costs a real training day.
   is the guarantee. A future session that changes the render must not be able
   to silently reopen the write path.
 - The card's state line reports the lock. No confirmation dialogs.
+
+##### The silent-refusal hole — fixed 2026-08-12
+
+**The lock is decided at RENDER time from `today()`, and nothing used to
+re-render.** Leave the app open overnight — which is exactly what a phone in a
+gym bag does — and yesterday's card was still on screen rendered *interactive*,
+every button carrying a live `onclick`. The write guard above refused
+correctly, but it refused **silently**: the box did not tick, nothing said why,
+and it looked like a broken app.
+
+Both halves were fixed, and both were needed:
+
+- **The `visibilitychange` re-render (§6.3) re-evaluates the lock**, so a
+  rolled-over day comes back rendered locked instead of falsely interactive.
+  Verified: a stale card with 3 live `onclick` handlers and 0 disabled buttons
+  became 0 handlers and 5 disabled buttons after one foreground event, **with
+  no tap**.
+- **`toggleExercise()`'s refusal is now visible** — a brief plain line in the
+  card's progress row, "That day is closed — boxes can only be ticked on the
+  day itself." Muted styling, no dialog, no colour change, and it clears itself
+  after six seconds or on the next successful tick. Verified: the tap left
+  `metracker_v2` **byte-identical**.
+
+**The lock itself was not weakened.** Same-day only, no grace window. This was
+about honest feedback, not access.
 
 #### The epoch — existing history is frozen
 

@@ -21,10 +21,12 @@
 // ---------------------------------------------------------------------------
 
 import { db, save } from '../store.js';
-import { today, dateStr, addDays } from '../util.js';
+import { today, dateStr, addDays, esc } from '../util.js';
 import { getSleepForDate, calcFastHrs, getWorkoutForDate, calcHGH, calcTest, calcCortisol, getPhase,
          rollingBodyweight, latestWaist, relativeStrength, BODYWEIGHT_WINDOW_DAYS } from '../derive.js';
-import { getCachedVitals } from '../api.js';
+import { getCachedVitals, triggerSync, fetchSyncStatus, primeRecentVitals } from '../api.js';
+import { renderVitalsHeader } from '../components/vitals-header.js';
+import { renderHome } from './home.js';
 
 // ---------------------------------------------------------------------------
 // Body composition — ARCHITECTURE.md §10.
@@ -69,6 +71,118 @@ function renderAwaiting(){
     items.map(i=>`<div class="vh-item"><div class="vh-label">${i.label}</div><div class="vh-value"${i.val!=null?' style="color:var(--accent2)"':''}>${i.val!=null?i.val:'—'}</div><div class="vh-unit">${i.unit}</div></div>`).join('') +
     `<div class="vh-note">${anySynced?'Synced '+v.date:'Awaiting sync — comes from Google Health'}</div>` +
     '</div>';
+}
+
+// ---------------------------------------------------------------------------
+// Sync now — ARCHITECTURE.md §6.3.
+//
+// WHY THIS PAGE: `triggerSync()` and `fetchVitalsDay()` had been exported from
+// api.js since §6 was built and were called by nothing — the server could sync
+// but the app could not ask it to. This control sits directly under the
+// "Awaiting Sync" panel because that panel is the thing that goes stale, and
+// this is what fixes it. (The drawer was the alternative and was rejected: the
+// drawer is navigation plus backup/restore, and a sync button there would be
+// invisible from the page whose numbers it refreshes.)
+//
+// THREE RULES, all of them §1.7 in spirit — never imply data is fresher than
+// it is:
+//   1. A failure says so, plainly, and says the numbers did not change.
+//   2. "Server data last written" reports the SERVER's own last write
+//      (GET /api/sync/status's lastWriteUtc), not when this browser last
+//      fetched. It answers "how old is this data" honestly even when the sync
+//      button has never been pressed.
+//   3. A sync in flight disables the button, so a double-tap cannot fire two
+//      overlapping pulls. `busy` is checked as well, because a disabled
+//      attribute is a UI state and this is the guarantee (same defence-in-depth
+//      pattern as toggleExercise()'s lock, §9.4).
+// ---------------------------------------------------------------------------
+
+// Module state, deliberately not stored: an in-flight sync must not survive a
+// reload, and a result message is about one button press.
+let syncBusy = false;
+let syncMsg = null;        // {text, kind:'info'|'err'|'success'}
+let syncStatus = null;     // last {lastWriteUtc, daysStored} seen, or null
+
+function lastWrittenLabel(){
+  if(!syncStatus || !syncStatus.lastWriteUtc) return 'unknown — the server has not answered';
+  const t = new Date(syncStatus.lastWriteUtc);
+  if(isNaN(t.getTime())) return 'unknown';
+  const mins = Math.round((Date.now() - t.getTime()) / 60000);
+  let rel;
+  if(mins < 1) rel = 'just now';
+  else if(mins < 60) rel = mins + ' min ago';
+  else if(mins < 1440) rel = Math.round(mins / 60) + ' hr ago';
+  else rel = Math.round(mins / 1440) + ' day' + (Math.round(mins / 1440) === 1 ? '' : 's') + ' ago';
+  // Local time, per §12 — the server hands back a UTC instant and the phone
+  // renders it where Ryan is standing.
+  return t.toLocaleString('en-US', {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}) + ' · ' + rel;
+}
+
+export function renderSyncPanel(){
+  const el = document.getElementById('sync-panel');
+  if(!el) return;
+  const cls = syncMsg ? ('alert ' + (syncMsg.kind === 'success' ? 'success' : syncMsg.kind === 'err' ? 'err' : 'info')) : '';
+  const stored = syncStatus && syncStatus.daysStored != null
+    ? syncStatus.daysStored + ' day' + (syncStatus.daysStored === 1 ? '' : 's') + ' stored on the server'
+    : '';
+  el.innerHTML =
+    '<div class="card">' +
+      `<button class="btn btn-primary" onclick="runSync()"${syncBusy ? ' disabled' : ''}>` +
+        (syncBusy ? 'Syncing…' : 'Sync now') +
+      '</button>' +
+      (syncMsg ? `<div class="${cls}" style="margin-top:10px">${esc(syncMsg.text)}</div>` : '') +
+      `<div class="form-note">Server data last written: ${esc(lastWrittenLabel())}</div>` +
+      (stored ? `<div class="form-note">${esc(stored)}</div>` : '') +
+    '</div>';
+}
+
+// Fire-and-forget: the panel renders immediately with whatever is known and
+// updates when the server answers. Never throws (api.js's contract).
+function refreshSyncStatus(){
+  return fetchSyncStatus().then(function(s){
+    syncStatus = s;
+    renderSyncPanel();
+    return s;
+  });
+}
+
+export async function runSync(){
+  if(syncBusy) return;                       // the guarantee, not just the disabled attribute
+  syncBusy = true;
+  syncMsg = {text:'Syncing with Google Health…', kind:'info'};
+  renderSyncPanel();
+
+  const res = await triggerSync();            // no dates: this primes explicitly below
+  if(!res){
+    // Server down, Tailscale off, or a non-200. Say so and say the numbers on
+    // screen did not change — never leave a stale reading looking fresh.
+    syncBusy = false;
+    syncMsg = {text:'Sync failed — the server did not answer. Nothing on this screen has changed.', kind:'err'};
+    renderSyncPanel();
+    return;
+  }
+
+  const primed = await primeRecentVitals();
+  await refreshSyncStatus();
+  syncBusy = false;
+
+  const days = (res.daysWritten || []).length;
+  if(res.errors && res.errors.length){
+    syncMsg = {text:'Sync finished with ' + res.errors.length + ' problem' +
+                    (res.errors.length === 1 ? '' : 's') + ': ' + res.errors[0], kind:'err'};
+  }else if(!primed){
+    syncMsg = {text:'The server synced, but this app could not re-read the data. Reload to be sure.', kind:'err'};
+  }else{
+    syncMsg = {text:'Synced ' + days + ' day' + (days === 1 ? '' : 's') +
+                    (res.start && res.end ? ' (' + res.start + ' to ' + res.end + ')' : '') + '.', kind:'success'};
+  }
+
+  // Re-render off the refreshed cache so the new numbers are on screen without
+  // a reload. renderHome() re-does the score box, the day strip and the home
+  // vitals header; the Training header is the only other mounted consumer.
+  renderHome();
+  renderVitalsHeader('vitals-header-training');
+  renderHealth();
 }
 
 function renderRelativeStrength(){
@@ -122,6 +236,11 @@ export function logBodyMeasurement(){
 
 export function renderHealth(){
   renderBodySummary();renderAwaiting();renderRelativeStrength();
+  // Paint the panel from what is already known, then ask the server for a
+  // fresher answer — same placeholder-then-update pattern the vitals header
+  // uses (§9.3), never a number before there is a source for it.
+  renderSyncPanel();
+  refreshSyncStatus();
   const bodyNow=db().body||{};
   const hEl=document.getElementById('health-height');if(hEl&&bodyNow.height)hEl.value=bodyNow.height;
   const ageEl=document.getElementById('health-age');if(ageEl&&bodyNow.age)ageEl.value=bodyNow.age;

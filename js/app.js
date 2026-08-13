@@ -15,14 +15,15 @@
 // ---------------------------------------------------------------------------
 
 import { db, save, exportData, importData, seedSupplements } from './store.js';
-import { today, dateStr, addDays } from './util.js';
-import { primeVitalsCache } from './api.js';
+// No date helpers imported any more: the boot prime's window maths moved into
+// api.js's primeRecentVitals() so three callers share one definition.
+import { primeRecentVitals } from './api.js';
 
 import {
   renderHome, renderHomeDayContent, buildDayStrip, selectDay
 } from './pages/home.js';
 import { renderCalendar, setCalView, getCalView } from './pages/calendar.js';
-import { renderHealth, saveBodyHeight, saveBodyAge, logBodyMeasurement } from './pages/health.js';
+import { renderHealth, saveBodyHeight, saveBodyAge, logBodyMeasurement, runSync } from './pages/health.js';
 import { renderBody, logSleep, logHR } from './pages/vitals.js';
 import { renderDiet, logMeal, addSupplement, deleteSupplement, moveSupplement, toggleMacroChart } from './pages/dietary.js';
 import { initLogForms, setLogType, logWorkout, saveTargets } from './pages/log.js';
@@ -50,6 +51,13 @@ function showPage(id,title){
   // The score box sits below the fold, so a row tap can land mid-page on the
   // destination. Start every page at the top.
   window.scrollTo(0,0);
+  renderPageById(id);
+}
+
+// Extracted from showPage() so the foreground refresh below can re-render
+// whatever page is already open without navigating to it. One list of
+// page-to-renderer, not two.
+function renderPageById(id){
   if(id==='home')renderHome();
   if(id==='training')renderTrainingPage();
   if(id==='prs')renderPRs();
@@ -98,6 +106,7 @@ window.setCalView=setCalView;
 window.setLogType=setLogType;
 window.saveTargets=saveTargets;
 
+window.runSync=runSync;
 window.saveBodyHeight=saveBodyHeight;
 window.saveBodyAge=saveBodyAge;
 window.logBodyMeasurement=logBodyMeasurement;
@@ -162,19 +171,66 @@ renderHome();
 // placeholders and this re-renders once the fetch actually resolves — never
 // the other way around, which would mean showing something before knowing
 // whether the server has anything at all (§1.7).
+//
+// The window itself (VITALS_PRIME_DAYS) and the date maths now live in
+// api.js's primeRecentVitals(), because the foreground refresh below and the
+// Sync now button need the identical window.
 // ---------------------------------------------------------------------------
-const VITALS_PRIME_DAYS = 15;
-(function primeVitals(){
-  const to = today();
-  const from = dateStr(addDays(new Date(to + 'T12:00:00'), -(VITALS_PRIME_DAYS - 1)));
-  primeVitalsCache(from, to).then(function(){
-    renderVitalsHeader('vitals-header-home');
-    renderVitalsHeader('vitals-header-training');
-    // Home is always mounted; re-render it so a page that loaded before the
-    // fetch resolved (the common case) picks up any activity/sleep data that
-    // changes calcScore()'s output. Training only if it's the active page.
-    renderHome();
-    const trainingPage = document.getElementById('page-training');
-    if(trainingPage && trainingPage.classList.contains('active')) renderTrainingPage();
+function currentPageId(){
+  const active = document.querySelector('.page.active');
+  return active ? active.id.replace(/^page-/, '') : null;
+}
+
+// Re-render everything that can show synced data or a date-dependent state.
+// Home is always re-rendered because it owns the day strip and the score box
+// even when it isn't the visible page.
+function rerenderAfterRefresh(){
+  renderVitalsHeader('vitals-header-home');
+  renderVitalsHeader('vitals-header-training');
+  renderHome();
+  const id = currentPageId();
+  // 'log' is deliberately skipped: it shows no synced value at all, and
+  // initLogForms() resets the date inputs to today, which would quietly
+  // rewrite a date Ryan had typed but not yet saved.
+  if(id && id !== 'home' && id !== 'log') renderPageById(id);
+}
+
+primeRecentVitals().then(rerenderAfterRefresh);
+
+// ---------------------------------------------------------------------------
+// Refresh when the app comes back to the foreground.
+//
+// The cache used to be primed once, at boot, and never again. Ryan opens this
+// app from his pocket: a session left open overnight showed yesterday's
+// numbers indefinitely, and — worse — yesterday's training card still rendered
+// as if it were editable, because the same-day lock (§9.5) is decided at
+// RENDER time from today(). The write guard in toggleExercise() refused
+// correctly, but silently. See the block comment in pages/training.js.
+//
+// TWO SPEEDS, ON PURPOSE:
+//   - The RE-RENDER runs on every return to the foreground. It is local,
+//     costs nothing, and it is what re-evaluates the lock — so a day rollover
+//     is caught even with the server down or Tailscale off.
+//   - The NETWORK re-prime is debounced to once a minute. Flicking between
+//     apps for a few seconds must not fire a range fetch each time.
+// ---------------------------------------------------------------------------
+const FOREGROUND_REPRIME_MIN_MS = 60000;
+let lastReprimeAt = Date.now();   // boot's prime counts as the first one
+let repriming = false;
+
+document.addEventListener('visibilitychange', function(){
+  if(document.visibilityState !== 'visible') return;
+  rerenderAfterRefresh();
+  const now = Date.now();
+  if(repriming || (now - lastReprimeAt) < FOREGROUND_REPRIME_MIN_MS) return;
+  repriming = true;
+  lastReprimeAt = now;
+  primeRecentVitals().then(function(){
+    repriming = false;
+    rerenderAfterRefresh();
+  }, function(){
+    // primeRecentVitals() never rejects (api.js fails soft), but a stuck flag
+    // would disable refreshing for the rest of the session — belt and braces.
+    repriming = false;
   });
-})();
+});

@@ -24,7 +24,16 @@
 // known" — never a fabricated value.
 // ---------------------------------------------------------------------------
 
+import { today, dateStr, addDays } from './util.js';
+
 export const API_BASE = '';
+
+// How many trailing days the cache is primed with. Enough for
+// weeklyRestingHR()'s 7-day window (derive.js) and the Vitals page's 15-day
+// averages. It lives here rather than in app.js because three callers need the
+// same window now — boot, the foreground refresh, and the Sync now button —
+// and three copies of the number is how they drift apart.
+export const VITALS_PRIME_DAYS = 15;
 
 // date string -> summary object from GET /api/vitals/{date} (or GET
 // /api/vitals?from&to's days map), or explicitly null once a lookup has come
@@ -61,6 +70,16 @@ export async function primeVitalsCache(fromDate, toDate){
   return true;
 }
 
+// Primes the standard trailing window ending today. Returns true/false — never
+// throws. Called on boot, whenever the app returns to the foreground, and after
+// a manual sync; `today()` is re-read every time, so a session left open across
+// midnight primes the NEW day rather than yesterday's window.
+export async function primeRecentVitals(){
+  const to = today();
+  const from = dateStr(addDays(new Date(to + 'T12:00:00'), -(VITALS_PRIME_DAYS - 1)));
+  return await primeVitalsCache(from, to);
+}
+
 // Synchronous read for derive.js and the UI — never awaits, never fetches.
 // Returns the cached summary for a date, or null if nothing is cached for it
 // (either never synced, or the cache hasn't been primed this page load yet).
@@ -81,6 +100,14 @@ export async function fetchVitalsDay(dateStr){
   if(body.found === false){ vitalsCache[dateStr] = null; return null; }
   vitalsCache[dateStr] = body;
   return body;
+}
+
+// GET /api/sync/status — {lastWriteUtc, daysStored} (ARCHITECTURE.md §6.5), or
+// null if the server can't be reached. lastWriteUtc is when the SERVER last
+// wrote its store, which is the honest answer to "how fresh is this data" — it
+// is not a claim about this browser's cache.
+export async function fetchSyncStatus(){
+  return await fetchJSON('/api/sync/status');
 }
 
 // POST /api/sync — a manual sync. Re-primes the cache for the same range
