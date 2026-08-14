@@ -36,6 +36,20 @@
 // never queued locally and the mirror is never allowed to diverge from the
 // server — it is a cache, not a second source of truth.
 //
+// ############ DELETE: TODAY IS ERASED, HISTORY IS NOT ############
+//
+// Deleting a library item removes it from the list AND from today's counter,
+// erasing today's count for it so its macros stop counting immediately. EARLIER
+// DAYS ARE NEVER TOUCHED — their snapshots stay exactly as stored, because a
+// delete today must not rewrite a score Ryan has already seen (§13).
+//
+// The server DELETE happens FIRST and the local erase only after it confirms; a
+// failed delete leaves both the library and the count exactly where they were.
+//
+// Re-adding the same product later is a NEW library item with a new server-side
+// id, so it appears in the counter at 0 for today. There is no resurrection of
+// the erased count and no tombstone — and nothing here should ever add one.
+//
 // ############ THE BARCODE PATH — REVIEW BEFORE SAVE (§13.6, §13.7) ############
 //
 // Typed digits only. NO CAMERA, NO LIVE SCANNING, NO IMAGE DECODING, AND NO
@@ -315,12 +329,49 @@ export async function mealSaveFood(){
   renderMeals();
 }
 
+// TODAY ONLY. Removes the item's entry from d.foodCounts[today()] outright, so
+// its macros stop contributing to today's totals and its row leaves the counter.
+// Returns the count that was erased, or -1 when there was no entry to erase —
+// which is a different answer from a count of 0, and the caller only writes when
+// something actually changed.
+//
+// ############ EARLIER DAYS ARE NOT TOUCHED ############
+//
+// Only the today() key is read and only that key is written. Every other date in
+// d.foodCounts is left exactly as stored — that is §13's snapshot rule and
+// deleting an item today must never rewrite history. A loop over d.foodCounts,
+// or anything keyed by id across dates, is the change that breaks it.
+function eraseTodayCount(d,id){
+  const day=d.foodCounts&&d.foodCounts[today()];
+  if(!day||typeof day!=='object'||Array.isArray(day))return -1;
+  if(!(id in day))return -1;
+  const had=+((day[id]&&day[id].count))||0;
+  // An entry sitting at 0 goes too. It was kept so a re-add the same day could
+  // not re-snapshot from an edited library (§8.0) — with the item gone from the
+  // library there is nothing left to re-add, and a re-created item gets a new
+  // server-side id anyway.
+  delete day[id];
+  return had;
+}
+
+// DELETE MAKES THE ITEM DISAPPEAR — from the library list and from TODAY's
+// counter, count and all. Ryan trims this list often and an item that lingers
+// after a delete is the thing this behaviour exists to stop.
+//
+// SERVER FIRST, ALWAYS. The DELETE and the local erase are two separate writes,
+// and a failed server delete must leave BOTH untouched (§1.7) — the same rule
+// every other library write on this page follows. The local erase happens only
+// after the server has confirmed.
 export async function mealDeleteFood(id){
   if(libraryBusy)return;
   const item=mirrorItem(id);
   const counted=countOf(id);
+  // The confirmation names the consequence when there is one to name. At a count
+  // of 0 there is nothing extra to say, so nothing extra is said.
   const warn=counted>0
-    ? '\n\nYou have counted '+counted+' of these today. That count and its macros stay exactly as they are — a counted day keeps its own snapshot.'
+    ? '\n\nToday you have counted '+counted+' of these. Deleting REMOVES today’s '+counted+
+      ' logged serving'+(counted===1?' and its':'s and their')+' macros from today’s total.'+
+      '\n\nEarlier days are not affected — every day already counted keeps its own record exactly as it is.'
     : '';
   if(!confirm('Delete "'+((item&&item.name)||'this food')+'" from the library?'+warn))return;
   libraryBusy=true;
@@ -329,13 +380,25 @@ export async function mealDeleteFood(id){
   const res=await deleteFood(id);
   libraryBusy=false;
   if(!res.ok){
-    libraryMsg={text:res.error+' Nothing was deleted.',kind:'err'};
+    // NOTHING WAS DELETED — not on the server, and not here. The local count is
+    // deliberately left alone: erasing it now would leave the item in the
+    // library with its servings silently gone from today's total.
+    libraryMsg={text:res.error+' Nothing was deleted — the food is still in the library and today’s count is unchanged.',kind:'err'};
     renderMeals();return;
   }
+  const d=db();
+  const erased=eraseTodayCount(d,id);
+  if(erased>=0)save(d);
   adoptLibrary(res.body);
   if(editingId===id){editingId=null;clearForm();}
-  libraryMsg={text:'Deleted. Any day that already counted it keeps its own macros.',kind:'success'};
+  libraryMsg={text:erased>0
+    ? 'Deleted. Today’s '+erased+' serving'+(erased===1?'':'s')+' of it '+(erased===1?'was':'were')+
+      ' removed from today’s total. Earlier days keep their own records unchanged.'
+    : 'Deleted. Earlier days keep their own records unchanged.',kind:'success'};
   renderMeals();
+  // Today's macros just changed, so the score and the day strip have to catch
+  // up — the same re-render ADD and REMOVE already do.
+  renderHome();
 }
 
 export function mealEditFood(id){
@@ -714,6 +777,12 @@ function counterHtml(){
   // Anything counted today that is no longer in the mirror still gets a row —
   // its macros are still in today's total, so hiding it would leave Ryan with
   // numbers he cannot account for. Rendered from its OWN snapshot (§13.5).
+  //
+  // DELETING FROM THIS PHONE NO LONGER LANDS HERE: mealDeleteFood() erases the
+  // day's entry, so there is no count left to orphan and the row simply goes.
+  // This path now covers only the cases where an item left the library some
+  // other way — the server's 120-day purge, or a delete on another browser —
+  // where today's count is genuinely still counting and must be shown.
   const extraIds=Object.keys(counts).filter(id=>!items.some(i=>i.id===id));
   const rows=items.map(i=>({id:i.id,name:i.name,servingText:i.servingText,orphan:false}))
     .concat(extraIds.map(id=>({id,name:counts[id].name,servingText:counts[id].servingText,orphan:true})));

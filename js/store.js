@@ -97,6 +97,10 @@ export function seedSupplements(){return SEED_SUPPLEMENTS.map(s=>({...s}));}
 //   same item later the same day cannot silently re-snapshot from an edited
 //   library. It contributes no macros at 0.
 //
+//   The one thing that REMOVES an entry is deleting that item from the library
+//   (§13.9), and it only ever touches TODAY's date. Every earlier date keeps its
+//   snapshots byte for byte — that is the rule the 120-day purge depends on.
+//
 //   These counts are LOCAL DATA and are never sent to the server (§1.2). There
 //   is no counts endpoint and there must not be one.
 //

@@ -1361,6 +1361,12 @@ An item counted today that has since left the library still gets a row, marked
 as such. Its macros are still in today's total, so hiding it would leave Ryan
 with numbers he cannot account for.
 
+**Amended 2026-08-13 (§13.9): a DELETE from this phone no longer lands there.**
+Deleting a library item erases today's count for it, so there is no orphaned
+count left to render. That row now covers only the cases where an item left the
+library some other way — the server's 120-day purge (§13.5), or a delete on
+another browser — where today's count is genuinely still counting.
+
 #### THE SNAPSHOT RULE — this is the load-bearing part
 
 **An item's per-serving macros are COPIED into the day's record the first time
@@ -2957,3 +2963,121 @@ reference data and re-asking on every lookup would be pure waste.
 - A present-but-unusable value is a **400**, not a silent null: negative
   caffeine, non-numeric caffeine, `novaGroup: 9` and a non-list `tags` all
   reject.
+
+---
+
+### 13.9 Deleting a library item — today is erased, history is not
+
+**Built 2026-08-13, client only** (`js/pages/meals.js`). Ryan trims this list
+often, and an item that lingered in the counter after a delete was the problem
+this fixes. **No server change and no schema change** — `foods.py`, every
+endpoint and every stored shape are untouched.
+
+#### What a delete does, in order
+
+| Step | Effect |
+|---|---|
+| 1. Confirm | Names the consequence when a count exists (below) |
+| 2. `DELETE /api/foods/{id}` | **The server goes first, always** |
+| 3. Server confirmed | `delete d.foodCounts[today()][id]` — the entry goes entirely |
+| 4. Mirror | Refreshed from the DELETE's own response body, as before |
+
+**SERVER FIRST IS THE LOAD-BEARING PART.** The server delete and the local erase
+are two separate writes. **If the server delete fails, NEITHER happens** — the
+message says plainly that nothing was deleted and that today's count is
+unchanged (§1.7), exactly like every other library write on this page. Erasing
+locally on a failed delete would leave the item in the library with its servings
+silently gone from today's total, which is the worse of the two failure shapes.
+
+#### EARLIER DAYS ARE NOT TOUCHED — this is not negotiable
+
+Only the `today()` key of `d.foodCounts` is read and only that key is written.
+Every other date keeps its snapshots **byte for byte**, and their totals re-derive
+to the same numbers forever. This is §13.5's snapshot rule and the whole reason
+the 120-day purge is safe: **deleting an item today must never rewrite history.**
+
+A loop over `d.foodCounts`, or anything that finds an id across dates, is the
+change that breaks this. There is no such loop and there must not be one.
+
+**The purge does not erase counts either.** It is server-side and the client is
+not involved (§13.5); a purged item that somehow still has a count today keeps
+that count and renders as an orphan row (§8.0). Only an explicit delete erases.
+
+#### An entry at 0 is erased too
+
+A count that drops to 0 normally **keeps** its entry and snapshot, so a re-add
+the same day cannot re-snapshot from a library edited in between (§8.0). On a
+delete that reasoning is spent: the item is gone from the library, so there is
+nothing to re-add, and a re-created item gets a **new server-side id** anyway.
+
+#### Re-adding starts fresh — no resurrection, no tombstone
+
+Saving the product again — by hand, or by looking the same barcode up — creates
+a **new library item with a new id**, so it appears in the counter at **0 for
+today**. The erased count does not come back and nothing records that it ever
+existed. Nothing here should ever add a tombstone.
+
+#### The confirmation names the consequence
+
+With a count of 3 today:
+
+> Delete "Monster Energy 16oz" from the library?
+>
+> Today you have counted 3 of these. Deleting REMOVES today's 3 logged servings
+> and their macros from today's total.
+>
+> Earlier days are not affected — every day already counted keeps its own record
+> exactly as it is.
+
+**At a count of 0 there is nothing extra to say and nothing extra is said** — the
+plain existing confirmation, unchanged.
+
+#### Measured
+
+A 3-count delete on a controlled 10-date spread: today's counted macros moved by
+exactly three servings (carbs 186→24, sugar 175→13, calories 840→210, sodium
+1370→260, servings 4→1); `d.foodCounts` changed on **one date only**, today's;
+the other nine dates' macros, caffeine/additive figures, rolling averages and
+**scores were byte-identical**; today's score moved 47→60, entirely the diet
+pillar (10→60) reacting to the erased sugar. A forced server failure left
+`metracker_v2` **byte-identical** with the library and the count both intact.
+
+---
+
+### 13.10 The counter is today-only, and the per-item history is kept on purpose
+
+Two separate facts that a future session will be tempted to conflate.
+
+**DISPLAY: the Meal Tracker shows today and only today.** The counter is built
+from `today()` (§12, local civil day) — the same boundary as training's same-day
+lock (§9.5). There is no date picker, no retroactive editing, and **no
+earlier-day view of any kind** — not itemised, not a totals line. Earlier days
+surface only as aggregates elsewhere: the Dietary page's four cards, the 30-day
+macro chart (§8.3), the caffeine and additive chart (§8.4), and the score.
+
+**STORAGE: every past day keeps its full per-item snapshots, indefinitely.**
+`d.foodCounts[date][id]` — count, name, serving text, macros, `extras`, `flags` —
+is retained for every date, exactly as written on the day.
+
+##### ############ DO NOT COLLAPSE STORAGE INTO DAILY TOTALS ############
+
+**The per-item detail is retained deliberately so later analysis stays
+possible.** "Which product drove that caffeine week" and "what did the day a
+score dropped actually consist of" are answerable only from the items. A future
+session that sees a today-only page and concludes the per-item history is dead
+weight — replacing it with a stored daily total, purging old dates, or
+"normalising" it — is destroying data that cannot be recovered, in exchange for
+kilobytes. **Every day's totals are DERIVED at render time from the snapshots
+(§1.3), never stored, never cached**, so re-deriving from the same snapshots
+gives the same numbers forever. That property is what makes the retention
+worth having.
+
+##### An earlier-day totals line was specified but NOT built
+
+A 2026-08-13 brief asked for earlier days to render "a totals line only, no item
+rows". **That was not implemented, and the reason is recorded here so it is not
+read as an omission:** there is no earlier-day view in the Meal Tracker to
+collapse — the page has been today-only since it was built (§8.0), so the
+described change had nothing to act on. Building one would be a **new screen**,
+not a display rule, and it would need a date picker §8.0 explicitly rules out.
+That is a decision for Ryan, not a session's judgment call.
