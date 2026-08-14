@@ -1364,8 +1364,15 @@ with numbers he cannot account for.
 **Amended 2026-08-13 (§13.9): a DELETE from this phone no longer lands there.**
 Deleting a library item erases today's count for it, so there is no orphaned
 count left to render. That row now covers only the cases where an item left the
-library some other way — the server's 120-day purge (§13.5), or a delete on
-another browser — where today's count is genuinely still counting.
+library some other way — the server's 120-day purge (§13.5), a delete on another
+browser, or a delete whose response was lost — where today's count is genuinely
+still counting.
+
+**Amended again the same day (§13.9.3):** an orphan **at 0** is not rendered at
+all (no macros, no library entry, nothing to act on), an orphan **with servings**
+carries its own **Delete**, and **ADD is disabled on it**. Not rendering a row
+never erases anything — see §13.9.3's rule against sweeping orphans
+automatically.
 
 #### THE SNAPSHOT RULE — this is the load-bearing part
 
@@ -2977,10 +2984,10 @@ endpoint and every stored shape are untouched.
 
 | Step | Effect |
 |---|---|
-| 1. Confirm | Names the consequence when a count exists (below) |
+| 1. Confirm gate | A one-digit keypad naming the consequence (§13.9.2) |
 | 2. `DELETE /api/foods/{id}` | **The server goes first, always** |
-| 3. Server confirmed | `delete d.foodCounts[today()][id]` — the entry goes entirely |
-| 4. Mirror | Refreshed from the DELETE's own response body, as before |
+| 3. Server confirmed **or 404** | `delete d.foodCounts[today()][id]` — the entry goes entirely |
+| 4. Mirror | Refreshed from the DELETE's own response body — or re-fetched, on the 404 path |
 
 **SERVER FIRST IS THE LOAD-BEARING PART.** The server delete and the local erase
 are two separate writes. **If the server delete fails, NEITHER happens** — the
@@ -2988,6 +2995,97 @@ message says plainly that nothing was deleted and that today's count is
 unchanged (§1.7), exactly like every other library write on this page. Erasing
 locally on a failed delete would leave the item in the library with its servings
 silently gone from today's total, which is the worse of the two failure shapes.
+
+#### 13.9.1 A DELETE IS IDEMPOTENT — 404 IS SUCCESS, NOT FAILURE
+
+**Added 2026-08-13, after this bit Ryan for real.**
+
+Server-first handles a server *refusal* correctly. It did **not** handle the
+server deleting successfully and the **response being lost** — a Tailscale blip,
+a backgrounded tab, a timeout. `requestJSON()` reports that as
+`{ok:false, status:0}`, the client bailed before the erase, and the item was gone
+from `foods.json` with today's count **stranded** in `d.foodCounts[today()]` as
+an orphan (§8.0).
+
+**And a retry could not fix it.** `DELETE /api/foods/{id}` raises
+`FoodNotFound` → **404** for an id the library no longer has, the client read
+that as failure too, and the count could never be cleared. *The code treated
+reaching the goal state as an error.*
+
+**THE RULE: a 404 on DELETE means the library does not contain that item, which
+is exactly what the delete asked for. It is treated as success.** The local erase
+proceeds identically. **Every other non-ok status is unchanged** — nothing
+deleted, nothing erased, an honest message.
+
+Two details that matter:
+
+- **A 404 body carries no library snapshot**, so `adoptLibrary()` is not called
+  with it. The library is **re-fetched** (`refreshLibrary()`, the same call the
+  page open uses) and adopted from that.
+- **If the re-fetch fails, the mirror is left alone and the message says so. The
+  local erase is NOT undone.** A stale mirror is a display problem; re-stranding
+  the count would put Ryan back in the state this path exists to get him out of.
+
+The 404 path says something different from the clean one, because it happened
+for a different reason: *"That food was already gone from the server. Today's
+count has been cleared."*
+
+#### 13.9.2 The confirm gate — the keypad, not `confirm()`
+
+Delete used a native `confirm()`. It now uses an **in-page keypad gate** modelled
+on the training pause gate (§9.2) and reusing its `.keypad-*` styles verbatim —
+same reasoning §9.2 already records: a confirm sheet is one tap away from the
+same accident, rendered right where the thumb is already travelling. Deliberate-
+action protection, **not security**.
+
+- **One digit, not three.** Pause and Start are one-way decisions about a
+  12-week program; a food can be retyped in a minute. One digit stops a pocket
+  mis-tap while staying quick enough that Ryan will still trim the list.
+- **A fresh random digit every time it opens**, so the entry cannot become
+  muscle memory.
+- **The gate replaces the page while it is open** — the same reasoning the
+  review card records (§13.7). It renders in the counter mount, which is the top
+  of the page, so it is on screen whether Delete was tapped on an orphan row up
+  there or a library row further down.
+- **A wrong digit clears the entry, says so, and leaves the gate OPEN** with the
+  same challenge. Cancel closes it. **Both write nothing, locally or on the
+  server** — measured byte-identical.
+- It states the consequence **before** the keypad: the item name, then the
+  today's-count sentence when there is a count, then the earlier-days sentence.
+  Same wording as the message the delete itself uses — one text, one place.
+
+**There are now two keypad gates in two files** (`training.js`, `meals.js`).
+§9.2 anticipated this and said to extract one to `js/components/` when a second
+consumer appeared. **That extraction was deliberately NOT done here** — the two
+differ in length, copy and commit action, and refactoring the gate that guards
+the one-way "Start program" transition was out of scope for a delete fix. It is
+the obvious next cleanup and is flagged, not forgotten.
+
+#### 13.9.3 Orphan rows — shown when they count, never swept
+
+An **orphan** is an id with a count today whose item is not in the mirror. After
+§13.9.1 the honest causes are the 120-day purge, a delete on another browser, and
+a delete whose response was lost.
+
+| Rule | Why |
+|---|---|
+| An orphan **with servings** renders, marked, with **Delete** | Its macros are in today's total; without a Delete there is no way to clear it — the exact dead end §13.9.1 describes |
+| An orphan **at 0** does not render | No macros, no library entry, nothing to act on — pure noise. **Its stored entry is left alone; not rendering is a display decision, not an erase** |
+| A **library** item at 0 still renders | Different rule, and it stays (§8.0): the entry is kept so a same-day re-add cannot re-snapshot from an edited library |
+| **ADD is disabled on an orphan row** | `mealAdd()` already refuses and explains; this stops the dead tap looking live. REMOVE stays enabled |
+| The orphan's Delete is the **same** `mealDeleteFood()` | Same gate, same code path, same 404 handling. **There is no second delete path, no "clear" button, and there must not be one** |
+
+##### ############ NEVER AUTO-ERASE AN ORPHAN ############
+
+**No code may clear orphan counts automatically — not on load, not on render,
+not after a fetch.** The mirror is a cache: with the server unreachable at boot
+it can be stale or, on a fresh phone, **empty**, and then *every* counted item
+reads as an orphan. An automatic sweep would silently destroy a real day's log
+because Tailscale was flaky.
+
+Every erase is a deliberate tap through the gate. Measured: opening the page with
+the mirror force-emptied left `d.foodCounts` **byte-identical**; the only key a
+page open writes is `foodLibraryFetchedAt`.
 
 #### EARLIER DAYS ARE NOT TOUCHED — this is not negotiable
 
@@ -3017,30 +3115,45 @@ a **new library item with a new id**, so it appears in the counter at **0 for
 today**. The erased count does not come back and nothing records that it ever
 existed. Nothing here should ever add a tombstone.
 
-#### The confirmation names the consequence
+#### The gate names the consequence
 
 With a count of 3 today:
 
-> Delete "Monster Energy 16oz" from the library?
+> **Delete "Monster Energy 16oz"?**
 >
-> Today you have counted 3 of these. Deleting REMOVES today's 3 logged servings
+> Today you have counted 3 of these. Deleting erases today's 3 logged servings
 > and their macros from today's total.
 >
 > Earlier days are not affected — every day already counted keeps its own record
 > exactly as it is.
+>
+> Type this number to delete it.  **7**
 
-**At a count of 0 there is nothing extra to say and nothing extra is said** — the
-plain existing confirmation, unchanged.
+**At a count of 0 the first sentence is simply absent** — there is nothing extra
+to say, so nothing extra is said.
 
 #### Measured
 
-A 3-count delete on a controlled 10-date spread: today's counted macros moved by
-exactly three servings (carbs 186→24, sugar 175→13, calories 840→210, sodium
-1370→260, servings 4→1); `d.foodCounts` changed on **one date only**, today's;
-the other nine dates' macros, caffeine/additive figures, rolling averages and
-**scores were byte-identical**; today's score moved 47→60, entirely the diet
-pillar (10→60) reacting to the erased sugar. A forced server failure left
-`metracker_v2` **byte-identical** with the library and the count both intact.
+A 3-count delete against a **real server** (an isolated copy of `app.py` +
+`foods.py` on a throwaway port, its own `foods.json`): today's counted macros
+moved by exactly three servings (carbs 186→24, sugar 175→13, calories 840→210,
+sodium 1370→260, servings 4→1); `d.foodCounts` changed on **one date only**,
+today's; the other nine dates in a 10-date spread had **byte-identical** macros,
+caffeine/additive figures and scores; today's score moved 47→60, entirely the
+diet pillar (10→60) reacting to the erased sugar.
+
+**The lost-response bug, reproduced end to end:** the item was deleted from
+`foods.json` out of band, the page reopened, and it appeared as an orphan row
+with its count of 1, ADD disabled, Delete present. Deleting it drew a real
+**404** from the real server, which the new path treated as success: the count
+cleared, the message read *"That food was already gone from the server. Today's
+count has been cleared,"* and the earlier day holding the same item stayed
+**byte-identical**.
+
+**With the server stopped**, a delete of a library item and of an orphan both
+left `metracker_v2` **byte-identical** (first differing index −1), the mirror
+untouched and the message honest. A wrong digit and Cancel likewise wrote
+nothing.
 
 ---
 

@@ -28,6 +28,7 @@ import { renderBody, logSleep, logHR } from './pages/vitals.js';
 import { renderDiet, logMeal, addSupplement, deleteSupplement, moveSupplement, toggleMacroChart,
          toggleIntakeChart } from './pages/dietary.js';
 import { openMeals, mealAdd, mealRemove, mealSaveFood, mealEditFood, mealCancelEdit, mealDeleteFood,
+         mealDeleteGateKey, mealDeleteGateBack, mealDeleteGateCancel,
          mealBarcodeTyped, mealBarcodeLookup, mealScanRecalc, mealScanEdited, mealScanServingTouched,
          mealScanRoute, mealScanCancel, mealScanSave, mealClearPendingBarcode } from './pages/meals.js';
 import { initLogForms, setLogType, logWorkout, saveTargets } from './pages/log.js';
@@ -136,6 +137,12 @@ window.mealSaveFood=mealSaveFood;
 window.mealEditFood=mealEditFood;
 window.mealCancelEdit=mealCancelEdit;
 window.mealDeleteFood=mealDeleteFood;
+// The delete confirm gate (§13.9) — the same keypad pattern as the training
+// pause gate, and the only way a delete commits. Nothing is written while it is
+// open; a wrong digit and Cancel both leave the store and the library alone.
+window.mealDeleteGateKey=mealDeleteGateKey;
+window.mealDeleteGateBack=mealDeleteGateBack;
+window.mealDeleteGateCancel=mealDeleteGateCancel;
 // The barcode path (§13.6, §13.7). A lookup writes nothing; only mealScanSave()
 // creates or updates anything, and only from an explicit tap.
 window.mealBarcodeTyped=mealBarcodeTyped;

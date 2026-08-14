@@ -354,6 +354,27 @@ function eraseTodayCount(d,id){
   return had;
 }
 
+// The name to show for an id, whether or not it is still in the library. An
+// orphan row (§8.0) has no library entry, so its name comes from the snapshot
+// the day already holds — never a blank or an id.
+function displayName(id){
+  const item=mirrorItem(id);
+  if(item&&item.name)return item.name;
+  const e=todayCounts()[id];
+  return (e&&e.name)||'this food';
+}
+
+// The consequence, in words, for the gate to show. Reused verbatim by the delete
+// itself — one wording, one place.
+function deleteWarnLines(id){
+  const n=countOf(id);
+  const lines=[];
+  if(n>0)lines.push('Today you have counted '+n+' of these. Deleting erases today’s '+n+
+                    ' logged serving'+(n===1?' and its':'s and their')+' macros from today’s total.');
+  lines.push('Earlier days are not affected — every day already counted keeps its own record exactly as it is.');
+  return lines;
+}
+
 // DELETE MAKES THE ITEM DISAPPEAR — from the library list and from TODAY's
 // counter, count and all. Ryan trims this list often and an item that lingers
 // after a delete is the thing this behaviour exists to stop.
@@ -362,43 +383,162 @@ function eraseTodayCount(d,id){
 // and a failed server delete must leave BOTH untouched (§1.7) — the same rule
 // every other library write on this page follows. The local erase happens only
 // after the server has confirmed.
-export async function mealDeleteFood(id){
+//
+// ############ A DELETE IS IDEMPOTENT: 404 IS SUCCESS, NOT FAILURE ############
+//
+// The server can delete successfully and the RESPONSE still be lost — a
+// Tailscale blip, a backgrounded tab, a timeout. requestJSON() reports that as
+// {ok:false, status:0}, the client bails, and the item is gone from foods.json
+// with today's count stranded here as an orphan. Retrying used to be no help:
+// the server answers 404 for an id it no longer has, which the client also read
+// as failure, so the count could never be cleared. THIS HAPPENED FOR REAL.
+//
+// 404 means the library does not contain that item — which is precisely the
+// state the delete was asking for. It is therefore treated as success and the
+// local erase proceeds. Every OTHER non-ok status keeps the old behaviour
+// exactly: nothing deleted, nothing erased, and a message that says so.
+// ONE ENTRY POINT, from the library list and from an orphan row alike. It only
+// opens the gate — runDelete() below is what the gate calls once a digit
+// matches, and it is the only place a delete is actually performed.
+export function mealDeleteFood(id){
   if(libraryBusy)return;
-  const item=mirrorItem(id);
-  const counted=countOf(id);
-  // The confirmation names the consequence when there is one to name. At a count
-  // of 0 there is nothing extra to say, so nothing extra is said.
-  const warn=counted>0
-    ? '\n\nToday you have counted '+counted+' of these. Deleting REMOVES today’s '+counted+
-      ' logged serving'+(counted===1?' and its':'s and their')+' macros from today’s total.'+
-      '\n\nEarlier days are not affected — every day already counted keeps its own record exactly as it is.'
-    : '';
-  if(!confirm('Delete "'+((item&&item.name)||'this food')+'" from the library?'+warn))return;
+  openDeleteGate(id);
+}
+
+async function runDelete(id){
+  if(libraryBusy)return;
   libraryBusy=true;
   libraryMsg={text:'Deleting…',kind:'info'};
   renderMeals();
   const res=await deleteFood(id);
   libraryBusy=false;
-  if(!res.ok){
+
+  // A 404 body carries no library snapshot, so the mirror cannot be adopted
+  // from it — it is re-fetched instead, further down.
+  const alreadyGone=!res.ok&&res.status===404;
+  if(!res.ok&&!alreadyGone){
     // NOTHING WAS DELETED — not on the server, and not here. The local count is
     // deliberately left alone: erasing it now would leave the item in the
     // library with its servings silently gone from today's total.
-    libraryMsg={text:res.error+' Nothing was deleted — the food is still in the library and today’s count is unchanged.',kind:'err'};
+    //
+    // The library clause is only claimed for an item that IS in the mirror. On
+    // an orphan row it would be a plain untruth, and a message that overstates
+    // what it knows is the thing §1.7 exists to stop.
+    libraryMsg={text:res.error+' Nothing was deleted — '+
+                     (mirrorItem(id)?'the food is still in the library and today’s count is unchanged.'
+                                    :'today’s count is unchanged.'),kind:'err'};
     renderMeals();return;
   }
+
   const d=db();
   const erased=eraseTodayCount(d,id);
   if(erased>=0)save(d);
-  adoptLibrary(res.body);
   if(editingId===id){editingId=null;clearForm();}
-  libraryMsg={text:erased>0
-    ? 'Deleted. Today’s '+erased+' serving'+(erased===1?'':'s')+' of it '+(erased===1?'was':'were')+
-      ' removed from today’s total. Earlier days keep their own records unchanged.'
-    : 'Deleted. Earlier days keep their own records unchanged.',kind:'success'};
+  const servings=erased>0
+    ? ' Today’s '+erased+' serving'+(erased===1?'':'s')+' of it '+(erased===1?'was':'were')+
+      ' cleared from today’s total.'
+    : '';
+
+  if(alreadyGone){
+    // THE LOCAL ERASE HAS ALREADY HAPPENED AND IS NOT UNDONE. If the re-fetch
+    // fails the mirror is left exactly as it was and the message says so — a
+    // stale mirror is a display problem, whereas re-stranding the count would
+    // put Ryan back in the state this whole path exists to get him out of.
+    const refreshed=await refreshLibrary();
+    libraryMsg={text:'That food was already gone from the server. Today’s count has been cleared.'+servings+
+                     (refreshed?'':' The food list on this phone could not be refreshed just now, so it may still show it.'),
+                kind:'info'};
+  }else{
+    adoptLibrary(res.body);
+    libraryMsg={text:'Deleted.'+servings+' Earlier days keep their own records unchanged.',kind:'success'};
+  }
   renderMeals();
   // Today's macros just changed, so the score and the day strip have to catch
   // up — the same re-render ADD and REMOVE already do.
   renderHome();
+}
+
+// ---------------------------------------------------------------------------
+// THE DELETE GATE — deliberate-action protection, not security.
+//
+// Modelled on training.js's pause gate (§9.2) and reusing its .keypad-* styles
+// verbatim: a random challenge, a keypad, and the action commits only on an
+// exact match. It replaced a native confirm() for the reason §9.2 already
+// records — a confirm sheet is one tap away from the same accident, rendered
+// right where the thumb is already travelling — and because a delete here now
+// erases today's count as well as the library item.
+//
+// ONE DIGIT, not three. Pause and Start are one-way decisions about a 12-week
+// program; this is a food Ryan can retype in a minute. The gate exists to stop a
+// pocket mis-tap, and one digit does that while staying quick enough that he
+// will not resent trimming the list.
+//
+// A FRESH DIGIT EVERY TIME the gate opens, so the entry cannot become muscle
+// memory. Module state, never stored — an abandoned gate dies with the page.
+// While it is open NOTHING is written, locally or on the server: a wrong digit
+// and Cancel both leave the store and the library exactly as they were.
+// ---------------------------------------------------------------------------
+let delGate=null;   // null when closed, else {id, code, entry, msg}
+
+function newDeleteChallenge(){return String(Math.floor(Math.random()*10));}
+
+function openDeleteGate(id){
+  delGate={id,code:newDeleteChallenge(),entry:'',msg:''};
+  libraryMsg=null;
+  renderMeals();
+}
+
+export function mealDeleteGateCancel(){
+  // Nothing was written, so there is nothing to undo.
+  delGate=null;
+  libraryMsg={text:'Nothing was deleted.',kind:'info'};
+  renderMeals();
+}
+
+export function mealDeleteGateBack(){
+  if(!delGate)return;
+  delGate.entry='';delGate.msg='';
+  renderMeals();
+}
+
+export function mealDeleteGateKey(k){
+  if(!delGate)return;
+  if(k===delGate.code){
+    const id=delGate.id;
+    delGate=null;
+    renderMeals();
+    runDelete(id);
+    return;
+  }
+  // WRONG DIGIT: nothing is written and the gate STAYS OPEN. The challenge does
+  // not move either — a number that changed mid-attempt would punish a fumbled
+  // thumb twice, the same reasoning the pause gate records.
+  delGate.entry='';
+  delGate.msg='That is not the number shown. Nothing changed.';
+  renderMeals();
+}
+
+// The consequence is stated BEFORE the keypad, in the order Ryan reads it:
+// what is being deleted, what it costs today, and what it does not touch.
+function deleteGateHtml(){
+  const g=delGate;
+  const slot=`<span class="keypad-slot${g.entry?' is-filled':''}">${esc(g.entry)}</span>`;
+  const key=k=>`<button class="keypad-key" onclick="mealDeleteGateKey('${k}')">${k}</button>`;
+  const keys=['1','2','3','4','5','6','7','8','9'].map(key).join('');
+  return '<div class="pause-card">'+
+    '<div class="pause-state">Delete “'+esc(displayName(g.id))+'”?</div>'+
+    deleteWarnLines(g.id).map(l=>'<div class="pause-hint">'+esc(l)+'</div>').join('')+
+    '<div class="pause-sub">Type this number to delete it.</div>'+
+    '<div class="keypad-code">'+g.code+'</div>'+
+    '<div class="keypad-entry">'+slot+'</div>'+
+    (g.msg?'<div class="keypad-msg">'+esc(g.msg)+'</div>':'')+
+    '<div class="keypad">'+keys+
+      '<span class="keypad-spacer"></span>'+
+      key('0')+
+      '<button class="keypad-key keypad-alt" onclick="mealDeleteGateBack()">⌫</button>'+
+    '</div>'+
+    '<button class="pause-btn keypad-cancel" onclick="mealDeleteGateCancel()">Cancel</button>'+
+  '</div>';
 }
 
 export function mealEditFood(id){
@@ -781,9 +921,20 @@ function counterHtml(){
   // DELETING FROM THIS PHONE NO LONGER LANDS HERE: mealDeleteFood() erases the
   // day's entry, so there is no count left to orphan and the row simply goes.
   // This path now covers only the cases where an item left the library some
-  // other way — the server's 120-day purge, or a delete on another browser —
-  // where today's count is genuinely still counting and must be shown.
-  const extraIds=Object.keys(counts).filter(id=>!items.some(i=>i.id===id));
+  // other way — the server's 120-day purge, a delete on another browser, or a
+  // delete whose response was lost — where today's count is genuinely still
+  // counting and must be shown.
+  //
+  // AN ORPHAN AT ZERO IS NOT SHOWN. It contributes no macros and has no library
+  // entry, so the row would be pure noise with nothing to act on. A LIBRARY item
+  // at zero still gets its row — that is a different rule and it stays (§8.0):
+  // the entry is kept so a same-day re-add cannot re-snapshot from an edited
+  // library.
+  //
+  // NOTHING HERE ERASES ANYTHING. Not showing a row is a display decision; an
+  // orphan's stored count is left exactly where it is, including at zero. See
+  // the block above renderMeals() for why an automatic sweep would be a bug.
+  const extraIds=Object.keys(counts).filter(id=>!items.some(i=>i.id===id)&&countOf(id)>0);
   const rows=items.map(i=>({id:i.id,name:i.name,servingText:i.servingText,orphan:false}))
     .concat(extraIds.map(id=>({id,name:counts[id].name,servingText:counts[id].servingText,orphan:true})));
 
@@ -811,8 +962,14 @@ function counterHtml(){
   html+='<div class="card">';
   html+=rows.map(r=>{
     const n=countOf(r.id);
-    return `<div class="fc-row">`+
-      `<button class="fc-btn" onclick="mealAdd('${esc(r.id)}')">ADD</button>`+
+    // is-orphan only carries LAYOUT (the extra Delete button wraps to its own
+    // line rather than crushing the name to one character per line at 393pt).
+    // No colour, no state.
+    return `<div class="fc-row${r.orphan?' is-orphan':''}">`+
+      // ADD IS DEAD ON AN ORPHAN and says so by being disabled. mealAdd() already
+      // refuses and explains when the mirror has no item — this stops the tap
+      // that earns that message from looking like it should work.
+      `<button class="fc-btn" onclick="mealAdd('${esc(r.id)}')"${r.orphan?' disabled':''}>ADD</button>`+
       `<button class="fc-btn fc-btn-remove" onclick="mealRemove('${esc(r.id)}')"${n===0?' disabled':''}>REMOVE</button>`+
       `<div class="fc-count${n>0?' is-on':''}">${n}</div>`+
       `<div class="fc-body">`+
@@ -820,6 +977,12 @@ function counterHtml(){
         `<div class="fc-serving">${r.servingText?'1 = '+esc(r.servingText):'serving size not recorded'}</div>`+
         (r.orphan?`<div class="fc-serving">No longer in the library — today’s count keeps its own macros.</div>`:'')+
       `</div>`+
+      // THE SAME DELETE, not a second one. An orphan has no row in the library
+      // list below, so without this there is no way to clear it — which is
+      // exactly the state a lost DELETE response leaves Ryan in. It calls
+      // mealDeleteFood() like every other Delete: same gate, same code path, and
+      // the server's 404 now reads as success.
+      (r.orphan?`<button class="fl-btn fl-del" onclick="mealDeleteFood('${esc(r.id)}')">Delete</button>`:'')+
     `</div>`;
   }).join('');
   html+=`<div class="form-note">Counts are for today only and are saved on this phone. They work with the server switched off.</div>`;
@@ -1088,6 +1251,18 @@ function libraryHtml(){
 // RENDERS FROM THE MIRROR FIRST, ALWAYS. The page paints before any network
 // call is made, so it is instant and it works with the server down. The fetch
 // below only ever improves what is already on screen.
+//
+// ############ NOTHING HERE MAY ERASE AN ORPHAN COUNT ############
+//
+// It is tempting to have this — or openMeals(), or the library refresh — sweep
+// up counts whose item is no longer in the mirror. IT MUST NOT. The mirror is a
+// cache: with the server unreachable at boot it can be stale or, on a fresh
+// phone, empty, and then EVERY counted item looks like an orphan. An automatic
+// sweep would silently destroy a real day's log because Tailscale was flaky.
+//
+// An orphan count is only ever cleared by a deliberate tap through the delete
+// gate. A row that is merely not rendered (an orphan at zero) still keeps its
+// stored entry untouched.
 export function renderMeals(){
   const counter=document.getElementById('meal-counter');
   const library=document.getElementById('meal-library');
@@ -1096,6 +1271,16 @@ export function renderMeals(){
   // also called by ADD/REMOVE and by the background library refresh, and either
   // would otherwise throw away an edit Ryan had typed but not yet saved.
   captureScan();
+  // THE GATE REPLACES THE PAGE while it is open — the same reasoning the review
+  // card records: one screen, one decision, nothing else in reach of the thumb.
+  // It renders in the counter mount because that is the top of the page, so it
+  // is on screen whether Delete was tapped on an orphan row up here or on a
+  // library row further down.
+  if(delGate){
+    counter.innerHTML=deleteGateHtml();
+    library.innerHTML='';
+    return;
+  }
   counter.innerHTML=counterHtml();
   library.innerHTML=libraryHtml();
   if(editingId)fillForm(mirrorItem(editingId));
@@ -1106,26 +1291,32 @@ export function renderMeals(){
 export function openMeals(){
   libraryMsg=null;
   editingId=null;
-  // An abandoned review, a half-typed barcode and a not-found code all die with
-  // the page. None of them was ever written anywhere.
+  // An abandoned review, a half-typed barcode, a not-found code and an
+  // unanswered delete gate all die with the page. None of them was ever written
+  // anywhere. NOTE: closing the gate cancels the delete — it does not perform
+  // it, and it does not erase anything.
   scan=null;
   pendingBarcode=null;
   barcodeInput='';
+  delGate=null;
   renderMeals();
   refreshLibrary();
 }
 
+// Returns whether the mirror was actually refreshed, so the idempotent-delete
+// path can say honestly whether the list on screen is current. openMeals()
+// ignores the answer, exactly as before.
 function refreshLibrary(){
-  if(fetchState==='fetching')return;
+  if(fetchState==='fetching')return Promise.resolve(false);
   fetchState='fetching';
   return fetchFoods().then(function(res){
-    if(res.ok&&adoptLibrary(res.body)){
-      fetchState='ok';
-    }else{
-      // The mirror is LEFT ALONE. A failed fetch must not empty it — that
-      // would turn a network blip into a phone that thinks Ryan owns no foods.
-      fetchState='failed';
-    }
+    const ok=!!(res.ok&&adoptLibrary(res.body));
+    // The mirror is LEFT ALONE on failure. A failed fetch must not empty it —
+    // that would turn a network blip into a phone that thinks Ryan owns no
+    // foods, and (with the counter's orphan rule) into a page that thinks every
+    // counted food had vanished.
+    fetchState=ok?'ok':'failed';
     renderMeals();
+    return ok;
   });
 }
