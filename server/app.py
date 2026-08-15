@@ -200,12 +200,17 @@ def foods_delete(item_id: str):
 def foods_used(item_id: str):
     """Called on every ADD from the Meal Tracker page, fire-and-forget. It only
     pushes the item's purge date out; the count itself is local data that has
-    already succeeded, and a failure here must never undo it."""
+    already succeeded, and a failure here must never undo it.
+
+    useCount comes back so the response says what was actually written, but the
+    client ignores it — it reads the counter off the mirror like every other
+    field. It is an ordering signal, never a serving count (§13.11)."""
     try:
         item = foods.mark_used(item_id)
     except foods.FoodNotFound:
         raise HTTPException(status_code=404, detail="No food with that id.")
-    return {"id": item["id"], "lastUsedAt": item["lastUsedAt"]}
+    return {"id": item["id"], "lastUsedAt": item["lastUsedAt"],
+            "useCount": item.get(foods.USE_COUNT_FIELD)}
 
 
 # -----------------------------------------------------------------------------

@@ -133,6 +133,56 @@ EXTRA_FIELDS = ("caffeine", "potassium", "calcium", "iron", "magnesium", "zinc")
 CAPTURE_FIELDS = ("extras", "flags")
 ALLOWED_NOVA = (1, 2, 3, 4)
 
+# ---------------------------------------------------------------------------
+# §13.11 — the usage counter. ONE MORE ADDITIVE FIELD, same boundary as all of
+# the above.
+#
+#   useCount   how many times mark_used() has fired for this item, ever.
+#
+# ############ IT IS A SIGNAL, NOT A MEASUREMENT ############
+#
+# THIS IS NOT A SERVING COUNT AND NOTHING MAY TREAT IT AS ONE. The servings Ryan
+# ate are local data in d.foodCounts (§1.2) and are never sent here; this number
+# only counts how many times an ADD tap managed to reach this server. A phone
+# that counted six servings with Tailscale down leaves this at zero, and the six
+# servings are still exactly as real. It exists so the client can order a
+# "most commonly used" shortlist, and NOTHING ELSE MAY READ IT. It is not scored
+# (§11), and it never contributes to any number the client derives from its own
+# daily counts.
+#
+# ABSENCE IS THE BOUNDARY (§1.4), exactly as for the fields above. An item that
+# predates this simply has no useCount, and NOTHING BACKFILLS ONE — there is no
+# way to know how often it was eaten before the counter existed, and writing 0
+# would claim it was never eaten. A NEW item is not given one either: created is
+# not used, the same reason lastUsedAt starts null. The key appears on the first
+# mark_used() and not before.
+# ---------------------------------------------------------------------------
+USE_COUNT_FIELD = "useCount"
+
+# ---------------------------------------------------------------------------
+# §13.11 — the meal-prep group. Additive, optional, and NOT SCORED (§11).
+#
+#   mealPrep           True, or absent. Ryan batch-cooks this one.
+#   mealPrepServings   how many servings one batch yields
+#   mealPrepDays       how many days that batch is meant to cover
+#
+# ############ THE FLAG IS THE BOUNDARY, AND False IS NEVER STORED ############
+#
+# An item is a meal-prep item or the key is not there. `mealPrep: False` is
+# never written — it would be a backfill wearing a different hat, and it would
+# make every item that predates this look like a deliberate "not meal prep"
+# rather than an item saved before the idea existed.
+#
+# THE TWO SUPPORTING FIELDS ONLY EXIST ALONGSIDE THE FLAG. Clearing the flag
+# clears them, the same rule that ties `flags` to a barcode: servings-per-batch
+# on something Ryan does not batch-cook is a number with nothing to describe.
+#
+# NOTHING HERE FEEDS A SCORE OR A RANKING. A meal-prep item is pinned by the
+# client because Ryan said so, never because of how often it is used — the two
+# are computed independently and neither may reorder the other (§13.11).
+# ---------------------------------------------------------------------------
+MEAL_PREP_FIELDS = ("mealPrep", "mealPrepServings", "mealPrepDays")
+
 # Serialises read-modify-write. The purge runs on a worker thread out of the
 # nightly loop while request handlers run on FastAPI's threadpool; without this
 # two of them could each read the file, each edit their own copy, and the
@@ -320,6 +370,81 @@ def _clean_serving_grams(value):
     return int(num) if float(num).is_integer() else round(num, 2)
 
 
+def _clean_meal_prep_flag(value):
+    """True, or None. NEVER False — see the header above.
+
+    Accepts the shapes a JSON client actually sends for a checkbox: a real
+    boolean, and the strings/numbers a form might produce. Anything falsy, and
+    anything unrecognised, comes back None so the key is simply omitted."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return True if value else None
+    if isinstance(value, (int, float)):
+        return True if value else None
+    text = str(value).strip().lower()
+    return True if text in ("true", "1", "yes", "on") else None
+
+
+def _clean_batch_count(value, field):
+    """A servings-per-batch or days-covered figure: a number greater than zero,
+    or None. STRICTLY POSITIVE, for the same reason servingGrams is — a batch of
+    zero servings is not a measurement, it is a batch that does not exist."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        raise FoodValidationError(f"{field} must be a number.")
+    if num != num or num in (float("inf"), float("-inf")) or num <= 0:
+        raise FoodValidationError(f"{field} must be a number greater than zero.")
+    return int(num) if float(num).is_integer() else round(num, 2)
+
+
+def _clean_meal_prep_fields(payload, existing=None):
+    """The three meal-prep fields, merged over whatever is already stored.
+
+    A KEY THE PAYLOAD DOES NOT MENTION IS LEFT ALONE — the same rule the barcode
+    and capture groups follow, and for the same reason: the barcode review card
+    knows nothing about meal prep and posts a payload without it, and a save from
+    there must not quietly un-flag an item Ryan had marked."""
+    merged = {k: (existing or {}).get(k) for k in MEAL_PREP_FIELDS}
+    if "mealPrep" in payload:
+        merged["mealPrep"] = _clean_meal_prep_flag(payload.get("mealPrep"))
+    if "mealPrepServings" in payload:
+        merged["mealPrepServings"] = _clean_batch_count(
+            payload.get("mealPrepServings"), "mealPrepServings")
+    if "mealPrepDays" in payload:
+        merged["mealPrepDays"] = _clean_batch_count(
+            payload.get("mealPrepDays"), "mealPrepDays")
+
+    # Clearing the flag clears the batch figures with it — they only ever
+    # described a batch, and this item is no longer batched.
+    if not merged["mealPrep"]:
+        merged["mealPrepServings"] = None
+        merged["mealPrepDays"] = None
+
+    return {k: v for k, v in merged.items() if v is not None}
+
+
+def _stored_use_count(item):
+    """The item's useCount as a non-negative int, treating absent, unreadable
+    and negative alike as 0.
+
+    NEVER RAISES. This is read on the write path of a fire-and-forget ping; a
+    hand-edited file must not be able to break an ADD. bool is checked first
+    because in Python True is an int, and a stray `useCount: true` counting as
+    one use would be an invented number."""
+    v = item.get(USE_COUNT_FIELD)
+    if isinstance(v, bool):
+        return 0
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return 0
+    return n if n > 0 else 0
+
+
 def _clean_extras(payload):
     """The six `extras`, or None when not one of them is known.
 
@@ -458,12 +583,15 @@ def _normalise_stored(item):
         "updatedAt": item.get("updatedAt"),
         "lastUsedAt": item.get("lastUsedAt", None),
     }
-    # ABSENT STAYS ABSENT. Unlike the fields above, these four are NOT filled in
-    # with nulls — an item that predates the barcode path must keep reading as
-    # one, and materialising `barcode: null` on every old record would be the
-    # backfill §1.4 and §13.6 both rule out. Passed through unvalidated on
-    # purpose: load_items() must never raise over a hand-edited file.
-    for f in BARCODE_FIELDS + CAPTURE_FIELDS:
+    # ABSENT STAYS ABSENT. Unlike the fields above, these are NOT filled in with
+    # nulls — an item that predates the barcode path must keep reading as one,
+    # and materialising `barcode: null` on every old record would be the backfill
+    # §1.4 and §13.6 both rule out. useCount and the meal-prep group join the
+    # same list for the same reason (§13.11): "never used since the counter
+    # existed" and "saved before it existed" are different facts, and a 0 here
+    # would collapse them. Passed through unvalidated on purpose: load_items()
+    # must never raise over a hand-edited file.
+    for f in BARCODE_FIELDS + CAPTURE_FIELDS + MEAL_PREP_FIELDS + (USE_COUNT_FIELD,):
         if item.get(f) is not None:
             out[f] = item.get(f)
     return out
@@ -480,7 +608,13 @@ def new_id():
 def create_item(payload):
     """Creates one item. THE SERVER GENERATES id, createdAt AND updatedAt — a
     client cannot set them, so two phones can never disagree about when an item
-    was made. lastUsedAt starts null: created is not used."""
+    was made. lastUsedAt starts null: created is not used.
+
+    useCount IS NOT WRITTEN HERE, deliberately, and it is not a required field
+    (§13.11). Created is not used, so a brand-new item has no use count in the
+    same sense that it has no lastUsedAt — the key appears on the first ADD that
+    reaches this server. The meal-prep group is optional in exactly the same way
+    as the other additive groups: omitted when absent, never written as False."""
     if not isinstance(payload, dict):
         raise FoodValidationError("Expected an object.")
     name = _clean_text(payload.get("name"), "name", required=True)
@@ -488,6 +622,7 @@ def create_item(payload):
     macros = _clean_macros(payload)
     extra = _clean_barcode_fields(payload)
     extra.update(_clean_capture_fields(payload, has_barcode=bool(extra.get("barcode"))))
+    extra.update(_clean_meal_prep_fields(payload))
     confidence = _clean_confidence(payload.get("confidence"),
                                    has_barcode=bool(extra.get("barcode")))
     now = _now_iso()
@@ -512,8 +647,10 @@ def create_item(payload):
 
 def update_item(item_id, payload):
     """Replaces the editable fields of one item and BUMPS updatedAt ONLY.
-    createdAt and lastUsedAt are carried through untouched — an edit is not a
-    use, and it is certainly not a re-creation."""
+    createdAt, lastUsedAt AND useCount are carried through untouched — an edit is
+    not a use, and it is certainly not a re-creation. useCount is deliberately
+    absent from the merge below: it is written by mark_used() and by nothing
+    else, so no edit form can ever be made to set it (§13.11)."""
     if not isinstance(payload, dict):
         raise FoodValidationError("Expected an object.")
     name = _clean_text(payload.get("name"), "name", required=True)
@@ -526,6 +663,7 @@ def update_item(item_id, payload):
                 extra = _clean_barcode_fields(payload, existing=it)
                 extra.update(_clean_capture_fields(
                     payload, existing=it, has_barcode=bool(extra.get("barcode"))))
+                extra.update(_clean_meal_prep_fields(payload, existing=it))
                 it["name"] = name
                 it["servingText"] = serving
                 it["macros"] = macros
@@ -540,9 +678,10 @@ def update_item(item_id, payload):
                 conf_src = payload["confidence"] if "confidence" in payload else it.get("confidence")
                 it["confidence"] = _clean_confidence(
                     conf_src, has_barcode=bool(extra.get("barcode")))
-                for f in BARCODE_FIELDS + CAPTURE_FIELDS:
+                for f in BARCODE_FIELDS + CAPTURE_FIELDS + MEAL_PREP_FIELDS:
                     # Set what survived the merge, and genuinely remove what did
-                    # not, so a cleared field leaves no null behind.
+                    # not, so a cleared field leaves no null behind. USE_COUNT_FIELD
+                    # is NOT in this list on purpose — see the docstring.
                     if f in extra:
                         it[f] = extra[f]
                     else:
@@ -567,18 +706,36 @@ def delete_item(item_id):
 
 
 def mark_used(item_id):
-    """Called on every ADD from the Meal Tracker page. Sets lastUsedAt and
-    NOTHING ELSE — updatedAt describes the label, not the eating, and bumping
-    it here would make every mirror look stale after lunch.
+    """Called on every ADD from the Meal Tracker page. Sets lastUsedAt, bumps
+    useCount, and NOTHING ELSE — updatedAt describes the label, not the eating,
+    and bumping it here would make every mirror look stale after lunch.
 
     THE CLIENT TREATS THIS AS FIRE-AND-FORGET. The count it just incremented is
     local data (§1.2) and has already succeeded; a failure here must never undo
-    it. All this endpoint buys is a later purge date."""
+    it. All this endpoint buys is a later purge date and a slightly better
+    ordering for the client's shortlist.
+
+    ############ useCount IS A SIGNAL, NOT A SERVING COUNT ############
+
+    It counts ADDs THAT REACHED THIS SERVER, which is not the same thing as
+    servings eaten and must never be presented as one. The two numbers diverge
+    every time Ryan counts a serving offline, and that is fine — this one exists
+    only to order a shortlist (§13.11). It is not scored (§11), nothing the
+    client derives from d.foodCounts may read it, and the same fire-and-forget
+    contract as lastUsedAt applies: a ping lost to a flaky Tailscale link costs
+    an ordering hint, never a serving.
+
+    THE FIRST BUMP CREATES THE KEY. An item that predates the counter has no
+    useCount and is not backfilled with one; its first ADD after this shipped
+    writes 1, not "1 plus however many times it was eaten before". That
+    undercount is deliberate and self-correcting — an invented starting number
+    would not be."""
     with _lock:
         items = load_items()
         for it in items:
             if it["id"] == item_id:
                 it["lastUsedAt"] = _now_iso()
+                it[USE_COUNT_FIELD] = _stored_use_count(it) + 1
                 _save_items(items)
                 return it
     raise FoodNotFound(item_id)

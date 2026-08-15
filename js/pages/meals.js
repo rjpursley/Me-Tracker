@@ -67,6 +67,47 @@
 // size. Both produce the same single output: GRAMS PER SERVING. Only that is
 // stored; the net weight and servings-per-container that may have produced it
 // are inputs to a calculation, not facts, and must not be persisted.
+//
+// ############ THREE VIEWS, ONE LIBRARY (§13.11) ############
+//
+// The counter shows the same library three ways, and ALL THREE ARE DERIVED AT
+// RENDER TIME. There is no second stored list anywhere — not in localStorage,
+// not on the server — and nothing is ever manually inserted into one of them:
+//
+//   Most Commonly Used   the top few items by useCount, descending. Server
+//                        signal, read off the mirror, recomputed every render.
+//   Meal Prep            items Ryan flagged as batch-cooked. A PIN, set by hand
+//                        and completely independent of how often it is used.
+//   Every food           the full list, unchanged.
+//
+// ############ THE TWO SHORTLISTS NEVER TOUCH EACH OTHER ############
+//
+// Using a meal-prep item does not write into, promote within, or reorder Most
+// Commonly Used, and flagging something for meal prep does not either. Nor does
+// a high use count pin anything to Meal Prep. Each list is a pure function of
+// one field — useCount for the first, mealPrep for the second — over the same
+// mirror, so there is no state for one to mutate in the other. An item can
+// legitimately appear in both; that is an overlap, not a merge.
+//
+// (An ADD does still bump useCount on the server, from EVERY section — that is
+// what "used" means, and it is the counter doing its job, not one list writing
+// into another. The rule being protected is that membership of one list must
+// never be a function of the other.)
+//
+// ############ ONE-TIME: COUNTED TODAY, NEVER SAVED (§13.12) ############
+//
+// The review card carries a second button beside Save. It snapshots the macros
+// into today's counts exactly as a normal ADD does — same snapshot-at-first-add
+// rule, same local write — AND MAKES NO SERVER CALL AT ALL. No item is created,
+// so there is nothing to edit, nothing to purge and nothing to clean up later:
+// the whole trace is one entry in today's d.foodCounts, which ages out with the
+// day like every other count.
+//
+// Its entry gets a LOCAL id (ot_…) that the server has never issued and never
+// will. That id is the marker: it is what stops the /used ping being fired at an
+// item that does not exist, what keeps the row out of the "no longer in the
+// library" wording that would be a plain untruth here, and what makes its Delete
+// purely local. See ONE_TIME_PREFIX below.
 // ---------------------------------------------------------------------------
 
 import { db, save } from '../store.js';
@@ -99,6 +140,26 @@ const EXTRA_META=[
   {key:'magnesium',label:'Magnesium'},
   {key:'zinc',     label:'Zinc'}
 ];
+
+// §13.11's shortlist. NINE ROWS, which is what fits on Ryan's screen above the
+// fold without turning the top of the page into a second full library.
+const MOST_USED_LIMIT=9;
+
+// §13.12. The id prefix for a one-time consumed entry. The server issues ids as
+// 'fd_' + hex and has no idea this prefix exists, so an id starting with it can
+// only ever have been minted here — which is exactly what makes the test below
+// reliable. NOTHING WITH THIS PREFIX IS EVER SENT TO THE SERVER.
+const ONE_TIME_PREFIX='ot_';
+
+function isOneTimeId(id){return String(id==null?'':id).indexOf(ONE_TIME_PREFIX)===0;}
+
+// Unique within a day, which is all it has to be — the entry lives in one day's
+// record and is never looked up anywhere else. Two one-time consumes of the same
+// product are two separate entries on purpose: neither is a library item, so
+// there is nothing to reconcile them against.
+function newOneTimeId(){
+  return ONE_TIME_PREFIX+Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+}
 
 // Module state, not stored: an abandoned edit or a stale error must not
 // survive the page. Same reasoning as training.js's pause gate.
@@ -140,6 +201,62 @@ function todayCounts(){
 function countOf(id){
   const e=todayCounts()[id];
   return e?(+e.count||0):0;
+}
+
+// ---------------------------------------------------------------------------
+// §13.11 — the two shortlists. BOTH ARE PURE FUNCTIONS OF THE MIRROR, computed
+// fresh on every render. Neither stores anything, neither can be edited by hand,
+// and neither reads the other. See the header for why that separation matters.
+// ---------------------------------------------------------------------------
+
+// An item's server-side use count as a number. ABSENT IS 0 FOR ORDERING ONLY —
+// the distinction the server keeps between "no useCount key" and "0" is about
+// what is known (§13.11), and it survives untouched in the mirror; this function
+// exists solely to sort by, and a sort needs a number.
+function useCountOf(item){
+  const n=+((item&&item.useCount));
+  return isFinite(n)&&n>0?n:0;
+}
+
+// The most-used shortlist: top MOST_USED_LIMIT items by useCount, descending.
+//
+// AN ITEM WITH NO USES IS NOT IN IT. A shortlist padded out with items that have
+// never been counted is not a shortlist — it is the full library in a different
+// order, claiming to be evidence of something. On a fresh library the section
+// simply does not render.
+//
+// TIES BREAK BY NAME, so the order is stable between renders. Two items on three
+// uses each must not swap places every time the page repaints.
+//
+// NOTHING ABOUT mealPrep IS READ HERE. A meal-prep item ranks by its use count
+// like everything else — no boost, no penalty, no exclusion.
+function mostUsedItems(){
+  return mirror()
+    .filter(i=>useCountOf(i)>0)
+    .sort((a,b)=>useCountOf(b)-useCountOf(a)||
+                 String(a.name||'').localeCompare(String(b.name||'')))
+    .slice(0,MOST_USED_LIMIT);
+}
+
+// The meal-prep shortlist: every flagged item, in the library's own order.
+//
+// NOT RANKED, NOT TRIMMED, AND useCount IS NOT READ HERE. This list is a pin
+// Ryan set by hand; ordering it by how often it gets used would quietly turn it
+// into a second copy of the list above.
+function mealPrepItems(){
+  return mirror().filter(i=>i&&i.mealPrep===true);
+}
+
+// "6 servings · covers 3 days", or '' when neither figure was given. Each half
+// is independent: a batch whose servings are recorded but whose days are not
+// shows the half that is known and says nothing about the half that is not.
+function mealPrepDetail(item){
+  const parts=[];
+  const s=+((item&&item.mealPrepServings));
+  const d=+((item&&item.mealPrepDays));
+  if(isFinite(s)&&s>0)parts.push(s+' serving'+(s===1?'':'s')+' per batch');
+  if(isFinite(d)&&d>0)parts.push('covers '+d+' day'+(d===1?'':'s'));
+  return parts.join(' · ');
 }
 
 // ---------------------------------------------------------------------------
@@ -239,9 +356,15 @@ export function mealAdd(id){
   entry.count=(+entry.count||0)+1;
   save(d);
   // Fire-and-forget (§13.5). The count above is already saved; this only pushes
-  // the item's purge date out. A failure here is invisible on purpose — it must
-  // never block or undo a local count.
-  markFoodUsed(id);
+  // the item's purge date out and bumps the useCount the shortlist orders by
+  // (§13.11). A failure here is invisible on purpose — it must never block or
+  // undo a local count.
+  //
+  // NOT FOR A ONE-TIME ENTRY (§13.12). There is no server item behind that id,
+  // so the ping could only ever earn a 404. Skipping it is not an optimisation:
+  // firing a request we know cannot succeed, at an id we invented, is the kind
+  // of noise that makes a real 404 in the log mean nothing.
+  if(!isOneTimeId(id))markFoodUsed(id);
   renderMeals();
   renderHome();
 }
@@ -280,9 +403,20 @@ function readForm(){
     const raw=(val('food-in-x-'+m.key)||'').trim();
     extras[m.key]=raw===''?null:raw;
   });
+  // §13.11's meal-prep group. THE FORM ALWAYS SENDS ALL THREE KEYS, which is
+  // what makes the checkbox able to CLEAR the flag as well as set it — the
+  // server's merge leaves a key alone only when the payload does not mention it,
+  // and an unticked box is a deliberate "not meal prep", not silence.
+  const checked=id=>{const el=document.getElementById(id);return !!(el&&el.checked);};
+  const mealPrep=checked('food-in-mealprep');
+  const mps=(val('food-in-mealprep-servings')||'').trim();
+  const mpd=(val('food-in-mealprep-days')||'').trim();
   return {name:(val('food-in-name')||'').trim(),
           servingText:(val('food-in-serving')||'').trim(),
-          macros,extras};
+          macros,extras,
+          mealPrep,
+          mealPrepServings:mps===''?null:mps,
+          mealPrepDays:mpd===''?null:mpd};
 }
 
 // Replaces the mirror wholesale from a server response. Only ever called with
@@ -371,6 +505,11 @@ function deleteWarnLines(id){
   const lines=[];
   if(n>0)lines.push('Today you have counted '+n+' of these. Deleting erases today’s '+n+
                     ' logged serving'+(n===1?' and its':'s and their')+' macros from today’s total.');
+  // A one-time entry was never in the library, so the usual "the food is removed
+  // from the library too" reading of this gate would be wrong. Say what is
+  // actually being deleted (§1.7) rather than reusing wording that overstates it.
+  if(isOneTimeId(id))lines.push('This was counted as a one-time item and was never saved to the library, '+
+                                'so there is nothing on the server to delete — only today’s count.');
   lines.push('Earlier days are not affected — every day already counted keeps its own record exactly as it is.');
   return lines;
 }
@@ -407,6 +546,25 @@ export function mealDeleteFood(id){
 
 async function runDelete(id){
   if(libraryBusy)return;
+
+  // §13.12. A one-time entry exists ONLY in today's local record — there is no
+  // server item behind it and never was. So this is a purely local erase, and
+  // the DELETE is not attempted: the server would answer 404, which this
+  // function reads as "already gone" and would report as such, telling Ryan
+  // something about a server that was never involved.
+  if(isOneTimeId(id)){
+    const d=db();
+    const erased=eraseTodayCount(d,id);
+    if(erased>=0)save(d);
+    libraryMsg={text:erased>0
+      ? 'Removed. Today’s '+erased+' one-time serving'+(erased===1?'':'s')+
+        ' no longer count'+(erased===1?'s':'')+' toward today’s total. Nothing was on the server to delete.'
+      : 'Removed from today’s count. Nothing was on the server to delete.',kind:'success'};
+    renderMeals();
+    renderHome();
+    return;
+  }
+
   libraryBusy=true;
   libraryMsg={text:'Deleting…',kind:'info'};
   renderMeals();
@@ -559,6 +717,9 @@ function clearForm(){
   set('food-in-name','');set('food-in-serving','');
   MACRO_META.forEach(m=>set('food-in-'+m.key,''));
   EXTRA_META.forEach(m=>set('food-in-x-'+m.key,''));
+  const box=document.getElementById('food-in-mealprep');
+  if(box)box.checked=false;
+  set('food-in-mealprep-servings','');set('food-in-mealprep-days','');
 }
 
 function fillForm(item){
@@ -569,6 +730,12 @@ function fillForm(item){
   MACRO_META.forEach(f=>set('food-in-'+f.key,m[f.key]));
   const x=item.extras||{};
   EXTRA_META.forEach(f=>set('food-in-x-'+f.key,x[f.key]));
+  // The flag is absent on everything that is not meal prep, so `===true` rather
+  // than a truthiness test — absence is the boundary, and it reads as unticked.
+  const box=document.getElementById('food-in-mealprep');
+  if(box)box.checked=(item.mealPrep===true);
+  set('food-in-mealprep-servings',item.mealPrepServings);
+  set('food-in-mealprep-days',item.mealPrepDays);
 }
 
 // ---------------------------------------------------------------------------
@@ -819,8 +986,15 @@ function scanCanSave(){
 // Flips the Save button without re-rendering the card, so the keyboard stays up
 // and the caret stays put while Ryan types.
 function syncSaveState(){
+  const ok=scanCanSave()&&!libraryBusy;
   const btn=document.getElementById('sc-save');
-  if(btn)btn.disabled=!scanCanSave()||libraryBusy;
+  if(btn)btn.disabled=!ok;
+  // The One-Time button (§13.12) follows Save exactly. Flipping one and not the
+  // other would leave a card that refuses to save but offers to count the same
+  // blank macros — the worse of the two outcomes, since a count has no row to go
+  // back and correct.
+  const one=document.getElementById('sc-onetime');
+  if(one)one.disabled=!ok;
 }
 
 export function mealScanCancel(){
@@ -895,6 +1069,76 @@ export async function mealScanSave(){
   renderMeals();
 }
 
+// ---------------------------------------------------------------------------
+// §13.12 — ONE-TIME CONSUMED. Counted today, never saved anywhere.
+//
+// For the thing Ryan eats once and will not eat again: a coworker's birthday
+// cake, a sample, something from a petrol station. Saving it to the library
+// would mean it sits in the counter for four months until the purge notices,
+// and Ryan would have to remember to delete it. So it is never saved.
+//
+// ############ WHAT THIS FUNCTION DOES AND DOES NOT DO ############
+//
+// DOES:     one local write, into today's d.foodCounts, snapshotting the macros,
+//           extras and flags EXACTLY as a first ADD does (§8.0). From that moment
+//           the day owns those numbers, the same as every other counted serving,
+//           and the Dietary score picks them up with no special case anywhere.
+//
+// DOES NOT: POST anything. There is no create, no /used ping, no library write
+//           and no mirror change. NOTHING PERSISTS BEYOND TODAY'S SNAPSHOT —
+//           which is precisely why there is nothing to purge later.
+//
+// It closes the review card the same way a save does, because from Ryan's side
+// the decision is equally finished — the difference is what was written, not
+// how the flow ends.
+// ---------------------------------------------------------------------------
+export function mealScanOneTime(){
+  if(!scan||libraryBusy)return;
+  captureScan();
+  // THE SAME GATE AS SAVE, and it matters MORE here, not less. A per-100g
+  // candidate with no serving size has BLANK macros on the card; logging that
+  // would put a serving on today's total carrying no macros at all, and unlike a
+  // bad library item there would be no row to go back and fix — the snapshot is
+  // the only copy. Save is blocked for this; so is this.
+  if(!scanCanSave()){
+    libraryMsg={text:scan.basis==='per_100g'
+      ? 'These numbers are per 100 grams. Give a serving size first — either type the grams, or divide a net weight by the servings in the container. Nothing was counted.'
+      : 'Give the food a name first. Nothing was counted.',kind:'err'};
+    renderMeals();return;
+  }
+
+  const name=String(scan.name).trim();
+  const d=db();
+  const day=dayRecord(d);
+  const id=newOneTimeId();
+  // Built by the SAME helpers mealAdd() uses, so a one-time entry and a normal
+  // counted entry are the same shape and every reader of d.foodCounts treats
+  // them identically. No reader needs to know the difference; only this page's
+  // own rendering and delete paths do, and they read the id prefix.
+  const entry={count:1,
+               name,
+               servingText:String(scan.servingText||'').trim(),
+               macros:snapshotMacros(scan.macros)};
+  const ex=snapshotExtras(scan.extras);
+  if(ex)entry.extras=ex;
+  const fl=snapshotFlags(scan.flags);
+  if(fl)entry.flags=fl;
+  // A marker for THIS PAGE'S OWN rendering, beside the id test rather than
+  // instead of it: the id is what the delete path and the /used skip key off,
+  // and this is what survives in the stored record to explain, months later,
+  // why a day has a count with no library item behind it.
+  entry.oneTime=true;
+  day[id]=entry;
+  save(d);
+
+  scan=null;pendingBarcode=null;barcodeInput='';
+  libraryMsg={text:'Counted one serving of “'+name+'” for today. It was NOT added to the library — '+
+                   'nothing was saved on the server, so there is nothing to delete later. '+
+                   'Use REMOVE above if you counted it by mistake.',kind:'success'};
+  renderMeals();
+  renderHome();
+}
+
 export function mealClearPendingBarcode(){
   pendingBarcode=null;
   libraryMsg=null;
@@ -934,9 +1178,14 @@ function counterHtml(){
   // NOTHING HERE ERASES ANYTHING. Not showing a row is a display decision; an
   // orphan's stored count is left exactly where it is, including at zero. See
   // the block above renderMeals() for why an automatic sweep would be a bug.
+  // A one-time entry (§13.12) has no library item BY DESIGN, so it lands in the
+  // same "counted but not in the mirror" bucket as an orphan and must be told
+  // apart from one before anything is said about it — the two look identical in
+  // storage and mean opposite things. The id prefix is the test.
   const extraIds=Object.keys(counts).filter(id=>!items.some(i=>i.id===id)&&countOf(id)>0);
-  const rows=items.map(i=>({id:i.id,name:i.name,servingText:i.servingText,orphan:false}))
-    .concat(extraIds.map(id=>({id,name:counts[id].name,servingText:counts[id].servingText,orphan:true})));
+  const rows=items.map(i=>({id:i.id,name:i.name,servingText:i.servingText,kind:'library'}))
+    .concat(extraIds.map(id=>({id,name:counts[id].name,servingText:counts[id].servingText,
+                               kind:isOneTimeId(id)?'onetime':'orphan'})));
 
   const fc=foodCountMacros(today());
   const dm=dayMacros(today());
@@ -959,35 +1208,80 @@ function counterHtml(){
     return html+`<div class="card"><div class="form-note">No foods in the library yet. Add one below and it appears here to count.</div></div>`;
   }
 
+  // §13.11's two shortlists, ABOVE the full list because they exist to save
+  // scrolling. Each is derived here and now, from the mirror, with no reference
+  // to the other and nothing stored either side of the render.
+  html+=shortlistHtml('Most Commonly Used',
+    mostUsedItems().map(i=>({id:i.id,name:i.name,servingText:i.servingText,kind:'library',
+                             note:useCountOf(i)+' time'+(useCountOf(i)===1?'':'s')+' added'})),
+    'Ranked by how many times each food has been added, most first. Worked out fresh every time this '+
+    'page draws — nothing is pinned here by hand, and nothing else changes the order.');
+
+  html+=shortlistHtml('Meal Prep',
+    mealPrepItems().map(i=>({id:i.id,name:i.name,servingText:i.servingText,kind:'library',
+                             note:mealPrepDetail(i)})),
+    'The foods you batch-cook, pinned here by hand. This list has nothing to do with how often they are '+
+    'used — ticking or using one never changes the list above it.');
+
   html+='<div class="card">';
-  html+=rows.map(r=>{
-    const n=countOf(r.id);
-    // is-orphan only carries LAYOUT (the extra Delete button wraps to its own
-    // line rather than crushing the name to one character per line at 393pt).
-    // No colour, no state.
-    return `<div class="fc-row${r.orphan?' is-orphan':''}">`+
-      // ADD IS DEAD ON AN ORPHAN and says so by being disabled. mealAdd() already
-      // refuses and explains when the mirror has no item — this stops the tap
-      // that earns that message from looking like it should work.
-      `<button class="fc-btn" onclick="mealAdd('${esc(r.id)}')"${r.orphan?' disabled':''}>ADD</button>`+
-      `<button class="fc-btn fc-btn-remove" onclick="mealRemove('${esc(r.id)}')"${n===0?' disabled':''}>REMOVE</button>`+
-      `<div class="fc-count${n>0?' is-on':''}">${n}</div>`+
-      `<div class="fc-body">`+
-        `<div class="fc-name">${esc(r.name||'(unnamed)')}</div>`+
-        `<div class="fc-serving">${r.servingText?'1 = '+esc(r.servingText):'serving size not recorded'}</div>`+
-        (r.orphan?`<div class="fc-serving">No longer in the library — today’s count keeps its own macros.</div>`:'')+
-      `</div>`+
-      // THE SAME DELETE, not a second one. An orphan has no row in the library
-      // list below, so without this there is no way to clear it — which is
-      // exactly the state a lost DELETE response leaves Ryan in. It calls
-      // mealDeleteFood() like every other Delete: same gate, same code path, and
-      // the server's 404 now reads as success.
-      (r.orphan?`<button class="fl-btn fl-del" onclick="mealDeleteFood('${esc(r.id)}')">Delete</button>`:'')+
-    `</div>`;
-  }).join('');
+  html+=`<div class="card-title">Every food (${rows.length})</div>`;
+  html+=rows.map(counterRowHtml).join('');
   html+=`<div class="form-note">Counts are for today only and are saved on this phone. They work with the server switched off.</div>`;
   html+='</div>';
   return html;
+}
+
+// One counter row, used by all three sections so ADD/REMOVE behave identically
+// wherever they are tapped — there is no such thing as a second kind of ADD.
+//
+// `kind` decides only what is SAID and what is disabled:
+//   'library'  a normal item.
+//   'orphan'   counted today, no longer in the library (§8.0) — a purge, another
+//              browser, or a lost DELETE response. ADD is dead.
+//   'onetime'  counted today, never in the library, on purpose (§13.12). ADD
+//              WORKS: the entry and its snapshot already exist, so a second
+//              serving needs no library lookup at all.
+function counterRowHtml(r){
+  const n=countOf(r.id);
+  const detached=(r.kind==='orphan'||r.kind==='onetime');
+  // is-orphan only carries LAYOUT (the extra Delete button wraps to its own
+  // line rather than crushing the name to one character per line at 393pt).
+  // No colour, no state.
+  return `<div class="fc-row${detached?' is-orphan':''}">`+
+    // ADD IS DEAD ON AN ORPHAN and says so by being disabled. mealAdd() already
+    // refuses and explains when the mirror has no item — this stops the tap
+    // that earns that message from looking like it should work. A one-time row
+    // is NOT disabled: it has its own entry to increment.
+    `<button class="fc-btn" onclick="mealAdd('${esc(r.id)}')"${r.kind==='orphan'?' disabled':''}>ADD</button>`+
+    `<button class="fc-btn fc-btn-remove" onclick="mealRemove('${esc(r.id)}')"${n===0?' disabled':''}>REMOVE</button>`+
+    `<div class="fc-count${n>0?' is-on':''}">${n}</div>`+
+    `<div class="fc-body">`+
+      `<div class="fc-name">${esc(r.name||'(unnamed)')}</div>`+
+      `<div class="fc-serving">${r.servingText?'1 = '+esc(r.servingText):'serving size not recorded'}</div>`+
+      (r.kind==='orphan'?`<div class="fc-serving">No longer in the library — today’s count keeps its own macros.</div>`:'')+
+      (r.kind==='onetime'?`<div class="fc-serving">One-time — counted for today only, never saved to the library.</div>`:'')+
+      (r.note?`<div class="fc-serving">${esc(r.note)}</div>`:'')+
+    `</div>`+
+    // THE SAME DELETE, not a second one. A detached row has no entry in the
+    // library list below, so without this there is no way to clear it — which is
+    // exactly the state a lost DELETE response leaves Ryan in. It calls
+    // mealDeleteFood() like every other Delete: same gate, same code path. For a
+    // one-time row runDelete() short-circuits to a local erase (§13.12); for an
+    // orphan the server's 404 reads as success.
+    (detached?`<button class="fl-btn fl-del" onclick="mealDeleteFood('${esc(r.id)}')">Delete</button>`:'')+
+  `</div>`;
+}
+
+// A shortlist card, or NOTHING AT ALL when the list is empty. An empty
+// "Most Commonly Used" heading over a blank space is a section promising
+// something it has no data for; on a fresh library both simply do not appear.
+function shortlistHtml(title,rows,note){
+  if(!rows.length)return '';
+  return '<div class="card">'+
+    `<div class="card-title">${esc(title)}</div>`+
+    rows.map(counterRowHtml).join('')+
+    `<div class="form-note">${esc(note)}</div>`+
+  '</div>';
 }
 
 function mirrorAgeLabel(){
@@ -1155,6 +1449,15 @@ function reviewCardHtml(){
   html+='<button class="btn btn-primary" id="sc-save" onclick="mealScanSave()"'+
         ((!scanCanSave()||libraryBusy)?' disabled':'')+'>'+
         (dup?'Update “'+esc(dup.name||'(unnamed)')+'”':'Save to library')+'</button>';
+  // §13.12. Beside Save, not instead of it, and deliberately NOT the primary
+  // button — the library is still the normal answer. It is gated on exactly the
+  // same conditions as Save, because a card that cannot be saved cannot be
+  // counted either (a per-100g candidate with no serving size has no macros).
+  html+='<button class="btn btn-secondary" id="sc-onetime" onclick="mealScanOneTime()"'+
+        ((!scanCanSave()||libraryBusy)?' disabled':'')+'>One-time — count today, don’t save</button>';
+  html+='<div class="form-note">One-time counts this straight onto today’s total and creates nothing: '+
+        'no library entry, nothing on the server, nothing to tidy up afterwards. '+
+        'Use it for something you will not eat again.</div>';
   html+='<button class="btn btn-secondary" onclick="mealScanCancel()">Cancel — save nothing</button>';
   html+='<div class="form-note">Nothing has been written yet. Cancel leaves the library exactly as it is.</div>';
   html+='</div>';
@@ -1209,6 +1512,23 @@ function libraryHtml(){
           `<input type="number" id="food-in-x-${m.key}" step="0.01" inputmode="decimal" placeholder="blank if unknown"></div>`;
   });
   html+='</div>';
+  // §13.11's meal-prep group. A PIN, NOT A MEASUREMENT and not scored: ticking
+  // this only decides whether the item appears in the Meal Prep section of the
+  // counter. It has no effect on the Most Commonly Used list above it, and no
+  // effect on any macro, count or score.
+  html+='<div class="form-label sc-macro-head">Meal prep — optional, never scored</div>';
+  html+=`<label class="mp-check"><input type="checkbox" id="food-in-mealprep">`+
+        `<span>I batch-cook this one</span></label>`;
+  html+='<div class="mt-macro-grid">';
+  html+=`<div class="form-row"><div class="form-label">Servings per batch</div>`+
+        `<input type="number" id="food-in-mealprep-servings" step="1" min="1" inputmode="numeric" placeholder="e.g. 6"></div>`;
+  html+=`<div class="form-row"><div class="form-label">Days the batch covers</div>`+
+        `<input type="number" id="food-in-mealprep-days" step="1" min="1" inputmode="numeric" placeholder="e.g. 3"></div>`;
+  html+='</div>';
+  html+=`<div class="form-note">Ticking this pins the food to the Meal Prep list in the counter above. `+
+        `It changes nothing else — not the macros, not the score, and not the Most Commonly Used list, `+
+        `which is worked out from how often a food is actually added and from nothing else. `+
+        `Unticking removes it from that list; the two numbers go with it.</div>`;
   html+=`<button class="btn btn-primary" onclick="mealSaveFood()"${libraryBusy?' disabled':''}>${editingId?'Save changes':'Add to library'}</button>`;
   if(editingId)html+=`<button class="btn btn-secondary" onclick="mealCancelEdit()">Cancel</button>`;
   html+='</div>';
@@ -1232,11 +1552,18 @@ function libraryHtml(){
     const prov=i.barcode
       ? `<div class="fl-serving">barcode ${esc(i.barcode)}${i.servingGrams?' · '+esc(i.servingGrams)+'g per serving':''}</div>`
       : '';
+    // Same rule as the barcode line: shown only on items that carry the flag.
+    // An item that predates meal prep has no such field and shows nothing —
+    // absence is the boundary, never "not meal prep" spelled out (§13.11).
+    const mp=i.mealPrep===true
+      ? `<div class="fl-serving">meal prep${mealPrepDetail(i)?' · '+esc(mealPrepDetail(i)):''}</div>`
+      : '';
     return `<div class="fl-row">`+
       `<div class="fl-body">`+
         `<div class="fl-name">${esc(i.name||'(unnamed)')}</div>`+
         `<div class="fl-serving">${i.servingText?esc(i.servingText):'serving size not recorded'}</div>`+
         prov+
+        mp+
         `<div class="fl-macros">${line||'no macros recorded'}</div>`+
       `</div>`+
       `<button class="fl-btn" onclick="mealEditFood('${esc(i.id)}')">Edit</button>`+

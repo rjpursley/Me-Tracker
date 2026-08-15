@@ -3194,3 +3194,127 @@ collapse — the page has been today-only since it was built (§8.0), so the
 described change had nothing to act on. Building one would be a **new screen**,
 not a display rule, and it would need a date picker §8.0 explicitly rules out.
 That is a decision for Ryan, not a session's judgment call.
+
+### 13.11 Three views of one library — meal prep and usage frequency
+
+Ryan's library has grown past the point where scrolling it to find the thing he
+eats every morning is reasonable. So the counter (§8.0) now shows **the same
+library three ways**, on one page, above the full list:
+
+| Section | Membership | Order |
+|---|---|---|
+| **Most Commonly Used** | `useCount > 0`, top 9 | `useCount` descending, ties by name |
+| **Meal Prep** | `mealPrep === true` | the library's own order |
+| **Every food** | everything | unchanged |
+
+##### ############ ALL THREE ARE DERIVED. THERE IS NO SECOND LIST ############
+
+Nothing here is stored — not in `localStorage`, not on the server, not as an
+ordering field on an item. Each section is a **pure function of one field over
+the mirror**, recomputed on every render (§1.3), and **nothing can be manually
+inserted into either shortlist**. A future session that adds a "pinned order",
+a stored top-N, or a hand-sortable list has replaced a derivation with state
+that can go stale and disagree with the data it claims to summarise.
+
+##### ############ THE TWO SHORTLISTS NEVER READ EACH OTHER ############
+
+`mostUsedItems()` reads `useCount` and nothing else. `mealPrepItems()` reads
+`mealPrep` and nothing else. **Neither may reorder, promote into, exclude from,
+or otherwise mutate the other, in either direction.** Using a meal-prep item
+does not move it in Most Commonly Used; ticking the meal-prep box does not
+either; a high use count pins nothing to Meal Prep. There is no shared state for
+one to write into — that is the point, and it is what keeps "pinned by hand" and
+"earned by use" from quietly becoming the same list.
+
+**An item can appear in both. That is an overlap, not a merge** — a meal-prep
+item Ryan eats daily belongs in both answers, and suppressing it from one
+*because* it is in the other would be exactly the cross-list coupling this rule
+forbids.
+
+##### `useCount` is a signal, NOT a serving count
+
+`mark_used()` bumps it on every ADD that reaches the server, alongside
+`lastUsedAt`. **It counts pings that arrived, not servings eaten**, and the two
+diverge every time Ryan counts a serving with Tailscale down. That is
+acceptable *because it only orders a shortlist*. It is **not scored (§11)**, and
+**nothing the client derives from `d.foodCounts` may read it** — the servings
+are local data (§1.2) and remain the only authority on what was eaten.
+
+**Absence is the boundary (§1.4), as everywhere else in §13.** Items predating
+the counter have no `useCount` and **nothing backfills one** — there is no way
+to know how often they were eaten before, and a `0` would claim "never". A newly
+created item is not given one either (created is not used, the same reason
+`lastUsedAt` starts null); the key appears on the first ADD. The first bump on
+an old item writes `1`, not an estimate. That undercount self-corrects; an
+invented starting number would not.
+
+**Only `mark_used()` ever writes it.** `update_item()` deliberately excludes it
+from its merge, so no edit form can be made to set it — an edit is not a use.
+
+##### The meal-prep group
+
+`mealPrep` (True or **absent — `False` is never stored**), plus
+`mealPrepServings` and `mealPrepDays`, both strictly positive. Editable from the
+Meal Tracker's add/edit form like any other additive group, merged with the same
+"a key the payload does not mention is left alone" rule as the barcode fields —
+so a save from the barcode review card, which knows nothing about meal prep,
+cannot silently un-flag an item.
+
+**Clearing the flag clears the two figures with it**, the same tie `flags` has
+to a barcode: servings-per-batch on something Ryan does not batch-cook describes
+nothing. **None of it is scored (§11)**; it decides one section's membership and
+touches no macro, count or score.
+
+### 13.12 One-time consumed — counted today, never saved
+
+The review card (§13.7) carries a second button beside Save: **One-time**. For
+the thing eaten once and never again — a birthday cake slice in the break room,
+a sample, a petrol-station purchase. Saving those to the library means they sit
+in the counter for four months until the purge (§13.5) notices, and Ryan has to
+remember to delete each one.
+
+| | Save to library | One-time |
+|---|---|---|
+| Snapshots into today's counts | on first ADD | **immediately, count 1** |
+| Creates a server item | yes | **no — no request at all** |
+| Persists past today | yes | **no** |
+| Needs cleaning up later | eventually | **nothing to clean up** |
+
+It writes **one entry into `d.foodCounts[today()]`**, built by the same
+`snapshotMacros()` / `snapshotExtras()` / `snapshotFlags()` helpers a normal ADD
+uses, so the entry is the same shape as every other and **every reader of
+`d.foodCounts` treats it identically** — the Dietary score included, with no
+special case anywhere. **It makes no network call whatsoever**: no POST, no
+`/used` ping, no mirror change. Nothing persists beyond today's snapshot, which
+is precisely why there is nothing to purge.
+
+**It is gated on exactly the same condition as Save**, and that matters *more*
+here, not less: a per-100g candidate with no serving size (§13.7) has blank
+macros on the card, and unlike a bad library item there would be **no row to go
+back and fix** — the snapshot is the only copy.
+
+##### The `ot_` id prefix is the marker
+
+The entry gets a local id — `ot_` + timestamp + random — that the server has
+never issued and never will (it mints `fd_` + hex). **Nothing with this prefix
+is ever sent to the server.** That prefix is what makes three things correct:
+
+- **The `/used` ping is skipped.** Firing a request at an id we invented could
+  only earn a 404, and a real 404 in the log would stop meaning anything.
+- **The counter row says the truth.** A one-time entry has no library item *by
+  design*, so it lands in the same "counted but not in the mirror" bucket as an
+  orphan (§8.0) and must be told apart from one — they look identical in storage
+  and mean opposite things. An orphan says "no longer in the library" and has
+  ADD disabled; **a one-time row says so plainly and keeps ADD working**, because
+  its entry and snapshot already exist and a second serving needs no lookup.
+- **Delete is purely local.** `runDelete()` short-circuits before the DELETE:
+  the server would answer 404, which that path reads as "already gone" and would
+  report as such — telling Ryan about a server that was never involved (§1.7).
+
+The stored entry also carries `oneTime: true`. That is not what the code keys
+off — the id is — but it is what explains, months later, why a day has a count
+with no library item behind it.
+
+**"Add to Library" is unchanged.** One-time is an addition beside it, not a
+replacement, and deliberately not the primary button: the library is still the
+normal answer.

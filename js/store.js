@@ -104,6 +104,16 @@ export function seedSupplements(){return SEED_SUPPLEMENTS.map(s=>({...s}));}
 //   These counts are LOCAL DATA and are never sent to the server (§1.2). There
 //   is no counts endpoint and there must not be one.
 //
+//   AN ENTRY WHOSE ID STARTS 'ot_' IS A ONE-TIME CONSUMED ITEM (§13.12) and
+//   carries oneTime:true beside its snapshot. It was counted for that day and
+//   deliberately never saved to the library, so no server item has ever existed
+//   behind it — the server mints 'fd_' ids and has never heard of this one. It
+//   is the SAME SHAPE as every other entry and every reader treats it the same;
+//   only the Meal Tracker's own rendering and delete paths care, and they read
+//   the prefix. DO NOT "repair" one of these by creating a library item for it,
+//   and do not confuse it with an orphan (§8.0) — an orphan lost its library
+//   item, this one never had one.
+//
 // foodLibrary          ARRAY — a READ-ONLY MIRROR of the server's food library.
 //                      A cache, never a second source of truth. If a write to
 //                      the server fails, the app says so and the mirror is left
