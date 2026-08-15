@@ -121,7 +121,17 @@ export function seedSupplements(){return SEED_SUPPLEMENTS.map(s=>({...s}));}
 // foodLibraryFetchedAt STRING (UTC ISO instant) or null — when the mirror was
 //                      last refreshed from the server. An instant, so UTC (§12).
 // ---------------------------------------------------------------------------
-export function init(){return{fasts:[],workouts:[],sleeps:[],meals:[],hrs:[],targets:{},activeFast:null,deviations:{},fastDeviations:{},body:{},programPauses:[],exerciseLogs:{},oneRepMaxes:{},supplements:seedSupplements(),programStart:null,foodCounts:{},foodLibrary:[],foodLibraryFetchedAt:null};}
+// targetHistory  ARRAY of dated target sets (§14), ascending by effectiveFrom,
+//                APPEND-ONLY. derive.js's targetsFor(ds) resolves which set
+//                governed a given day. Empty means no day has ever been
+//                governed by one, and callers fall back to `targets` below.
+//
+// targets        THE LEGACY FLAT OBJECT. NOT migrated into targetHistory, NOT
+//                deleted, and NOT written by the Targets panel (§1.4). It still
+//                serves the Log page's fields and is still the fallback for
+//                days predating the first history entry — which is exactly what
+//                those days were scored against when they were lived.
+export function init(){return{fasts:[],workouts:[],sleeps:[],meals:[],hrs:[],targets:{},targetHistory:[],activeFast:null,deviations:{},fastDeviations:{},body:{},programPauses:[],exerciseLogs:{},oneRepMaxes:{},supplements:seedSupplements(),programStart:null,foodCounts:{},foodLibrary:[],foodLibraryFetchedAt:null};}
 export function db(){try{return JSON.parse(localStorage.getItem(DB_KEY))||init();}catch(e){return init();}}
 export function save(d){localStorage.setItem(DB_KEY,JSON.stringify(d));}
 

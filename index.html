@@ -151,6 +151,13 @@
   <div class="section-title">Latest Readings</div>
   <div id="body-vitals-latest"></div>
 
+  <!-- Dated targets (§14). Editing here appends to d.targetHistory with
+       effectiveFrom = TOMORROW; the legacy d.targets is never written by this
+       panel. Confirm runs through the same keypad-gate pattern as the training
+       pause gate — no confirm(). -->
+  <div class="section-title">Targets</div>
+  <div id="targets-panel"></div>
+
   <!-- "Awaiting Sync" was deleted here 2026-08-14. It held body fat, VO2 max
        and HRV; the first two have NO SOURCE DEVICE (Versa 2, no smart scale)
        and were permanently blank. HRV moved up into the Body summary above.

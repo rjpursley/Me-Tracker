@@ -109,6 +109,34 @@
 .factor-icon.good{background:var(--accent5)}
 .factor-icon.bad{background:var(--danger)}
 
+/* ---------------------------------------------------------------------------
+   Dated targets panel (ARCHITECTURE.md §14). Every colour is an existing token
+   (§1.6) — no new literals. Three columns at 393pt: label, the editable target,
+   and today's actual. The inputs are narrow on purpose so a min–max pair and
+   the day's figure all fit one row without wrapping.
+   --------------------------------------------------------------------------- */
+.tg-head{display:flex;align-items:center;gap:8px;padding-bottom:6px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.tg-head-label{flex:1}
+.tg-head-col{width:104px;text-align:center;flex-shrink:0}
+.tg-head-col:last-child{width:76px}
+.tg-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)}
+.tg-row:last-of-type{border-bottom:none}
+.tg-label{flex:1;min-width:0;font-size:13px;color:var(--text);line-height:1.25}
+.tg-unit{font-family:var(--font-mono);font-size:10px;color:var(--muted)}
+.tg-fields{width:104px;flex-shrink:0;display:flex;align-items:center;gap:3px}
+.tg-fields input{width:100%;min-width:0;padding:8px 4px;text-align:center;font-size:13px}
+.tg-dash{color:var(--muted);font-family:var(--font-mono);font-size:12px;flex-shrink:0}
+.tg-today{width:76px;flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:1px}
+.tg-today-val{font-family:var(--font-mono);font-size:13px;color:var(--accent2)}
+.tg-today-note{font-family:var(--font-mono);font-size:9px;color:var(--muted);text-align:right;line-height:1.25}
+
+/* The change preview inside the confirm gate. Reuses the .pause-card / .keypad-*
+   shell from the training pause gate — this is that pattern, not a new one. */
+.tg-diff{margin:10px 0;padding:10px;background:var(--surface2);border-radius:10px}
+.tg-diff-row{font-family:var(--font-mono);font-size:12px;color:var(--muted);line-height:1.6}
+.tg-diff-from{color:var(--muted)}
+.tg-diff-to{color:var(--accent2)}
+
 /* Target rows */
 .target-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;font-size:13px;font-family:var(--font-mono);border-bottom:1px solid var(--border)}
 .target-row:last-child{border-bottom:none}

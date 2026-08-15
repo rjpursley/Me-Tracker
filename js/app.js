@@ -23,7 +23,8 @@ import {
   renderHome, renderHomeDayContent, buildDayStrip, selectDay
 } from './pages/home.js';
 import { renderCalendar, setCalView, getCalView } from './pages/calendar.js';
-import { renderHealth, saveBodyHeight, saveBodyAge, logBodyMeasurement, runSync } from './pages/health.js';
+import { renderHealth, saveBodyHeight, saveBodyAge, logBodyMeasurement, runSync,
+         saveTargetHistory, targetGateKey, targetGateBack, targetGateCancel } from './pages/health.js';
 import { renderBody, logSleep, logHR } from './pages/vitals.js';
 import { renderDiet, logMeal, addSupplement, deleteSupplement, moveSupplement, toggleMacroChart,
          toggleIntakeChart } from './pages/dietary.js';
@@ -119,6 +120,12 @@ window.runSync=runSync;
 window.saveBodyHeight=saveBodyHeight;
 window.saveBodyAge=saveBodyAge;
 window.logBodyMeasurement=logBodyMeasurement;
+// Dated targets (§14). saveTargetHistory() only OPENS the confirm gate; the
+// entry is appended by targetGateKey() on a matching digit and by nothing else.
+window.saveTargetHistory=saveTargetHistory;
+window.targetGateKey=targetGateKey;
+window.targetGateBack=targetGateBack;
+window.targetGateCancel=targetGateCancel;
 
 window.openPauseGate=openPauseGate;
 window.closePauseGate=closePauseGate;
@@ -201,6 +208,13 @@ document.getElementById('import-file-input').addEventListener('change', handleIm
   if(!d.foodCounts||typeof d.foodCounts!=='object'||Array.isArray(d.foodCounts)){d.foodCounts={};changed=true;}
   if(!Array.isArray(d.foodLibrary)){d.foodLibrary=[];changed=true;}
   if(!('foodLibraryFetchedAt' in d)){d.foodLibraryFetchedAt=null;changed=true;}
+  // Dated targets (§14). Backfills EMPTY, never from d.targets — an empty
+  // history means "no day was ever governed by a dated set", which is the
+  // truth, and targetsFor() correctly returns null so every existing day keeps
+  // falling back to the legacy flat object it was actually scored under.
+  // MIGRATING d.targets IN HERE WOULD BE THE BUG: it would stamp today's goals
+  // onto history as though they had always applied.
+  if(!Array.isArray(d.targetHistory)){d.targetHistory=[];changed=true;}
   if(changed)save(d);
 })();
 

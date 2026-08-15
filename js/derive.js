@@ -720,10 +720,19 @@ function countedEntries(ds){
 // an RXBAR whose caffeine is null is "not printed on the label", not decaf.
 // A GENUINE measured 0 does count as known, which is the whole reason §13.8
 // keeps null and 0 apart.
+// `coverage` was added 2026-08-14 for §14's Targets panel and is ADDITIVE — a
+// new key on the returned object, nothing existing changed. It answers "how
+// much of today do I actually know about": {field:{withData, items}}, where
+// items is every counted item and withData is how many of them carried a figure
+// for that field. Open Food Facts coverage of these six is poor, so a total
+// like "192 mg" is usually a PARTIAL SUM, and a panel that showed it against a
+// target without saying so would imply Ryan was short when he simply has no
+// data. THE TOTAL ALONE IS NOT ENOUGH INFORMATION TO SHOW.
 export function foodCountExtras(ds){
-  const out={known:{}};
-  FOOD_EXTRA_FIELDS.forEach(k=>{out[k]=0;out.known[k]=false;});
-  countedEntries(ds).forEach(e=>{
+  const out={known:{},coverage:{}};
+  const entries=countedEntries(ds);
+  FOOD_EXTRA_FIELDS.forEach(k=>{out[k]=0;out.known[k]=false;out.coverage[k]={withData:0,items:entries.length};});
+  entries.forEach(e=>{
     const n=+e.count||0;
     const x=(e.extras&&typeof e.extras==='object')?e.extras:null;
     if(!x)return;
@@ -731,7 +740,7 @@ export function foodCountExtras(ds){
       const v=x[k];
       if(v===null||v===undefined||v==='')return;   // not known — never 0
       const num=+v;if(!isFinite(num))return;
-      out[k]+=num*n;out.known[k]=true;
+      out[k]+=num*n;out.known[k]=true;out.coverage[k].withData++;
     });
   });
   return out;
@@ -836,8 +845,68 @@ export function dayMacros(ds){
   };
 }
 
+// ---------------------------------------------------------------------------
+// DATED TARGETS — ARCHITECTURE.md §14. targetsFor(ds) resolves the target set
+// that was IN FORCE on a given day.
+//
+// ############ THE BUG THIS FIXES ############
+//
+// calcScore() used to read d.targets — ONE UNDATED OBJECT — for every date it
+// was ever asked about. So every historical day was graded against whatever the
+// goals happen to be right now. Raise the protein target tonight and every past
+// day silently re-grades: a day Ryan scored 92 on in June becomes an 82, with
+// no record that anything changed and no way to get the old number back.
+//
+// That is precisely the failure the food-macro snapshot rule exists to prevent
+// (§13, §8.0): a past day's numbers must be computed from what was true THEN,
+// never from a lookup in present-day state. The library learned that lesson;
+// the targets had not.
+//
+// ############ A CHANGE TAKES EFFECT THE NEXT DAY ############
+//
+// effectiveFrom is ALWAYS the day AFTER the save. Ryan logs his measurements in
+// the evening; a target he changes at 8pm must not retroactively re-grade the
+// day he has just finished living. The day of the change is scored against the
+// targets that were already in force when he lived it.
+//
+// ############ RETURNING null IS CORRECT AND MUST BE HANDLED ############
+//
+// null means "ds predates the first entry" — this day was never governed by a
+// target set at all. IT DOES NOT MEAN THE TARGETS WERE ZERO. Callers fall back
+// to the legacy d.targets, which is exactly what those days were scored against
+// when they were lived, so no history moves when this ships (§1.4).
+//
+// The list is append-only and sorted ascending by effectiveFrom; entries are
+// never edited or deleted, because an edited entry would re-grade the days it
+// governed and put us straight back in the bug above.
+// ---------------------------------------------------------------------------
+export function targetsFor(ds){
+  const list=db().targetHistory;
+  if(!Array.isArray(list)||!list.length)return null;
+  const day=ds||today();
+  // Sorted here rather than trusting insertion order: a caller must never get a
+  // different answer because two entries were appended out of sequence.
+  const applicable=list
+    .filter(t=>t&&typeof t.effectiveFrom==='string'&&t.effectiveFrom<=day)
+    .sort((a,b)=>a.effectiveFrom<b.effectiveFrom?-1:a.effectiveFrom>b.effectiveFrom?1:0);
+  return applicable.length?applicable[applicable.length-1]:null;
+}
+
 export function calcScore(ds){
   ds=ds||today();const d=db();const tgts=d.targets||{};
+  // THE DATED SET FOR THIS DAY, or null when the day predates the first entry
+  // (§14). Every target read below goes through histTarget() so the fallback is
+  // in one place and cannot drift between pillars.
+  const hist=targetsFor(ds);
+  // Reads one target: the dated set first, the legacy flat object second, and
+  // the hardcoded default last. `pick` pulls the scalar out of a dated entry,
+  // which may be a range object rather than a number.
+  const histTarget=(pick,legacyKey,fallback)=>{
+    const h=hist?pick(hist):null;
+    const n=+h;
+    if(isFinite(n)&&n>0)return n;
+    return +(tgts[legacyKey])||fallback;
+  };
   // FASTING DEFAULTS TO COMPLIANT — §1.1 per-pillar defaults, §7.1 binary.
   //
   // An unlogged day scores 100. Only a fastDeviations record marking the day
@@ -853,6 +922,10 @@ export function calcScore(ds){
   // no longer feeds the score. calcFastHrs() is untouched and still drives the
   // timer, the phase bar and the hormone indices.
   const fastScore=fastBroken(ds)?0:100;
+  // SLEEP IS NOT IN THE DATED SET. d.targetHistory carries the thirteen
+  // nutrition fields and no sleep goal (§14), so this correctly still reads the
+  // legacy object — there is nothing dated to prefer, and inventing a sleep
+  // field here would be building a schema Ryan did not ask for.
   const sl=getSleepForDate(ds);const sleepGoal=+(tgts.sleep)||8;const sleepScore=Math.min(100,Math.round((Math.min(100,(+(sl.hours)/sleepGoal)*100))*.7+((+(sl.quality)/5)*100)*.3));
   // Training moved out to calcTrainingScore() (§9.5) — checkboxes, pause and
   // API activity. The old category table lives on inside it as the fallback
@@ -863,7 +936,14 @@ export function calcScore(ds){
   // readers of the same fact, which is precisely how §6.9's bug happened.
   // dayMacros() is now the single source for the score, the Dietary page's
   // four cards and the 30-day chart, so they cannot disagree.
-  const dm=dayMacros(ds);const ts=dm.sugar;const tp=dm.protein;const protGoal=+(tgts.protein)||180;let dietScore=100;if(ts>0&&ts<=10)dietScore=Math.max(70,100-(ts/10)*30);else if(ts>10&&ts<=25)dietScore=Math.max(40,70-((ts-10)/15)*30);else if(ts>25)dietScore=10;if(tp>=protGoal)dietScore=Math.min(100,dietScore+10);dietScore=Math.round(dietScore);
+  // THE FORMULA IS UNCHANGED (§14). It still reads sugar and protein only, and
+  // the sugar thresholds are still the hardcoded 10/25 they have always been.
+  // THE ONLY CHANGE IS WHERE protGoal COMES FROM: the dated set's protein floor
+  // when this day was governed by one, the legacy flat target otherwise.
+  // Whether the Dietary score should read more than these two is an open
+  // decision for Ryan and is deliberately not made here.
+  const dm=dayMacros(ds);const ts=dm.sugar;const tp=dm.protein;
+  const protGoal=histTarget(h=>h.protein&&h.protein.min,'protein',180);let dietScore=100;if(ts>0&&ts<=10)dietScore=Math.max(70,100-(ts/10)*30);else if(ts>10&&ts<=25)dietScore=Math.max(40,70-((ts-10)/15)*30);else if(ts>25)dietScore=10;if(tp>=protGoal)dietScore=Math.min(100,dietScore+10);dietScore=Math.round(dietScore);
   return{total:Math.round(fastScore*.25+sleepScore*.25+trainingScore*.25+dietScore*.25),fast:fastScore,sleep:sleepScore,training:trainingScore,diet:dietScore};
 }
 
