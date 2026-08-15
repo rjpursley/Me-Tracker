@@ -31,7 +31,7 @@ import { renderDiet, logMeal, addSupplement, deleteSupplement, moveSupplement, t
 import { openMeals, mealAdd, mealRemove, mealSaveFood, mealEditFood, mealCancelEdit, mealDeleteFood,
          mealDeleteGateKey, mealDeleteGateBack, mealDeleteGateCancel,
          mealBarcodeTyped, mealBarcodeLookup, mealScanRecalc, mealScanEdited, mealScanServingTouched,
-         mealScanRoute, mealScanCancel, mealScanSave, mealScanOneTime,
+         mealScanRoute, mealScanCancel, mealScanSave, mealScanOneTime, mealAddOneTime,
          mealClearPendingBarcode } from './pages/meals.js';
 import { initLogForms, setLogType, logWorkout, saveTargets } from './pages/log.js';
 import { logFast, startActiveFast, stopActiveFast, renderFastingPage, toggleFastFail, saveFastFailNote } from './pages/fasting.js';
@@ -164,6 +164,7 @@ window.mealScanSave=mealScanSave;
 // One-time consumed (§13.12). Writes ONE local entry into today's counts and
 // makes no server call at all — no create, no /used ping, nothing to purge.
 window.mealScanOneTime=mealScanOneTime;
+window.mealAddOneTime=mealAddOneTime;
 window.mealClearPendingBarcode=mealClearPendingBarcode;
 
 window.toggleFastFail=toggleFastFail;

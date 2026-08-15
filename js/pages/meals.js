@@ -170,6 +170,18 @@ function newOneTimeId(){
   return ONE_TIME_PREFIX+Date.now().toString(36)+Math.random().toString(36).slice(2,8);
 }
 
+// The name a manual one-time entry takes when Ryan types none (§13.12). He
+// tracks nutrients rather than foods, so the common case should need no typing;
+// the field stays editable because several of these in one day would otherwise
+// be indistinguishable in the counter.
+//
+// IT IS A PLACEHOLDER ON THE INPUT, NOT A PREFILLED VALUE. The manual form is
+// also the Add-to-library form, and a real value sitting in that box would let a
+// mistap on "Add to library" create a library item called "Manually Added
+// Nutrients". A placeholder shows the same words, needs the same zero typing,
+// and cannot be submitted by the library path — which still demands a real name.
+const ONE_TIME_DEFAULT_NAME='Manually Added Nutrients';
+
 // Module state, not stored: an abandoned edit or a stale error must not
 // survive the page. Same reasoning as training.js's pause gate.
 let editingId=null;          // null = the form is in "add" mode
@@ -1101,6 +1113,50 @@ export async function mealScanSave(){
 // the decision is equally finished — the difference is what was written, not
 // how the flow ends.
 // ---------------------------------------------------------------------------
+// ############ ONE COPY OF THE ONE-TIME WRITE, TWO ENTRY POINTS ############
+//
+// The barcode review card (§13.7) and the manual Add-a-food form both count a
+// one-time item, and they read completely different fields — the card reads the
+// `scan` module state, the form reads its own inputs through readForm(). What
+// they must NOT do is own two copies of the snapshot logic: two copies drift,
+// and a drifted snapshot writes a day that no longer matches every other day.
+//
+// So both hand a plain {name, servingText, macros, extras, flags} source to this
+// one function. It is built by the SAME snapshotMacros/Extras/Flags helpers
+// mealAdd() uses, so a one-time entry and a normal counted entry are the same
+// shape and every reader of d.foodCounts treats them identically. No reader
+// needs to know the difference; only this page's own rendering and delete paths
+// do, and they read the id prefix.
+//
+// The caller resolves the name before calling — the scan card GATES on a missing
+// name (§13.12) while the manual form DEFAULTS one, and that difference belongs
+// with the callers rather than hidden in here.
+//
+// Returns {id, name}. WRITES LOCALLY AND ONLY LOCALLY: no POST, no /used ping,
+// no mirror change, no library item.
+function writeOneTimeEntry(src){
+  const name=String((src&&src.name)||'').trim();
+  const d=db();
+  const day=dayRecord(d);
+  const id=newOneTimeId();
+  const entry={count:1,
+               name,
+               servingText:String((src&&src.servingText)||'').trim(),
+               macros:snapshotMacros(src&&src.macros)};
+  const ex=snapshotExtras(src&&src.extras);
+  if(ex)entry.extras=ex;
+  const fl=snapshotFlags(src&&src.flags);
+  if(fl)entry.flags=fl;
+  // A marker for THIS PAGE'S OWN rendering, beside the id test rather than
+  // instead of it: the id is what the delete path and the /used skip key off,
+  // and this is what survives in the stored record to explain, months later,
+  // why a day has a count with no library item behind it.
+  entry.oneTime=true;
+  day[id]=entry;
+  save(d);
+  return {id,name};
+}
+
 export function mealScanOneTime(){
   if(!scan||libraryBusy)return;
   captureScan();
@@ -1116,31 +1172,58 @@ export function mealScanOneTime(){
     renderMeals();return;
   }
 
-  const name=String(scan.name).trim();
-  const d=db();
-  const day=dayRecord(d);
-  const id=newOneTimeId();
-  // Built by the SAME helpers mealAdd() uses, so a one-time entry and a normal
-  // counted entry are the same shape and every reader of d.foodCounts treats
-  // them identically. No reader needs to know the difference; only this page's
-  // own rendering and delete paths do, and they read the id prefix.
-  const entry={count:1,
-               name,
-               servingText:String(scan.servingText||'').trim(),
-               macros:snapshotMacros(scan.macros)};
-  const ex=snapshotExtras(scan.extras);
-  if(ex)entry.extras=ex;
-  const fl=snapshotFlags(scan.flags);
-  if(fl)entry.flags=fl;
-  // A marker for THIS PAGE'S OWN rendering, beside the id test rather than
-  // instead of it: the id is what the delete path and the /used skip key off,
-  // and this is what survives in the stored record to explain, months later,
-  // why a day has a count with no library item behind it.
-  entry.oneTime=true;
-  day[id]=entry;
-  save(d);
+  const {name}=writeOneTimeEntry(scan);
 
   scan=null;pendingBarcode=null;barcodeInput='';
+  libraryMsg={text:'Counted one serving of “'+name+'” for today. It was NOT added to the library — '+
+                   'nothing was saved on the server, so there is nothing to delete later. '+
+                   'Use REMOVE above if you counted it by mistake.',kind:'success'};
+  renderMeals();
+  renderHome();
+}
+
+// ---------------------------------------------------------------------------
+// ONE-TIME CONSUMED, FROM THE MANUAL FORM — §13.12's second entry point.
+//
+// ############ WHY THIS IS THE ONE THAT MATTERS ############
+//
+// The one-time button used to exist only on the barcode review card. That was
+// backwards: a scanned item HAS a barcode and is the easy case to keep
+// permanently. The thing that actually wants one-time treatment — a restaurant
+// plate, a homemade dish, something from a petrol station — has no barcode at
+// all and can only be reached through this form.
+//
+// Everything §13.12 specifies is unchanged, because this shares writeOneTimeEntry()
+// with the scan card: a fresh newOneTimeId(), a full snapshot, no server write,
+// no library item, no /used ping, no useCount increment, and the same delete
+// behaviour afterwards.
+//
+// NOT AVAILABLE WHILE EDITING. In edit mode this form is bound to an existing
+// library item and its primary button says "Save changes"; a one-time snapshot
+// taken from a half-finished edit of a different food is incoherent, and the
+// secondary slot is already the edit's Cancel.
+export function mealAddOneTime(){
+  if(libraryBusy||editingId)return;
+  const form=readForm();
+  // A ONE-TIME ENTRY WITH NO NUMBERS SAYS NOTHING. This is the same reasoning
+  // §13.12 already applies to a per-100g card with blank macros: it would put a
+  // serving on today's total carrying no macros at all, and unlike a bad library
+  // item there is no row to go back and fix — the snapshot is the only copy.
+  // A BLANK NAME IS FINE and is not gated; only the numbers are.
+  const anyMacro=MACRO_META.some(m=>{
+    const v=form.macros[m.key];
+    return v!==null&&v!==undefined&&String(v).trim()!=='';
+  });
+  if(!anyMacro){
+    libraryMsg={text:'Enter at least one macro figure first. A one-time entry with no numbers would add a '+
+                     'serving to today that says nothing about what was eaten. Nothing was counted.',kind:'err'};
+    renderMeals();return;
+  }
+  // The default fills in here rather than inside writeOneTimeEntry(), so the
+  // scan card's "give it a name" gate is provably untouched by this addition.
+  const {name}=writeOneTimeEntry({...form,name:form.name||ONE_TIME_DEFAULT_NAME});
+  clearForm();
+  pendingBarcode=null;
   libraryMsg={text:'Counted one serving of “'+name+'” for today. It was NOT added to the library — '+
                    'nothing was saved on the server, so there is nothing to delete later. '+
                    'Use REMOVE above if you counted it by mistake.',kind:'success'};
@@ -1512,7 +1595,12 @@ function libraryHtml(){
           `so looking it up again finds your entry. Typed macros stay marked as hand-typed, not exact.`+
           ` <button class="bc-chip-clear" onclick="mealClearPendingBarcode()">save without it</button></div>`;
   }
-  html+=`<div class="form-row"><div class="form-label">Name</div><input type="text" id="food-in-name" placeholder="e.g. RXBAR Chocolate Sea Salt"></div>`;
+  // THE PLACEHOLDER CARRIES THE ONE-TIME DEFAULT, and only in add mode. Leaving
+  // the box untouched and tapping One-Time gets that name with no typing; the
+  // library path below still refuses a blank name, so the default can never
+  // become a library item by mistake.
+  const namePh=editingId?'e.g. RXBAR Chocolate Sea Salt':ONE_TIME_DEFAULT_NAME;
+  html+=`<div class="form-row"><div class="form-label">Name</div><input type="text" id="food-in-name" placeholder="${esc(namePh)}"></div>`;
   html+=`<div class="form-row"><div class="form-label">Serving size, as printed on the label</div><input type="text" id="food-in-serving" placeholder="e.g. 1 bar (52g)"></div>`;
   html+='<div class="mt-macro-grid">';
   MACRO_META.forEach(m=>{
@@ -1548,7 +1636,15 @@ function libraryHtml(){
         `which is worked out from how often a food is actually added and from nothing else. `+
         `Unticking removes it from that list; the two numbers go with it.</div>`;
   html+=`<button class="btn btn-primary" onclick="mealSaveFood()"${libraryBusy?' disabled':''}>${editingId?'Save changes':'Add to library'}</button>`;
-  if(editingId)html+=`<button class="btn btn-secondary" onclick="mealCancelEdit()">Cancel</button>`;
+  if(editingId){
+    html+=`<button class="btn btn-secondary" onclick="mealCancelEdit()">Cancel</button>`;
+  }else{
+    // §13.12's second entry point. Styled exactly as the review card's is.
+    html+=`<button class="btn btn-secondary" onclick="mealAddOneTime()"${libraryBusy?' disabled':''}>One-time — count today, don’t save</button>`;
+    html+=`<div class="form-note">One-time counts these numbers straight onto today’s total and creates nothing: `+
+          `no library entry, nothing on the server, nothing to tidy up afterwards. Leave the name blank and it `+
+          `is recorded as “${esc(ONE_TIME_DEFAULT_NAME)}” — type one if you will log more than one today.</div>`;
+  }
   html+='</div>';
 
   if(!items.length){
