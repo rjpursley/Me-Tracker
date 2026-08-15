@@ -141,12 +141,13 @@
   <div class="section-title">Body</div>
   <div id="body-summary"></div>
 
-  <div class="section-title">Awaiting Sync</div>
-  <div id="body-awaiting"></div>
+  <!-- "Awaiting Sync" was deleted here 2026-08-14. It held body fat, VO2 max
+       and HRV; the first two have NO SOURCE DEVICE (Versa 2, no smart scale)
+       and were permanently blank. HRV moved up into the Body summary above.
+       See §10. -->
 
-  <!-- Sync now + "last synced" (ARCHITECTURE.md §6.3). Sits directly under
-       Awaiting Sync because that panel is what goes stale, and this is the
-       control that fixes it. -->
+  <!-- Sync now + "last synced" (ARCHITECTURE.md §6.3). The Body summary above
+       is what goes stale, and this is the control that refreshes it. -->
   <div class="section-title">Data Sync</div>
   <div id="sync-panel"></div>
 

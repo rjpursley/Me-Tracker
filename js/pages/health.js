@@ -46,40 +46,39 @@ import { renderHome } from './home.js';
 // No existing key is read or written by any of this.
 // ---------------------------------------------------------------------------
 
+// ############ FOUR CELLS, 2x2 — NOT FOUR ACROSS ############
+//
+// The grid is 1fr 1fr, deliberately. At 393pt a four-column row leaves each
+// cell about 85px wide, which crushes a two-digit value and its unit onto
+// separate lines and truncates the sub-label. Two columns of two is the layout
+// that actually fits the phone this app is built for (§1.5).
+//
+// HRV joined this card when the "Awaiting Sync" panel was deleted (2026-08-14).
+// Body fat and VO2 max went with that panel: NO CONNECTED DEVICE WRITES THEM.
+// Ryan wears a Versa 2 and owns no smart scale, so both were permanently null
+// and the panel could only ever render two em-dashes under a heading promising
+// they were on their way. That is not honest reporting, it is furniture. If a
+// smart scale is ever added, body fat comes back as a real field.
 function renderBodySummary(){
   const body=db().body||{};
   const rb=rollingBodyweight();
   const waist=latestWaist();
+  const v=getCachedVitals(today());
   const weightSub = rb.avg!=null
     ? rb.count+' weigh-in'+(rb.count===1?'':'s')+' · '+BODYWEIGHT_WINDOW_DAYS+'-day avg'
     : (rb.latest ? 'none in last '+BODYWEIGHT_WINDOW_DAYS+' days · last '+rb.latest.date : 'not logged yet');
   const cells=[
     {label:'Bodyweight', val: rb.avg!=null?rb.avg.toFixed(1):'—', unit:'lbs', sub:weightSub},
     {label:'Height',     val: body.height?String(+body.height):'—', unit:'in', sub: body.height?'manual entry':'not set'},
-    {label:'Waist',      val: waist?String(+waist.inches):'—',      unit:'in', sub: waist?waist.date:'not logged yet'}
+    {label:'Waist',      val: waist?String(+waist.inches):'—',      unit:'in', sub: waist?waist.date:'not logged yet'},
+    // '—' WHEN NULL, NEVER 0 (§1.7). A Versa 2 frequently produces no HRV
+    // reading for a night — that is "no reading", not a measurement of zero
+    // milliseconds, and the sub-label says which of the two this is.
+    {label:'HRV',        val: v&&v.hrv!=null?String(v.hrv):'—',     unit:'ms', sub: v&&v.hrv!=null?'synced '+v.date:'no reading'}
   ];
   document.getElementById('body-summary').innerHTML =
-    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
     cells.map(c=>`<div class="card" style="text-align:center;padding:12px"><div class="card-title" style="margin-bottom:4px">${c.label}</div><div class="stat-big" style="font-size:26px">${c.val}</div><div class="stat-sub">${c.unit}</div><div class="stat-sub" style="font-size:10px;margin-top:4px">${c.sub}</div></div>`).join('') +
-    '</div>';
-}
-
-// Body fat %, VO2 max and HRV come from the Google Health API (§6) via
-// api.js's cache, read for today's date. Any field the API hasn't supplied a
-// value for yet renders as an em-dash under "Awaiting Sync" — never a zero,
-// which would read as a measurement of zero (§1.7).
-function renderAwaiting(){
-  const v=getCachedVitals(today());
-  const items=[
-    {label:'Body Fat', unit:'%',          val: v&&v.bodyFatPct!=null ? v.bodyFatPct : null},
-    {label:'VO2 Max',  unit:'ml/kg/min',  val: v&&v.vo2Max!=null     ? v.vo2Max     : null},
-    {label:'HRV',      unit:'ms',         val: v&&v.hrv!=null        ? v.hrv        : null}
-  ];
-  const anySynced=items.some(i=>i.val!=null);
-  document.getElementById('body-awaiting').innerHTML =
-    '<div class="awaiting-panel">' +
-    items.map(i=>`<div class="vh-item"><div class="vh-label">${i.label}</div><div class="vh-value"${i.val!=null?' style="color:var(--accent2)"':''}>${i.val!=null?i.val:'—'}</div><div class="vh-unit">${i.unit}</div></div>`).join('') +
-    `<div class="vh-note">${anySynced?'Synced '+v.date:'Awaiting sync — comes from Google Health'}</div>` +
     '</div>';
 }
 
@@ -245,7 +244,7 @@ export function logBodyMeasurement(){
 }
 
 export function renderHealth(){
-  renderBodySummary();renderAwaiting();renderRelativeStrength();
+  renderBodySummary();renderRelativeStrength();
   // Paint the panel from what is already known, then ask the server for a
   // fresher answer — same placeholder-then-update pattern the vitals header
   // uses (§9.3), never a number before there is a source for it.
