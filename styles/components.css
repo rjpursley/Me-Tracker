@@ -110,6 +110,39 @@
 .factor-icon.bad{background:var(--danger)}
 
 /* ---------------------------------------------------------------------------
+   Target band visual (ARCHITECTURE.md §14.2). Dietary score ring plus one
+   track per nutrient.
+
+   EVERY COLOUR IS AN EXISTING TOKEN (§1.6) — accent5 / warn / danger for score
+   bands, surface3 for the track, muted for the two unscored rows. The target
+   zone is accent5 at CSS opacity rather than a new translucent green literal,
+   which is what keeps this rule-abiding.
+   --------------------------------------------------------------------------- */
+.db-card{display:flex;flex-direction:column}
+.db-ring{position:relative;width:104px;height:104px;align-self:center;margin:2px 0 10px}
+.db-ring svg{display:block}
+.db-ring-mid{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;pointer-events:none}
+.db-ring-score{font-family:var(--font-head);font-size:30px;font-weight:700;line-height:1}
+.db-ring-label{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;color:var(--muted)}
+.db-summary{font-family:var(--font-mono);font-size:11.5px;line-height:1.55;color:var(--muted);text-align:center;margin-bottom:14px}
+
+.db-row{margin-bottom:11px}
+.db-row:last-of-type{margin-bottom:4px}
+/* One line, never two: the name flexes and ellipses, the value never shrinks. */
+.db-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px}
+.db-name{font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.db-w{font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-left:6px}
+.db-val{font-family:var(--font-mono);font-size:13px;white-space:nowrap;flex-shrink:0}
+.db-track{position:relative;height:14px;border-radius:3px;background:var(--surface3);overflow:hidden}
+.db-zone{position:absolute;top:0;bottom:0;background:var(--accent5);opacity:.22}
+/* The marker is centred on its value, but clamp() keeps the whole 4px bar
+   inside the track at both extremes — a value pinned at the axis maximum would
+   otherwise clip to a 2px sliver against the right edge, which is exactly the
+   reading that most needs to be visible. The `▸` on the value says it is off
+   scale; the bar should not also be half-hidden. */
+.db-mark{position:absolute;top:0;bottom:0;width:4px;border-radius:2px}
+
+/* ---------------------------------------------------------------------------
    Dated targets panel (ARCHITECTURE.md §14). Every colour is an existing token
    (§1.6) — no new literals. Three columns at 393pt: label, the editable target,
    and today's actual. The inputs are narrow on purpose so a min–max pair and

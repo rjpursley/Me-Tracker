@@ -31,10 +31,10 @@
 import { db, save } from '../store.js';
 import { today, dateStr, addDays, esc } from '../util.js';
 // targetsFor() is deliberately NOT imported: this page EDITS the history, it
-// does not resolve it. Only calcScore() asks which set governed a given day.
+// does not resolve it. Only calcScore() and dietaryDetail() resolve a day.
 import { getSleepForDate, calcFastHrs, getWorkoutForDate, getPhase,
          rollingBodyweight, latestWaist, BODYWEIGHT_WINDOW_DAYS,
-         dayMacros, foodCountExtras } from '../derive.js';
+         dayMacros, foodCountExtras, dietaryDetail } from '../derive.js';
 import { getCachedVitals, triggerSync, fetchSyncStatus, primeRecentVitals } from '../api.js';
 import { renderVitalsHeader } from '../components/vitals-header.js';
 import { renderHome } from './home.js';
@@ -237,6 +237,148 @@ function todayActual(f,dm,ex){
           note: partial?cov.withData+' of '+cov.items+' items':'all '+cov.items+' item'+(cov.items===1?'':'s')};
 }
 
+// ---------------------------------------------------------------------------
+// THE TARGET BAND VISUAL — ARCHITECTURE.md §14.2.
+//
+// A donut of the day's Dietary score, then one track per nutrient showing where
+// today's actual falls against that day's target zone. It reads the SAME
+// dietaryDetail() the score itself is built from (§6.9's one-read-path rule),
+// so the ring and the Home score box can never disagree.
+//
+// STATIC. No tooltips, no tap-to-expand, no animation — this is a thing Ryan
+// glances at, and every interaction would be one more thing to mis-tap in a gym.
+// ---------------------------------------------------------------------------
+
+// Score -> token. ALL FOUR ARE EXISTING TOKENS (§1.6); nothing new is defined.
+// Distinct from derive.js's sc(), which uses 80 as its green threshold — these
+// are §14.2's bands and the two are deliberately not shared.
+function bandColor(score){
+  if(score===null||score===undefined)return 'var(--muted)';
+  if(score>=90)return 'var(--accent5)';
+  if(score>=50)return 'var(--warn)';
+  return 'var(--danger)';
+}
+
+// "Sodium", "Sodium and saturated fat", "Sodium, sugar and saturated fat".
+// Only the first keeps its capital — the rest read as mid-sentence words.
+function joinNames(labels){
+  const l=labels.map((s,i)=>i===0?s:s.charAt(0).toLowerCase()+s.slice(1));
+  if(l.length<=1)return l[0]||'';
+  return l.slice(0,-1).join(', ')+' and '+l[l.length-1];
+}
+
+// The one-line summary under the ring. DERIVED, never hardcoded: it names the
+// rows that actually cost the most weighted points and the rows that actually
+// held the score up, for this day's numbers.
+function bandSummary(det){
+  if(det.unlogged)return 'Nothing was logged today, so the day scores zero — that is a missed day, not missing data.';
+  const scored=det.rows.filter(r=>r.weight>0&&r.score!=null);
+  if(!scored.length)return 'No nutrient had a figure today, so there is nothing to score against your targets.';
+  // Cost is WEIGHTED: 15 points lost on sodium hurts more than 25 lost on a
+  // row worth 10, and the sentence should name what actually moved the score.
+  const byLoss=scored.slice().sort((a,b)=>((100-b.score)*b.weight)-((100-a.score)*a.weight));
+  const zeros=scored.filter(r=>r.score<1);
+  const carried=scored.filter(r=>r.score>=90).sort((a,b)=>b.weight-a.weight).slice(0,2);
+  const parts=[];
+  if(zeros.length){
+    parts.push(joinNames(zeros.map(r=>r.label))+(zeros.length===1?' scored zero.':' scored zero.'));
+  }else if(byLoss.length&&byLoss[0].score<90){
+    parts.push(joinNames([byLoss[0].label])+' cost the most.');
+  }
+  if(carried.length)parts.push(joinNames(carried.map(r=>r.label))+(carried.length===1?' carried the day.':' carried the day.'));
+  if(!parts.length)parts.push('Every scored nutrient landed in its target range.');
+  // Say when the score is standing on partial information — a 100 built from
+  // three of six nutrients is not the same claim as a 100 built from all six.
+  if(det.usedWeight<det.totalWeight){
+    parts.push('Scored on '+det.usedWeight+' of '+det.totalWeight+
+               ' points of weight — the rest had no figure today.');
+  }
+  return parts.join(' ');
+}
+
+// The donut. Plain inline SVG: one neutral track circle and one arc whose
+// dash offset is the score. Rotated -90deg so it fills from the top.
+function ringHtml(score){
+  const s=(score==null)?0:Math.max(0,Math.min(100,score));
+  const shown=Math.round(s);
+  const r=44, C=2*Math.PI*r;
+  const off=C*(1-s/100);
+  const col=bandColor(score);
+  return '<div class="db-ring">'+
+    '<svg viewBox="0 0 104 104" width="104" height="104" aria-hidden="true">'+
+      `<circle cx="52" cy="52" r="${r}" fill="none" stroke="var(--surface3)" stroke-width="10"></circle>`+
+      `<circle cx="52" cy="52" r="${r}" fill="none" stroke="${col}" stroke-width="10" stroke-linecap="round"`+
+        ` stroke-dasharray="${C.toFixed(2)}" stroke-dashoffset="${off.toFixed(2)}"`+
+        ' transform="rotate(-90 52 52)"></circle>'+
+    '</svg>'+
+    `<div class="db-ring-mid"><div class="db-ring-score" style="color:${col}">${shown}</div>`+
+    '<div class="db-ring-label">DIETARY</div></div>'+
+  '</div>';
+}
+
+// One nutrient track. The zone is where the target is; the marker is where today
+// actually landed.
+function bandRowHtml(r){
+  const axis=r.axisMax;
+  const pct=v=>(axis>0)?Math.max(0,Math.min(100,(v/axis)*100)):0;
+  // THE TARGET ZONE RENDERS EVEN WITH NO READING (§14.2) — the row still has to
+  // answer "what was I aiming for", and a bare track would answer nothing.
+  let zone='';
+  if(axis>0){
+    let a=0,b=100;
+    if(r.shape==='ceiling')       {a=0;         b=pct(r.hi);}
+    else if(r.shape==='floor')    {a=pct(r.lo); b=100;}
+    else                          {a=pct(r.lo); b=pct(r.hi);}
+    if(b>a)zone=`<div class="db-zone" style="left:${a.toFixed(2)}%;width:${(b-a).toFixed(2)}%"></div>`;
+  }
+  // NO MARKER AT ALL WHEN THERE IS NO READING. Drawing one at zero would assert
+  // a measurement of zero, which is the §1.7 mistake this whole build keeps
+  // legislating against.
+  let mark='';
+  if(r.value!=null&&axis>0){
+    // Centred on the value, clamped so the full 4px bar stays inside the track
+    // even when the reading is pinned at either end of the axis.
+    const p=pct(r.value).toFixed(2);
+    mark='<div class="db-mark" style="left:clamp(0px, calc('+p+'% - 2px), calc(100% - 4px));'+
+         'background:'+bandColor(r.score)+'"></div>';
+  }
+  const unscored=(r.weight===0);
+  // An unscored row is grey and carries NO weight suffix — it reads as
+  // information, not as a target that was missed.
+  const valColor=unscored?'var(--muted)':bandColor(r.score);
+  const shownVal=(r.value==null)?'—'
+    :(Math.round(r.value*10)/10)+(r.unit?' '+r.unit:'')+(r.clamped?' ▸':'');
+  return '<div class="db-row">'+
+    '<div class="db-head">'+
+      `<span class="db-name">${esc(r.label)}`+
+        (unscored?'':`<span class="db-w">${r.weight}%</span>`)+
+      '</span>'+
+      `<span class="db-val" style="color:${valColor}">${esc(shownVal)}</span>`+
+    '</div>'+
+    `<div class="db-track">${zone}${mark}</div>`+
+  '</div>';
+}
+
+function dietBandsHtml(){
+  const det=dietaryDetail(today());
+  if(!det){
+    // A day predating the first target set has no v2 bands to draw, and drawing
+    // them against targets that did not govern it would be the retro-grading
+    // §14 forbids. Say so plainly instead.
+    return '<div class="card"><div class="form-note">No dated target set governs today yet. '+
+           'Save your targets below and this day starts scoring against them tomorrow.</div></div>';
+  }
+  return '<div class="card db-card">'+
+    ringHtml(det.score)+
+    `<div class="db-summary">${esc(bandSummary(det))}</div>`+
+    det.rows.map(bandRowHtml).join('')+
+    '<div class="form-note">Green band is the target range, the bar is today. '+
+    'Total fat and carbs are shown but not scored — carbs are what is left after '+
+    'calories, protein and fat, so scoring them would count the same choice twice. '+
+    'A dash means nothing counted today stated that figure.</div>'+
+  '</div>';
+}
+
 function newTargetChallenge(){return String(Math.floor(Math.random()*10));}
 
 // The change preview. Listed BEFORE the keypad, in the order Ryan reads it:
@@ -275,12 +417,16 @@ export function renderTargets(){
   const dm=dayMacros(today());
   const ex=foodCountExtras(today());
 
-  let html='';
+  // §14.2's visual leads the section — it is what Ryan is here to look at. The
+  // editor below it stays: it is the only way targets get set at all, and it
+  // covers the six micronutrients the eight-row visual does not.
+  let html=dietBandsHtml();
   if(tgMsg){
     const cls=tgMsg.kind==='success'?'success':tgMsg.kind==='err'?'err':'info';
     html+=`<div class="alert ${cls}">${esc(tgMsg.text)}</div>`;
   }
   html+='<div class="card">';
+  html+='<div class="card-title">Edit targets</div>';
   html+='<div class="tg-head"><span class="tg-head-label"></span><span class="tg-head-col">Target</span><span class="tg-head-col">Today</span></div>';
   html+=TARGET_FIELDS.map(f=>{
     const val=set[f.key];
