@@ -1003,12 +1003,26 @@ export const DIET_V2_ROWS=[
 // 2250 -> 2025-2475. The target schema (§14) stores one number, not a pair.
 const CALORIE_BAND_PCT=0.10;
 
-// SATURATED FAT HAS NO FIELD IN THE §14 TARGET SCHEMA — that schema's thirteen
-// fields predate this nutrient existing. Until Ryan adds one, the ceiling is
-// this constant rather than a per-day editable target. Adding `saturatedFatMax`
-// to the target set is the natural follow-up; it would make the Targets panel
-// fourteen rows and is deliberately NOT done here.
-const SATURATED_FAT_MAX_DEFAULT=22;
+// ############ saturatedFatMax IS A DATED TARGET NOW (2026-08-15) ############
+//
+// It used to be this constant alone, and that was the one scored nutrient whose
+// ceiling was NOT dated — change the number and every historical day silently
+// re-grades against it, which is precisely the bug §14 exists to stop, surviving
+// in one row. It is a real field in the target set as of this date.
+//
+// ############ THE CONSTANT STAYS, AS THE FALLBACK. ABSENCE IS THE BOUNDARY ############
+//
+// Entries written BEFORE this shipped have no `saturatedFatMax` key and NOTHING
+// BACKFILLS THEM — same rule as `asleepMinutes` (§6.10) and the food snapshots'
+// `saturatedFat` (§14.1). An entry WITHOUT the key grades against this constant,
+// which is exactly what those days were scored against when they were lived; an
+// entry WITH it uses its own value. Do not add a migration and do not add an
+// epoch date: the presence of the key is the whole test.
+//
+// health.js imports this for the Targets panel's seed and for the placeholder it
+// shows on an entry that predates the field, so the two can never disagree about
+// what the fallback is.
+export const SATURATED_FAT_MAX_DEFAULT=22;
 
 // {lo, hi} per nutrient for one target set. READ FROM THE SET wherever the set
 // carries the field, so a dated target change moves the grading with it.
@@ -1030,7 +1044,9 @@ function dietBounds(t){
     sodium:  ceil(t&&t.sodiumMax),
     sugar:   ceil(t&&t.sugarMax),
     fiber:   band(t&&t.fiber),
-    saturatedFat: ceil(SATURATED_FAT_MAX_DEFAULT),
+    // READ FROM THE SET like every other scored nutrient, falling back to the
+    // constant ONLY when the entry has no key at all (see the block above).
+    saturatedFat: ceil((t&&t.saturatedFatMax!=null)?t.saturatedFatMax:SATURATED_FAT_MAX_DEFAULT),
     fat:     band(t&&t.fat),
     carbs:   band(t&&t.carbs)
   };

@@ -34,7 +34,8 @@ import { today, dateStr, addDays, esc } from '../util.js';
 // does not resolve it. Only calcScore() and dietaryDetail() resolve a day.
 import { getSleepForDate, calcFastHrs, getWorkoutForDate, getPhase,
          rollingBodyweight, latestWaist, BODYWEIGHT_WINDOW_DAYS,
-         dayMacros, foodCountExtras, dietaryDetail } from '../derive.js';
+         dayMacros, foodCountExtras, dietaryDetail,
+         SATURATED_FAT_MAX_DEFAULT } from '../derive.js';
 import { getCachedVitals, triggerSync, fetchSyncStatus, primeRecentVitals } from '../api.js';
 import { renderVitalsHeader } from '../components/vitals-header.js';
 import { renderHome } from './home.js';
@@ -100,12 +101,23 @@ function renderBodySummary(){
 // asked for one mode and building the switch would be inventing a feature.
 // ---------------------------------------------------------------------------
 
-// The thirteen fields, in the schema's own order. `kind` decides whether the row
+// The fourteen fields, in the schema's own order. `kind` decides whether the row
 // gets one input or a min/max pair; `src` says where today's actual comes from.
+//
+// saturatedFatMax JOINED 2026-08-15 (§14.1). It sits directly under Fat rather
+// than at the end of the list: the two are one decision read two ways, and six
+// micronutrients between them would bury it. Position is display order only —
+// nothing resolves a target by index.
+//
+// `fallback` marks the one field that has a constant behind it. An entry written
+// before the field existed has no key, grades against that constant (derive.js),
+// and the row shows it as a PLACEHOLDER — a value Ryan can see but has not set.
 const TARGET_FIELDS=[
   {key:'calories',   label:'Calories',  unit:'',   kind:'scalar', src:'macro', macro:'calories'},
   {key:'protein',    label:'Protein',   unit:'g',  kind:'range',  src:'macro', macro:'protein'},
   {key:'fat',        label:'Fat',       unit:'g',  kind:'range',  src:'macro', macro:'fat'},
+  {key:'saturatedFatMax', label:'Saturated fat max', unit:'g', kind:'scalar', src:'macro',
+   macro:'saturatedFat', fallback:SATURATED_FAT_MAX_DEFAULT, useKnown:true},
   {key:'carbs',      label:'Carbs',     unit:'g',  kind:'range',  src:'macro', macro:'carbs'},
   {key:'sugarMax',   label:'Sugar max', unit:'g',  kind:'scalar', src:'macro', macro:'sugar'},
   {key:'fiber',      label:'Fiber',     unit:'g',  kind:'range',  src:'macro', macro:'fiber'},
@@ -124,7 +136,11 @@ const TARGET_FIELDS=[
 // legacy object (§14). Prefilling the form is not the same as having targets.
 const TARGET_SEED={
   mode:'cut', calories:2250,
-  protein:{min:175,max:190}, fat:{min:70,max:85}, carbs:{min:180,max:220},
+  protein:{min:175,max:190}, fat:{min:70,max:85},
+  // Seeded at the constant that governed this nutrient before it was a field, so
+  // a first save changes nothing about how saturated fat is graded (§14.1).
+  saturatedFatMax:SATURATED_FAT_MAX_DEFAULT,
+  carbs:{min:180,max:220},
   sugarMax:35, fiber:{min:30,max:35}, sodiumMax:2300,
   potassium:3400, calcium:1000, iron:8, magnesium:420, zinc:11, caffeineMax:400
 };
@@ -222,6 +238,16 @@ function targetDiffs(from,to){
 function todayActual(f,dm,ex){
   if(f.src==='macro'){
     const v=dm[f.macro];
+    // §1.7, ON THE ROW THIS BUILD ADDED. dayMacros() returns 0 for a macro that
+    // nothing counted today stated, so a bare read prints "0 g" — a measurement
+    // of zero, which is a different and much worse claim than "nothing said".
+    // `known` is what tells those two apart (§14.1) and is what the band visual
+    // directly above this editor already uses.
+    //
+    // THE OTHER MACRO ROWS ARE DELIBERATELY LEFT AS THEY WERE. They have the
+    // same weakness and always have; changing what seven existing rows display
+    // was not this build's job. Flagged for Ryan rather than fixed in passing.
+    if(f.useKnown&&!(dm.known&&dm.known[f.macro]))return {text:'—',note:''};
     if(v===null||v===undefined||!isFinite(+v))return {text:'—',note:''};
     return {text:Math.round(+v)+(f.unit?' '+f.unit:''),note:''};
   }
@@ -437,7 +463,12 @@ export function renderTargets(){
              `<span class="tg-dash">–</span>`+
              `<input type="number" id="tg-${f.key}-max" inputmode="numeric" step="1" value="${val&&val.max!=null?esc(String(val.max)):''}" aria-label="${f.label} maximum">`;
     }else{
-      inputs=`<input type="number" id="tg-${f.key}" inputmode="numeric" step="1" value="${val!=null?esc(String(val)):''}" aria-label="${f.label}">`;
+      // THE PLACEHOLDER IS NOT A VALUE. A field with a constant behind it shows
+      // that constant greyed out when the set does not carry the key, so an
+      // empty box reads as "falls back to 22", not as "no ceiling at all". It is
+      // never submitted, so an untouched form still diffs as unchanged.
+      const ph=(f.fallback!=null&&val==null)?` placeholder="${esc(String(f.fallback))}"`:'';
+      inputs=`<input type="number" id="tg-${f.key}" inputmode="numeric" step="1" value="${val!=null?esc(String(val)):''}"${ph} aria-label="${f.label}">`;
     }
     return `<div class="tg-row">`+
       `<div class="tg-label">${f.label}${f.unit?' <span class="tg-unit">('+f.unit+')</span>':''}</div>`+
@@ -462,6 +493,12 @@ export function renderTargets(){
     html+=`<div class="form-note">Saved, and takes effect ${esc(set.effectiveFrom)} — not in force yet. Today is still scored against the previous targets.</div>`;
   }else{
     html+=`<div class="form-note">In force since ${esc(set.effectiveFrom||'—')}. Earlier days keep the targets they were scored under.</div>`;
+  }
+  // A set saved before saturatedFatMax existed carries no key for it. Say what
+  // it is actually graded against rather than leaving a blank box to guess at
+  // (§1.7). NOTHING IS BACKFILLED — the blank is the truth about that entry.
+  if(!seeded&&set.saturatedFatMax==null){
+    html+=`<div class="form-note">Saturated fat max is blank because this target set was saved before that field existed. It is graded against ${SATURATED_FAT_MAX_DEFAULT} g — the ceiling in use before it was editable. Type a number to set your own; earlier days keep the ${SATURATED_FAT_MAX_DEFAULT} g they were scored under.</div>`;
   }
   html+='</div>';
   el.innerHTML=html;
