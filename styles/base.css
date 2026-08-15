@@ -15,7 +15,12 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-head);min-hei
 .row .card{flex:1}
 
 /* Form controls */
-input[type=text],input[type=number],input[type=time],select,textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:10px 12px;font-family:var(--font-mono);font-size:14px;outline:none;-webkit-appearance:none}
+/* 12px all round, not 10px 12px: the vertical padding is what carries the 44pt
+   tap minimum (§1.5). At 10px every input in the app measured 40px — under the
+   minimum, on every form on every page. Raised repo-wide 2026-08-14 by Ryan's
+   decision rather than patched per-field, so Log, Diet, Meals and Health all
+   move together and no card ends up with two different input heights in it. */
+input[type=text],input[type=number],input[type=time],select,textarea{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:12px;font-family:var(--font-mono);font-size:14px;outline:none;-webkit-appearance:none}
 input:focus,select:focus{border-color:var(--accent)}
 select option{background:var(--surface2)}
 .btn{display:block;width:100%;padding:13px;border-radius:12px;border:none;font-family:var(--font-head);font-size:15px;font-weight:600;cursor:pointer;transition:transform .1s,opacity .2s}

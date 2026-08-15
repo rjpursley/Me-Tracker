@@ -1078,8 +1078,33 @@ Google returns two record shapes, and both occur in Ryan's data:
 **CLASSIC does not hide awake time inside its single total** — checked against
 live records, where Google's own `summary.minutesAwake` is `0` on every CLASSIC
 night. So on those nights `asleepMinutes == totalMinutes` and the correction is
-a no-op, which is right rather than a missing case. Deep sleep is also
-genuinely unavailable on CLASSIC nights; the UI says "deep n/a" (§1.7).
+a no-op, which is right rather than a missing case.
+
+**Deep sleep on a CLASSIC night is `null`, not `0` (fixed 2026-08-14).**
+`getSleepForDate()` used to default the deep figure to `0` when the stage map
+had no `DEEP` key, which rendered as "0.0h" on the Driving Factors row — a
+measurement of zero deep sleep, which is a different and much worse claim than
+"stages were never tracked". It is now `null` and renders "— not tracked"
+there, matching the "deep n/a" the Vitals history has always shown. **A genuine
+`0` on a staged night is preserved** — `??` falls through only on
+null/undefined. Deep sleep reaches **no score**: `sleepScore` is hours and
+quality only, and the hormone indices that once read it are gone (§10.0).
+
+#### DECISION 2026-08-14: the `asleepMinutes` fallback is EPOCHED, not fixed
+
+A diagnostic that day quantified the cost of the fallback precisely, and Ryan
+chose to leave it. Recorded so it is not "discovered" and fixed later:
+
+- **23 of 28 stored days** carry no `asleepMinutes` and score off
+  `totalMinutes`; 22 of those carry an `AWAKE` bucket.
+- **252 awake minutes** in total are counted as sleep, mean 11.5 min/day.
+- **16 days would move** if corrected: eleven by 1 point of the Sleep pillar,
+  three by 2, one by 3, and 2026-06-19 by 5 (32 awake minutes). Maximum effect
+  on a total day score is 1.25 points.
+
+**The decision is to accept that and move forward, not to re-sync history.**
+The boundary stays where it is: presence of the field. Do not add an epoch
+constant, do not backfill, and do not re-aggregate old days to "fix" this.
 
 Excluding `AWAKE` reproduces Google's own `summary.minutesAsleep` almost
 exactly (482→474 vs 474; 433→421 vs 421; 477→463 vs 463; one case off by a

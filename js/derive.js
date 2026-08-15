@@ -323,9 +323,22 @@ export function getSleepForDate(ds){
   const v=getCachedVitals(ds||today());
   const sleepMin=(v&&v.sleep)?(v.sleep.asleepMinutes??v.sleep.totalMinutes):null;
   if(sleepMin!=null&&sleepMin>0){
+    // DEEP IS null ON A NIGHT THAT WAS NEVER STAGED (§1.7, fixed 2026-08-14).
+    // A Versa 2 CLASSIC record carries one ASLEEP bucket and no DEEP/LIGHT/REM
+    // at all, so the stage map simply has no deep key. This used to default to
+    // 0, which rendered as "0.0h deep" — a measurement of zero deep sleep,
+    // which is a different and much worse claim than "not tracked".
+    //
+    // A GENUINE 0 IS PRESERVED: ?? only falls through on null/undefined, so a
+    // staged night that really recorded no deep sleep still reads 0, not null.
+    //
+    // This reaches NO SCORE. sleepScore below is hours and quality only, and
+    // the hormone indices that once read deep were deleted (§10.0). It feeds
+    // the Driving Factors row and the Vitals history line, both of which render
+    // it as an em-dash / "deep n/a" when null.
     const stages=v.sleep.stageMinutes||{};
-    const deepMin=stages.deep??stages.DEEP??stages.Deep??0;
-    return{hours:sleepMin/60,deep:deepMin/60,quality:3,_fromApi:true};
+    const deepMin=stages.deep??stages.DEEP??stages.Deep??null;
+    return{hours:sleepMin/60,deep:deepMin!=null?deepMin/60:null,quality:3,_fromApi:true};
   }
   const logged=db().sleeps.find(s=>s.date===ds);
   if(logged)return logged;
