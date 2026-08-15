@@ -112,12 +112,15 @@ function renderBodySummary(){
 // `fallback` marks the one field that has a constant behind it. An entry written
 // before the field existed has no key, grades against that constant (derive.js),
 // and the row shows it as a PLACEHOLDER — a value Ryan can see but has not set.
+//
+// The per-row `useKnown` opt-in was removed 2026-08-15: every macro row consults
+// `known` now (§14.4), so there is nothing left to opt into.
 const TARGET_FIELDS=[
   {key:'calories',   label:'Calories',  unit:'',   kind:'scalar', src:'macro', macro:'calories'},
   {key:'protein',    label:'Protein',   unit:'g',  kind:'range',  src:'macro', macro:'protein'},
   {key:'fat',        label:'Fat',       unit:'g',  kind:'range',  src:'macro', macro:'fat'},
   {key:'saturatedFatMax', label:'Saturated fat max', unit:'g', kind:'scalar', src:'macro',
-   macro:'saturatedFat', fallback:SATURATED_FAT_MAX_DEFAULT, useKnown:true},
+   macro:'saturatedFat', fallback:SATURATED_FAT_MAX_DEFAULT},
   {key:'carbs',      label:'Carbs',     unit:'g',  kind:'range',  src:'macro', macro:'carbs'},
   {key:'sugarMax',   label:'Sugar max', unit:'g',  kind:'scalar', src:'macro', macro:'sugar'},
   {key:'fiber',      label:'Fiber',     unit:'g',  kind:'range',  src:'macro', macro:'fiber'},
@@ -238,16 +241,21 @@ function targetDiffs(from,to){
 function todayActual(f,dm,ex){
   if(f.src==='macro'){
     const v=dm[f.macro];
-    // §1.7, ON THE ROW THIS BUILD ADDED. dayMacros() returns 0 for a macro that
-    // nothing counted today stated, so a bare read prints "0 g" — a measurement
-    // of zero, which is a different and much worse claim than "nothing said".
-    // `known` is what tells those two apart (§14.1) and is what the band visual
-    // directly above this editor already uses.
+    // ############ ABSENT IS NOT ZERO — ALL EIGHT ROWS, §14.4 ############
     //
-    // THE OTHER MACRO ROWS ARE DELIBERATELY LEFT AS THEY WERE. They have the
-    // same weakness and always have; changing what seven existing rows display
-    // was not this build's job. Flagged for Ryan rather than fixed in passing.
-    if(f.useKnown&&!(dm.known&&dm.known[f.macro]))return {text:'—',note:''};
+    // dayMacros() returns 0 for a macro nothing counted today stated, so a bare
+    // read prints "0 g" — an assertion that Ryan ate none of it, which is a
+    // different and much worse claim than "nothing you counted said". This panel
+    // used to make both claims side by side: saturated fat read '—' while fiber
+    // read '0 g' off the same empty day.
+    //
+    // `known` is what tells the two apart (§14.1), and it is what the band
+    // visual directly above this editor has always used — so the two now agree.
+    //
+    // A GENUINE MEASURED 0 STILL READS 0. Black coffee really does have 0 g of
+    // protein, and `known` is true for a field an item actually stated as zero.
+    // The distinction preserved here is "stated as zero" versus "never stated".
+    if(!(dm.known&&dm.known[f.macro]))return {text:'—',note:''};
     if(v===null||v===undefined||!isFinite(+v))return {text:'—',note:''};
     return {text:Math.round(+v)+(f.unit?' '+f.unit:''),note:''};
   }
