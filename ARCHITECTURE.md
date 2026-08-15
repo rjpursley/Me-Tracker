@@ -2438,16 +2438,22 @@ is ever committed.**
   "id": "fd_<uuid4hex12>",
   "name": "RXBAR Chocolate Sea Salt",
   "servingText": "1 bar (52g)",
-  "macros": {"protein": 12, "fat": 9, "carbs": 24, "sugar": 13,
-             "calories": 210, "fiber": 5, "sodium": 260},
+  "macros": {"protein": 12, "fat": 9, "saturatedFat": 3.5, "carbs": 24,
+             "sugar": 13, "calories": 210, "fiber": 5, "sodium": 260},
   "confidence": "high",
   "createdAt": "<UTC ISO>", "updatedAt": "<UTC ISO>", "lastUsedAt": "<UTC ISO or null>"
 }
 ```
 
-- **`protein` / `fat` / `carbs` / `sugar` are the four the Dietary score reads.
-  `calories`, `fiber` and `sodium` are stored and displayed but NEVER scored.**
-  Do not wire them into scoring — §11 protects the weights.
+- **`saturatedFat` joined the macros 2026-08-14 (§14.1)** — same rules as every
+  other macro, and **never inferred from total fat**.
+- **Which macros the Dietary score reads is decided by §14.1's weights**, not
+  here: calories, protein, sodium, sugar, fiber and saturated fat carry weight;
+  **total fat and carbs are captured and displayed but never scored**, because
+  carbs are the arithmetic residual of the other three. This sentence used to
+  name protein/fat/carbs/sugar as "the four the score reads" — that was the
+  pre-v2 formula. §11 still protects the four PILLAR weights, which are a
+  different thing entirely.
 - **Any macro may be `null`, meaning "not printed on the label". Never `0`.**
   Zero is a measurement of zero (§1.7). A value that is present but not a
   non-negative number is a **400**, not a silent `null` — quietly discarding a
@@ -3541,8 +3547,9 @@ the Dietary formula on its own judgement.**
 ### The Targets panel — Health Status
 
 Thirteen editable rows, Target beside Today, in the schema's order. Today's
-actuals come from `dayMacros(today())` for the seven macros and from
-`foodCountExtras(today())` for the six micronutrients.
+actuals come from `dayMacros(today())` for the macros and from
+`foodCountExtras(today())` for the six micronutrients. Since 2026-08-14 the
+**band visual (§14.2) leads this section** and this editor sits below it.
 
 **A micronutrient with no data renders `—`, never `0` and never a 0% bar**
 (§1.7). Coverage of these six is poor — most Open Food Facts items carry none of
@@ -3579,3 +3586,169 @@ been discarded — and the duplicate guard would then happily append a second
 entry for the same `effectiveFrom`. Scoring is unaffected: `calcScore()` still
 goes through `targetsFor()`, which still ignores anything dated later than the
 day being scored. A pending set is labelled as not yet in force.
+
+### 14.1 Dietary scoring v2 — six weighted nutrients
+
+Until 2026-08-14 the Dietary pillar read **sugar and protein only**. It now
+grades six nutrients against the target set that governed that day, resolved
+through `targetsFor(ds)`.
+
+#### §11 is not touched
+
+**The four pillar weights stay at 25% each.** Everything in this section is
+internal to the Dietary quarter — it changes what that quarter reads, not how
+the four are combined. Do not confuse the two weightings.
+
+#### The weights — they sum to exactly 100
+
+| Nutrient | Weight | Shape | Target |
+|---|---|---|---|
+| Calories | 25 | band | set `calories` ±10% (2250 → 2025–2475) |
+| Protein | 25 | floor | set `protein.min` (175 g), **no upper penalty** |
+| Sodium | 15 | ceiling | set `sodiumMax` (2300 mg) |
+| Sugar (total) | 15 | ceiling | set `sugarMax` (35 g) |
+| Fiber | 10 | band | set `fiber.min`–`fiber.max` |
+| Saturated fat | 10 | ceiling | **22 g constant — see below** |
+| Total fat | 0 | display only | set `fat.min`–`fat.max` |
+| Carbs | 0 | display only | set `carbs.min`–`carbs.max` |
+
+Bounds are read from **the day's own target set** wherever that set carries the
+field, so a dated target change moves the grading with it. Two places where the
+code and the schema do not line up, recorded rather than smoothed over:
+
+- **Calories** are stored as one number; the band is derived as ±10%
+  (`CALORIE_BAND_PCT` in `derive.js`).
+- **Saturated fat has no field in §14's thirteen-field target schema** — that
+  schema predates the nutrient. The ceiling is the constant
+  `SATURATED_FAT_MAX_DEFAULT = 22`. Adding `saturatedFatMax` to the target set
+  is the natural follow-up and would make the Targets editor fourteen rows;
+  **that is a decision for Ryan, not a session's judgment call.**
+
+#### Why carbs and total fat are unscored
+
+**Carbs are the arithmetic residual of calories, protein and fat.** Scoring them
+would count the same decision twice — once directly, once through the calories
+band — so one choice could mark the day down twice. Total fat is display-only
+for the same reason, with **saturated fat carrying the part of it that is
+actually a health question** at weight 10.
+
+**Both are still captured and still displayed.** Do not promote either into the
+weighted sum without a reason recorded here, and do not drop their capture.
+
+#### `gradeNutrient(value, {lo, hi})` — one function, three shapes
+
+| Shape | Condition | Scores 100 when | Reaches 0 at |
+|---|---|---|---|
+| **band** | `lo` and `hi` both set | `lo <= v <= hi` | `lo x 0.5` below, `hi x 1.5` above |
+| **floor** | `hi` absent | `v >= lo` | `lo x 0.5`. **No upper penalty at any value** |
+| **ceiling** | `lo` absent | `v <= hi` | `hi x 1.5` |
+
+Linear between. Clamped 0–100. **Rounded only at display**, so a weighted mean
+is never assembled out of pre-rounded parts.
+
+Verified boundaries: protein 250 g against a 175 g floor scores **100**, not a
+penalty; 131.25 g scores 50; 87.5 g scores 0. Sodium 5,019 mg against a 2,300 mg
+ceiling scores **0** — its zero point is 3,450.
+
+**Returns `null`, not 0, for a value that is not a number**, and also when there
+is no bound to grade against.
+
+#### A null nutrient is DROPPED. An unlogged day is ZERO. These are opposites.
+
+This is the part most likely to be misread later, so it is stated twice.
+
+**A nutrient with no data for the day scores `null` and leaves BOTH the
+numerator and the denominator.** The remaining weights renormalise to 100. A day
+where sodium was never stated scores out of 85 points of weight, not out of 100
+with a zero in it. Verified: a day meeting every target with sodium absent scores
+**100 on a denominator of 85** — grading it 0 would have produced 85.
+
+**A day with no food logged scores Dietary = 0.** Not null, not skipped, not
+renormalised across the other three pillars. This matches the training rule
+exactly (§9.5): **empty means it never happened.** Without it, an unlogged day
+would score 100 on every ceiling and grade as a perfect diet for eating nothing.
+
+> **A missing FIELD is missing information. A missing DAY is a missed
+> behaviour.** The first is dropped; the second is zero.
+
+**"No food logged" means no counted servings AND no legacy Log Meal entry.** A
+day with legacy meals but no ADDs is *not* empty: it has real protein and sugar
+figures, its unknown nutrients drop out under the rule above, and it scores on
+what it actually knows. Zeroing it would punish Ryan for using the older form,
+which is still live on the Dietary page.
+
+#### Historical days keep the old method
+
+Days predating `d.targetHistory[0].effectiveFrom` continue to fall back to
+`d.targets` and continue to score on the **old sugar-and-protein formula**.
+`targetsFor(ds)` returning `null` is the signal, and `dietaryDetail()` returns
+`null` on exactly the same condition.
+
+**Do not retro-apply v2.** Those days were lived against different goals under a
+different rule, and re-grading them is the precise failure §14 exists to stop.
+Verified: a day before the first entry still scores 60 on the old formula.
+
+#### `saturatedFat`
+
+A macro like any other (§13.2): **nullable, per serving, in grams.** Populated
+from Open Food Facts `saturated-fat_100g` and scaled by **the same `factor`**
+that §13.6's four cases already compute for every other macro — there is
+deliberately no second conversion path for it.
+
+**Never inferred as a fraction of total fat. Never backfilled.** Snapshots in
+`d.foodCounts` written before 2026-08-14 have no `saturatedFat` key and keep it
+that way; they read as "not known for that day", which is the truth.
+
+`foodCountMacros()` gained an additive **`known`** map for this — true for a
+field only when at least one counted item actually carried a figure. The total
+alone cannot answer "zero or gap": it is `0` both when nothing was eaten and
+when nothing stated the value. A **genuine measured 0 counts as known.**
+
+#### KNOWN LIMITATION: sugar is scored on TOTAL sugar
+
+**Whole fruit and added sugar are penalised identically.** A banana and a
+spoonful of table sugar move the 35 g ceiling by the same amount.
+
+This is a real and understood shortcoming, accepted because **Open Food Facts
+carries `added-sugars` far too patchily to score on** — scoring a field absent
+for most products would renormalise it away on exactly the days it mattered.
+
+**An RXBar is the case that will expose it:** high total sugar, no added sugar,
+and it grades as though the two were the same thing. Promoting added sugar to a
+scored row is **a decision for Ryan** once coverage is good enough to judge —
+not a change to make on a session's own judgment.
+
+### 14.2 The target band visual — Health Status
+
+Replaces the plain Target/Today list as the section's lead. It reads **the same
+`dietaryDetail()` the score itself is built from** (§6.9's one-read-path rule),
+so the ring and the Home score box cannot disagree.
+
+- **Hero ring.** A 104px donut of the day's Dietary score, the score at 30px in
+  the centre and `DIETARY` at 11px beneath. Arc length is the score.
+- **One line of derived text** naming what cost the most and what held the score
+  up — e.g. *"Sodium scored zero. Sugar and fiber carried the day."* Cost is
+  **weighted**, so the sentence names what actually moved the number. It is
+  derived every render and **nothing about it is hardcoded.** It also states the
+  coverage when the score is standing on partial information.
+- **Eight rows** in the table order above. The label line is name + weight
+  suffix + today's actual, right-aligned and coloured by that row's score. The
+  track is 14px tall, 3px radius, neutral. The **target zone** is a translucent
+  green band; the **marker** is a 4px bar at the actual value.
+- **Axis maximum** is `hi x 1.5` for ceilings and bands (the point the score
+  reaches 0) and `lo x 2` for floors, which have no upper bound. The marker
+  clamps at 100% and the value gains a caret so an off-scale
+  reading is visible rather than silently pinned. The indicator is `▸`.
+- **Colours are existing tokens only (§1.6):** `accent5` at 90+, `warn` 50–89,
+  `danger` below 50, `muted` for the two unscored rows. The target zone is
+  `accent5` at CSS opacity rather than a new translucent green literal — that is
+  what keeps this inside §1.6.
+- **The two unscored rows are grey and carry no weight suffix**, so they read as
+  information rather than as a failed target.
+- **A nutrient with no data shows an em-dash and NO MARKER AT ALL.** The target
+  zone still renders, so the row reads "here is the target, no reading today".
+  Drawing a marker at zero would assert a measurement of zero.
+- **No interaction.** No tooltips, no tap-to-expand, no animation.
+
+**The editor stays below the visual.** It is the only way targets get set, and
+it covers the six micronutrients the eight-row visual does not show.
