@@ -2254,15 +2254,31 @@ Printing "Stage 1 Hypertension" under a number would be exactly the overclaim
 
 Ryan may take blood pressure without the oximeter or the other way round. **An
 absent field is omitted from the record** — not written as `null`, not written
-as `0` (§1.4, §1.7). A record with no non-null field is not saved at all. The
-Latest Readings card renders a missing field as an em-dash labelled "not taken",
-and never borrows a value from an older record.
+as `0` (§1.4, §1.7). A record with no non-null field is not saved at all.
 
-#### One record per date
+**Half a blood pressure is the one exception, added 2026-08-15.** A lone
+systolic means nothing clinically and nothing to Ryan reading it back in six
+months, so a save is rejected unless the **resulting record** carries both
+numbers. The test is on the result rather than on the form, so correcting one
+half of a reading already stored for that date still works — the merge below
+supplies the other half. SpO₂ and pulse remain independent of both and of each
+other.
 
-Re-saving the same date **replaces** that record — unlike `weights`/`waists`,
-which append by design. These are point-in-time readings taken once in the
-evening, and two rows for one date would make "the latest reading" ambiguous.
+#### One record per date, and saves into it MERGE
+
+> **CHANGED 2026-08-15. It used to REPLACE.** Replacing quietly destroyed the
+> whole point of independent field saves: logging SpO₂ in the afternoon and
+> pulse in the evening left a record holding only the pulse.
+
+Re-saving the same date **merges into** that record: the fields actually entered
+are written and **every other key is left exactly as it was**. A field never
+entered is still simply not a key. Still one record per date — unlike
+`weights`/`waists`, which **append by design** and are unaffected, because two
+weigh-ins in one day are two real readings while these are point-in-time.
+
+**A consequence worth knowing:** a field cannot be cleared back to absent
+through the form. Re-entering it overwrites it; there is no "unrecord this"
+control, and inventing one was not asked for.
 
 #### Ranges are typo guards, not medical judgements
 
@@ -2277,6 +2293,56 @@ A value outside these is **rejected with a visible message and nothing is
 written** — not the vitals record, and not the bodyweight or waist entered in
 the same submission. A mistyped `1280/82` that got stored would sit in the
 history forever looking like something that happened.
+
+### 10.3 Independent field saves — and why carry-forward was rejected
+
+**Built 2026-08-15.** Log Measurements stays **one card with one Save button** —
+it was not split up. What changed is that every field is independently optional
+in the same submission: **two fields filled and six blank is a complete, valid
+save**, and a save with nothing filled writes nothing and says so.
+
+#### ############ A BLANK FIELD IS ABSENT. IT IS NEVER CARRIED FORWARD ############
+
+**Ryan explicitly asked for "if left blank, assume the previous numbers." It was
+not built, he accepted the correction, and this paragraph exists so it is not
+reintroduced later as a convenience feature.**
+
+A carried-forward SpO₂ is **a reading he never took, stored indistinguishably
+from one he did.** Once written it is unfalsifiable — nothing in the record says
+which numbers were measured and which were inherited. That is the same defect
+class as `awakeMinutes` counted as sleep (§6.10) and every em-dash rule in §1.7.
+
+#### Showing the last known value IS done — that is a different thing
+
+The Latest Readings card falls back **per field** to the most recent record that
+carries it, **with its age attached**: `SpO₂ 97%, 3 days ago`. This supersedes
+§10.2's original "never borrows a value from an older record" — an em-dash where
+a real reading exists three days back throws away something true.
+
+> **Displaying the last known value is honest. Storing it as today's is not.**
+> The date travels with the number, and nothing is written. A field with no
+> reading anywhere still shows `—` and "not taken".
+
+#### The save receipt names the gap as it is created
+
+After a save the card shows, **derived and never hardcoded**:
+
+> Saved: SpO₂ 98%, pulse 61 bpm. Not recorded: bodyweight, waist, blood pressure.
+> Blank fields stay blank — nothing was carried over from an earlier reading.
+
+Both lists come from what was actually written. **A known gap said out loud
+today is worth far more than a mystery hole in a chart in three weeks.** The
+receipt replaced an `alert('Measurement saved!')`, which said nothing about what
+had been left out. Errors — a range rejection, half a blood pressure, an empty
+form — render in the same place rather than as an `alert()`.
+
+#### Height and age are the one exception, because they are profile state
+
+They are **not dated measurements**: there is one current height and one current
+age. Their inputs are **prefilled from what is stored** so they need no
+re-entry, they keep their own `onchange` handlers, and the Save button also
+writes them — **but only when actually present**, and they appear in the receipt
+only when they genuinely changed.
 
 ### 10.1 1RM, Training Max, and the Personal Records page
 
@@ -3473,6 +3539,55 @@ with no library item behind it.
 replacement, and deliberately not the primary button: the library is still the
 normal answer.
 
+#### TWO ENTRY POINTS, ONE IMPLEMENTATION — added 2026-08-15
+
+The button used to exist **only** on the barcode review card, which was
+backwards. A scanned item *has* a barcode and is the easy case to keep
+permanently. The thing that actually wants one-time treatment — a restaurant
+plate, a homemade dish, something from a petrol station — **has no barcode at
+all** and can only be reached through the manual Add-a-food form.
+
+That form now carries the same button, styled `btn-secondary` exactly as the
+card's is. **Both call `writeOneTimeEntry()` in `meals.js` and there is exactly
+one copy of the snapshot logic.** The two callers read completely different
+sources — the card reads the `scan` module state, the form reads its inputs
+through `readForm()` — and each hands over a plain
+`{name, servingText, macros, extras, flags}`. **Do not fork this.** Two copies
+of a snapshot writer drift, and a drifted snapshot writes a day that no longer
+matches every other day.
+
+Everything above is unchanged for both: a fresh `newOneTimeId()`, a full
+snapshot, **no server request of any kind**, no library item, no `useCount`
+increment, and the same delete behaviour and wording.
+
+##### The default name is `Manually Added Nutrients`
+
+Ryan tracks **nutrients rather than foods**, so the common case must need no
+typing. The field stays editable because several of these in one day would
+otherwise be indistinguishable in the counter, and a blank name is **never**
+blocked — it submits as the default.
+
+**It is a PLACEHOLDER on the input, not a prefilled value, and that distinction
+is load-bearing.** This form is also the Add-to-library form. A real value
+sitting in that box would let a mistap on "Add to library" create a permanent
+library item called "Manually Added Nutrients". A placeholder shows the same
+words, needs the same zero typing, and cannot be submitted by the library path —
+which still refuses a blank name. The placeholder is only shown in add mode; the
+edit form keeps its own example text.
+
+##### Two gates, and only two
+
+- **At least one macro figure is required.** This is §13.12's existing reasoning
+  applied to the new entry point: an entry with no numbers puts a serving on
+  today's total carrying nothing, and unlike a bad library item there is no row
+  to go back and fix — the snapshot is the only copy.
+- **Not available while editing a library item.** In edit mode the form is bound
+  to an existing item and its primary button reads "Save changes"; a one-time
+  snapshot taken from a half-finished edit of a different food is incoherent, and
+  the secondary slot is already that edit's Cancel.
+
+A blank *name* is not a gate. Only the numbers are.
+
 ## 14. Dated targets — `d.targetHistory`
 
 ### The bug this fixes
@@ -3921,16 +4036,47 @@ placeholder is never submitted, so **opening the panel and pressing Save on an
 untouched form still writes nothing**, and the duplicate guard is unaffected.
 Filling it in produces a normal diff row: `Saturated fat max — → 18 g`.
 
-#### The Today column on this row reads `known`, not the bare total
+#### The Today column reads `known`, not the bare total — ALL EIGHT ROWS
+
+> **CLOSED 2026-08-15.** This was recorded here as open for one day: the
+> saturated fat cell read `known` while the other seven printed a bare total, so
+> the panel asserted "you ate 0 g of fiber" and "we don't know your saturated
+> fat" side by side. The first claim was false. All eight rows read `known` now
+> and the per-row `useKnown` opt-in is gone.
 
 `dayMacros()` returns `0` for a macro nothing counted today stated, so a bare
-read would print `0 g` — a measurement of zero, which is a different and much
-worse claim than "nothing you counted said" (§1.7). This row consults
-`dayMacros().known` and shows `—` instead, matching the band visual directly
-above it.
+read prints `0 g` — a measurement of zero, which is a different and much worse
+claim than "nothing you counted said" (§1.7). The rows consult
+`dayMacros().known` and show `—` instead, matching the band visual directly
+above them.
 
-**The other seven macro rows in that editor still show the bare total** and have
-the same weakness. They were left alone on purpose: changing what seven existing
-rows display was not this build's job. **Flagged for Ryan as a real, open
-inconsistency — the fix is one line, but it is a display change he should see
-coming.**
+**A genuine measured `0` still renders `0`.** Black coffee really does have 0 g
+of protein, and `known` is true for a field an item actually stated as zero. The
+distinction preserved is **"stated as zero" versus "never stated"** — never
+collapse the two.
+
+Verified: a day with no counted items reads `—` across all eight; a day counting
+only black coffee reads `0 g` for protein and `—` for fiber and saturated fat,
+which that item does not state. **Display only — `calcScore()` and
+`dietaryDetail()` were untouched**, and both already used `known`.
+
+#### Three more instances of the same coercion — OPEN, deliberately not fixed here
+
+The grep that closed the item above found the same "0 means absent" collapse in
+three other places. They are recorded rather than fixed, because each changes
+what an existing screen displays and that is Ryan's call, not a drive-by edit
+during a different job. **This is the fourth-and-following instances of a bug
+class this project keeps producing; the honest read is that any new code
+printing a macro total should consult `known` from the start.**
+
+| Where | What it claims | Why it is wrong |
+|---|---|---|
+| `dietary.js` — the four "Today's Macros" cards | `0` for protein / fat / carbs / sugar on a day nothing was logged | Reads `dayMacros()` totals directly. An unlogged day renders four confident zeroes with progress bars at 0%. |
+| `dietary.js` — the sugar-damage banner | "No sugar — HGH protected ✓" on a day nothing was logged | Keys off `ts===0`. This is the **strongest** of the three: it awards a green tick for a day with no food record at all. |
+| `meals.js` — the combined-total sentence under the Meal Tracker totals | `protein 0g · fat 0g · …` | The card three lines above it already reads `known` correctly; only this trailing sentence does not. |
+
+A fourth, related but distinct: **`health.js`'s Driving Factors "Sugar today"
+row** shows `0g` with a **good** dot on an unlogged day, and separately reads
+`d.meals` alone — so it ignores counted servings entirely. That second half is a
+**§6.9 two-read-path problem**, not just a display coercion, and is the more
+serious of the two faults.
