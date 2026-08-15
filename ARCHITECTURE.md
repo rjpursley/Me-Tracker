@@ -1522,7 +1522,19 @@ not a constant: add, delete and reorder all live on the Dietary page.
 
 ### 8.2 Suggested macro targets
 
-Under each Macro Target input the Dietary page shows a suggested value derived
+**THE ON-SCREEN SUGGESTIONS WERE RETIRED 2026-08-15 (§14.3).** They rendered
+under the four flat target inputs on the Dietary page, and those inputs are
+gone — a suggestion is a suggestion *for a field*, and there is no longer a
+field on that page to suggest into. `renderMacroSuggestions()` in `dietary.js`
+went with them.
+
+**`macroSuggestions()` in `derive.js` SURVIVES and must not be deleted.** It
+still supplies the carbs figure that the carbs progress bar falls back to when
+Ryan never set a carb target, and the reasoning below — especially about what
+must never feed it — is still live. What follows describes the formulas, which
+are unchanged; the "renders beside the input" part is history.
+
+Under each Macro Target input the Dietary page showed a suggested value derived
 from bodyweight:
 
 ```
@@ -3488,12 +3500,17 @@ targets that were already in force while he lived it.**
 ```js
 d.targetHistory = [
   { effectiveFrom:'2026-08-15', mode:'cut', calories:2250,
-    protein:{min:175,max:190}, fat:{min:70,max:85}, carbs:{min:180,max:220},
+    protein:{min:175,max:190}, fat:{min:70,max:85}, saturatedFatMax:22,
+    carbs:{min:180,max:220},
     sugarMax:35, fiber:{min:30,max:35}, sodiumMax:2300,
     potassium:3400, calcium:1000, iron:8, magnesium:420, zinc:11,
     caffeineMax:400, savedAt:'<UTC ISO>' }
 ]
 ```
+
+`saturatedFatMax` is the **fourteenth** field and was added 2026-08-15, after
+the other thirteen — **entries written before that date do not have the key at
+all, and nothing backfills them.** See §14.4.
 
 Sorted ascending by `effectiveFrom`. **Append-only: entries are never edited and
 never deleted.** Editing one would re-grade the days it governed, which is the
@@ -3519,12 +3536,22 @@ shipped** (§1.4).
 ### `d.targets` is not migrated, not deleted, not written
 
 The legacy flat object stays exactly as it is. It still serves the Log page's
-existing fields, and it is still the fallback above. **The Targets panel never
-writes to it.** The boot-time schema guard backfills `d.targetHistory` as an
-**empty array, never seeded from `d.targets`** — stamping today's goals onto
-history as though they had always applied is the bug, not the fix.
+**sleep goal and Training Maxes**, and it is still the fallback above. **The
+Targets panel never writes to it.** The boot-time schema guard backfills
+`d.targetHistory` as an **empty array, never seeded from `d.targets`** —
+stamping today's goals onto history as though they had always applied is the
+bug, not the fix.
+
+**Its NUTRITION fields are now READ-ONLY — nothing in the app edits them any
+more, and nothing should (§14.3).**
 
 ### Scoring reads exactly what it read before
+
+> **SUPERSEDED BY §14.1 (2026-08-14).** The two paragraphs below describe the
+> formula as it stood the day dated targets shipped, and are kept as the record
+> of what changed when. **A governed day is now graded by v2's six weighted
+> nutrients.** Only days predating the first history entry still use the
+> sugar-and-protein formula described here.
 
 **The Dietary formula is unchanged.** It still reads **sugar and protein only**,
 and the sugar thresholds are still the hardcoded 10/25 they have always been.
@@ -3532,12 +3559,17 @@ The single change is *where the protein goal comes from*: the dated set's
 `protein.min` when the day was governed by one, the legacy flat target
 otherwise.
 
-**Sleep is not in the dated set.** `d.targetHistory` carries the thirteen
+**Sleep is not in the dated set.** `d.targetHistory` carries the fourteen
 nutrition fields and no sleep goal, so the Sleep pillar still reads
 `d.targets.sleep`. Inventing a dated sleep field would be building a schema that
 was not asked for.
 
 #### Whether the Dietary score should read MORE than sugar and protein is an OPEN DECISION FOR RYAN
+
+> **ANSWERED 2026-08-14 — see §14.1.** Ryan decided it, and six nutrients are
+> now scored. The paragraph below is the record of the question, not the current
+> state. **The rule it states still binds: a future session must not expand or
+> re-weight the Dietary formula on its own judgement.**
 
 Eleven of the thirteen stored targets currently feed **nothing**. That is
 deliberate: they are captured and displayed now, and what the score does with
@@ -3546,7 +3578,11 @@ the Dietary formula on its own judgement.**
 
 ### The Targets panel — Health Status
 
-Thirteen editable rows, Target beside Today, in the schema's order. Today's
+**Fourteen** editable rows since 2026-08-15 (§14.4), Target beside Today, in the
+schema's order — `saturatedFatMax` sits directly under Fat rather than at the
+end of the list, because the two are one decision read two ways and six
+micronutrients between them would bury it. **Position is display order only;
+nothing resolves a target by index.** Today's
 actuals come from `dayMacros(today())` for the macros and from
 `foodCountExtras(today())` for the six micronutrients. Since 2026-08-14 the
 **band visual (§14.2) leads this section** and this editor sits below it.
@@ -3608,7 +3644,7 @@ the four are combined. Do not confuse the two weightings.
 | Sodium | 15 | ceiling | set `sodiumMax` (2300 mg) |
 | Sugar (total) | 15 | ceiling | set `sugarMax` (35 g) |
 | Fiber | 10 | band | set `fiber.min`–`fiber.max` |
-| Saturated fat | 10 | ceiling | **22 g constant — see below** |
+| Saturated fat | 10 | ceiling | set `saturatedFatMax`, **falling back to the 22 g constant on entries that predate the field (§14.4)** |
 | Total fat | 0 | display only | set `fat.min`–`fat.max` |
 | Carbs | 0 | display only | set `carbs.min`–`carbs.max` |
 
@@ -3618,11 +3654,12 @@ code and the schema do not line up, recorded rather than smoothed over:
 
 - **Calories** are stored as one number; the band is derived as ±10%
   (`CALORIE_BAND_PCT` in `derive.js`).
-- **Saturated fat has no field in §14's thirteen-field target schema** — that
-  schema predates the nutrient. The ceiling is the constant
-  `SATURATED_FAT_MAX_DEFAULT = 22`. Adding `saturatedFatMax` to the target set
-  is the natural follow-up and would make the Targets editor fourteen rows;
-  **that is a decision for Ryan, not a session's judgment call.**
+- **Saturated fat had no field in §14's original thirteen-field target schema**
+  — that schema predates the nutrient, and the ceiling was the bare constant
+  `SATURATED_FAT_MAX_DEFAULT = 22` for one day. **Ryan took that decision on
+  2026-08-15 and `saturatedFatMax` is a real dated field now (§14.4).** The
+  constant survives as the fallback for entries written before it existed, and
+  for nothing else.
 
 #### Why carbs and total fat are unscored
 
@@ -3752,3 +3789,148 @@ so the ring and the Home score box cannot disagree.
 
 **The editor stays below the visual.** It is the only way targets get set, and
 it covers the six micronutrients the eight-row visual does not show.
+
+#### Three states, and the middle one is the day-one case
+
+`dietaryDetail(today())` returning `null` means no dated set governs today.
+There are two genuinely different reasons for that, and until 2026-08-15 they
+rendered identically — as a plain text block, with no visual at all:
+
+| State | What renders |
+|---|---|
+| A dated set is in force | The full visual: ring, score, eight rows, markers |
+| **Nothing in force, but an entry is PENDING** | **The full visual in a PREVIEW state — zones, no markers, no score** |
+| `d.targetHistory` is empty | The plain text block, unchanged |
+
+**Why the preview exists.** A save is *always* effective tomorrow (§14), so on
+the day Ryan first sets targets there is nothing in force — which means **the
+band visual was guaranteed to be invisible on the day it shipped**, and on
+everyone's first day, which is exactly when he would go looking for it.
+
+**What it draws, and what it must never draw:**
+
+- **All eight rows with their target zones**, read from the pending entry.
+- **No markers on any row, and no score in the ring.** This is the load-bearing
+  half. Today is **not** graded against these numbers — it is still on the
+  previous targets — and a marker sitting inside or outside a green band would
+  claim otherwise. Same reasoning as the em-dash rule above: drawing a position
+  asserts a measurement.
+- **The ring is an empty track with `—` in the centre**, never `0`. A zero is a
+  score, and the worst one; the absence of a score is a different fact (§1.7).
+- **One line of text:** *"Not in force until 2026-08-16. Today is scored on your
+  previous targets."* **The date is read off the pending entry**, never
+  hardcoded and never `tomorrowStr()` — a set saved days ago is still pending
+  until its own date, and quoting "tomorrow" then would be wrong.
+
+**Which entry is previewed:** the pending one that takes effect **first**, since
+that is the set about to govern. Entries sharing an `effectiveFrom` resolve
+**last-appended wins**, the same rule `targetsFor()` and the editor apply.
+
+**The zones come from `derive.js`'s `dietTargetRows(t)`, not from geometry
+re-derived in `health.js`.** That function returns the same row shape
+`dietaryDetail()` does with `value`/`score` null throughout, so `bandRowHtml()`
+draws it with no changes and the bounds logic stays in one place (§6.9). **It is
+not a scoring path** and must never be treated as one: it answers "what do these
+targets look like", never "how did this day do".
+
+### 14.3 The flat nutrition target inputs were retired — 2026-08-15
+
+**There were two places to set nutrition targets and only one of them worked.**
+
+`index.html` carried the original flat inputs — `target-protein`, `target-fat`,
+`target-carbs`, `target-sugar` on the Dietary page, and `ft-protein` on the
+**drawer's Log Entry page** — all wired to `saveTargets()`, all writing to the
+undated `d.targets`. **None of those writes reached `d.targetHistory`, so none
+of them moved the v2 score.** Editing one changed a number on screen and changed
+nothing else, which is worse than having no field at all (§1.7).
+
+`target-carbs` was worse still: `saveTargets()` never had a carbs branch, so
+**that input never persisted anything at any point in its life.**
+
+#### What was removed
+
+The five inputs, their four `.macro-suggest` siblings (§8.2), the
+`suggest-basis` note that explained them, `renderMacroSuggestions()` in
+`dietary.js`, the `target-*` value-loading loop in `renderDiet()`, the
+`ft-protein` line in `initLogForms()`, and the now-unused `.macro-suggest` CSS.
+A comment stands where each block was. The Dietary page's "Macro Targets"
+section is now a single `.form-note` pointing at Health Status → Targets.
+
+#### `d.targets` SURVIVES — and must never be re-exposed as an editing surface
+
+- **§1.4 forbids deleting the key**, and it is not deleted.
+- **Days predating `d.targetHistory[0].effectiveFrom` still score from it**
+  through the pre-v2 path (§14.1). It is a **historical read path**, and the
+  numbers in it are what those days were actually lived against.
+- `dietary.js` still reads `targets.protein` / `.fat` / `.sugar` / `.carbs` for
+  the four **progress bars** on the Dietary page. Reading is fine. Writing is
+  what stopped.
+
+**Putting a nutrition target input back on any page — even a disabled or
+read-only one — re-creates the bug this removed.** A field showing numbers that
+govern nothing is still misleading; that is why nothing replaced them.
+
+#### What was deliberately NOT touched
+
+- **`saveTargets()` is completely unchanged.** The sleep goal, the disabled fast
+  goal and the four legacy Training Max inputs still call it, so the function is
+  still load-bearing. Its lookups for the five removed ids are now no-ops — every
+  one is guarded by `if(el&&el.value)` — and **they were left in place rather
+  than pruned**, because touching that function for cosmetics risks the TM path
+  §10.1 depends on.
+- **`targets.sleep` and `targets.daily` are a separate concern and are out of
+  scope.** Sleep is deliberately not in the dated set (§14), so the Log page's
+  sleep goal is a **live, current setting** — not a legacy one. The fast goal
+  stays disabled and labelled inactive per §7.1.
+
+### 14.4 `saturatedFatMax` — the last undated ceiling, now dated
+
+Saturated fat is scored at weight 10 (§14.1), but its 22 g ceiling lived in
+`derive.js` as `SATURATED_FAT_MAX_DEFAULT`. **It was the only scored nutrient
+whose target was a constant rather than a dated entry** — which reproduced, for
+one row, exactly the bug §14 was built to eliminate: change the constant and
+every historical day silently re-grades against the new value.
+
+It is the **fourteenth field** in the entry shape, seeded at `22`, and
+`gradeNutrient` reads its ceiling from `targetsFor(ds)` exactly as the other
+five scored nutrients do. It participates in the existing next-day effective
+rule and the existing keypad confirm gate — no new patterns were introduced.
+
+#### ABSENCE IS THE BOUNDARY — no backfill, no epoch date
+
+**Entries written before 2026-08-15 have no `saturatedFatMax` key and nothing
+fills one in.** An entry **without** the key grades against the constant, which
+is exactly what those days were scored against when they were lived; an entry
+**with** it uses its own value. **The presence of the key is the whole test** —
+the same rule `asleepMinutes` (§6.10) and the food snapshots' `saturatedFat`
+(§14.1) already follow.
+
+There is deliberately **no migration and no epoch constant** here. Do not add
+either, and do not "tidy up" old entries by writing 22 into them: that would be
+a rewrite of history dressed as consistency.
+
+`SATURATED_FAT_MAX_DEFAULT` therefore **stays in `derive.js` permanently** and
+is now exported, so the Targets panel's seed and its placeholder read the same
+number the fallback uses and the two cannot drift.
+
+#### What the editor shows for an entry that predates the field
+
+The row's input is **blank, with `22` as a PLACEHOLDER** — a value Ryan can see
+but has not set — plus a note saying it is graded against 22 g and why. A
+placeholder is never submitted, so **opening the panel and pressing Save on an
+untouched form still writes nothing**, and the duplicate guard is unaffected.
+Filling it in produces a normal diff row: `Saturated fat max — → 18 g`.
+
+#### The Today column on this row reads `known`, not the bare total
+
+`dayMacros()` returns `0` for a macro nothing counted today stated, so a bare
+read would print `0 g` — a measurement of zero, which is a different and much
+worse claim than "nothing you counted said" (§1.7). This row consults
+`dayMacros().known` and shows `—` instead, matching the band visual directly
+above it.
+
+**The other seven macro rows in that editor still show the bare total** and have
+the same weakness. They were left alone on purpose: changing what seven existing
+rows display was not this build's job. **Flagged for Ryan as a real, open
+inconsistency — the fix is one line, but it is a display change he should see
+coming.**
