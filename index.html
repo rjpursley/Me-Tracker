@@ -200,6 +200,14 @@
     </div>
     <div class="form-row"><div class="form-label">Date</div><input type="text" id="health-measure-date" placeholder="YYYY-MM-DD"></div>
     <button class="btn btn-primary" onclick="logBodyMeasurement()">Save Measurement</button>
+    <!-- EVERY FIELD ABOVE IS INDEPENDENTLY OPTIONAL. Two filled and six blank is
+         a complete save. A blank field is ABSENT — never zero, and never
+         inherited from an earlier reading: a carried-forward number is a
+         measurement Ryan never took, stored indistinguishably from one he did.
+         The receipt below names exactly what was and was not recorded, so a gap
+         is visible the moment it is created rather than three weeks later. -->
+    <div id="measure-receipt"></div>
+    <div class="form-note">Fill in only what you measured. Anything left blank is recorded as not taken — it is never filled in from a previous reading.</div>
   </div>
 
   <!-- Hormone Indices (HGH / Test / Cortisol) were deleted here 2026-08-14.

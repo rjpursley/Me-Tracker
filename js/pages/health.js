@@ -794,100 +794,251 @@ const VITAL_RANGES={
 };
 const VITAL_KEYS=Object.keys(VITAL_RANGES);
 
-// The most recent record by date, or null. Sorted here rather than assuming the
-// array is ordered — records are keyed by a date Ryan types, so they can be
-// entered out of order.
-function latestBodyVitals(){
+// Every record, newest first. Sorted here rather than assuming the array is
+// ordered — records are keyed by a date Ryan types, so they can be entered out
+// of order.
+function bodyVitalsByDate(){
   const list=((db().body||{}).vitals)||[];
-  const clean=list.filter(r=>r&&r.date);
-  if(!clean.length)return null;
-  return clean.slice().sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0)[0];
+  return list.filter(r=>r&&r.date).slice()
+             .sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0);
 }
 
+// The most recent record by date, or null.
+function latestBodyVitals(){
+  const all=bodyVitalsByDate();
+  return all.length?all[0]:null;
+}
+
+// The most recent record that actually CARRIES this field, with its date. Not
+// the most recent record — a reading Ryan did take three days ago is a better
+// answer than an em-dash just because yesterday's record was oximeter-only.
+function latestFieldReading(key){
+  const all=bodyVitalsByDate();
+  for(const r of all){
+    const v=r[key];
+    if(v!==null&&v!==undefined&&v!=='')return {value:v,date:r.date};
+  }
+  return null;
+}
+
+// "today" / "yesterday" / "3 days ago". Whole days between two local calendar
+// dates (§12) — never a timezone-shifted instant.
+function daysAgoText(ds){
+  const a=new Date(ds+'T12:00:00'), b=new Date(today()+'T12:00:00');
+  const n=Math.round((b-a)/86400000);
+  if(!isFinite(n))return ds;
+  if(n<=0)return 'today';
+  if(n===1)return 'yesterday';
+  return n+' days ago';
+}
+
+// ############ SHOWING THE LAST KNOWN VALUE IS HONEST. STORING IT IS NOT ############
+//
+// Changed 2026-08-15, superseding §10.2's original "never borrows a value from
+// an older record". Each cell now falls back to the most recent record that
+// carries that field AND SAYS HOW OLD IT IS — "97 %, 3 days ago". An em-dash
+// where a real reading exists three days back throws away something true.
+//
+// THE DISTINCTION THAT MAKES THIS SAFE: this is a display fallback with the age
+// attached, never a write. Nothing is copied into today's record, so a reading
+// Ryan never took can never end up stored as though he had (§1.7). A field with
+// no reading anywhere still shows '—' and 'not taken'.
 function renderBodyVitals(){
   const el=document.getElementById('body-vitals-latest');
   if(!el)return;
-  const r=latestBodyVitals();
-  if(!r){
+  if(!latestBodyVitals()){
     el.innerHTML='<div class="card"><div class="form-note">No blood pressure, SpO₂ or pulse logged yet. '+
                  'Add one below — every field is optional.</div></div>';
     return;
   }
-  // A field the record does not carry renders '—'. NEVER 0, and never a
-  // borrowed value from an older record: this card reports one reading.
+  let anyStale=false;
   const cells=VITAL_KEYS.map(k=>{
     const m=VITAL_RANGES[k];
-    const v=r[k];
-    const has=(v!==null&&v!==undefined&&v!=='');
+    const hit=latestFieldReading(k);
+    if(hit&&hit.date!==today())anyStale=true;
     return `<div class="card" style="text-align:center;padding:12px">`+
       `<div class="card-title" style="margin-bottom:4px">${m.label}</div>`+
-      `<div class="stat-big" style="font-size:26px">${has?esc(String(v)):'—'}</div>`+
+      `<div class="stat-big" style="font-size:26px">${hit?esc(String(hit.value)):'—'}</div>`+
       `<div class="stat-sub">${m.unit}</div>`+
-      `<div class="stat-sub" style="font-size:10px;margin-top:4px">${has?'logged':'not taken'}</div>`+
+      `<div class="stat-sub" style="font-size:10px;margin-top:4px">${hit?esc(daysAgoText(hit.date)):'not taken'}</div>`+
     `</div>`;
   }).join('');
   el.innerHTML='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+cells+'</div>'+
-    `<div class="form-note">Reading from ${esc(r.date)}. These are recorded and shown only — `+
-    `the app does not interpret them and they do not affect any score.</div>`;
+    `<div class="form-note">`+
+    (anyStale?'Each number is the last one you recorded, with when you recorded it — they are not all from the same day, and none of them is being treated as today’s reading. ':'')+
+    `These are recorded and shown only — the app does not interpret them and they do not affect any score.</div>`;
+}
+
+// ---------------------------------------------------------------------------
+// INDEPENDENT FIELD SAVES — 2026-08-15.
+//
+// One card, one Save button, and every field independently optional. Ryan takes
+// blood pressure one evening, SpO2 another, and weighs himself on a third; he
+// must never have to re-enter an unrelated field to record one reading. Two
+// fields filled and the rest blank is a COMPLETE, VALID SAVE.
+//
+// ############ A BLANK FIELD IS ABSENT. IT IS NEVER CARRIED FORWARD ############
+//
+// Carrying yesterday's value into today's blank box was ASKED FOR and was
+// REJECTED, deliberately, and this note exists so it is not reintroduced later
+// as a convenience. A carried-forward SpO2 is a reading Ryan never took, stored
+// indistinguishably from one he did — the same defect class as the awake-minutes
+// bug (§6.10) and the em-dash rules throughout §1.7. Once written it is
+// unfalsifiable: nothing in the record says which numbers were measured.
+//
+// SHOWING the last known value beside its age is a different thing entirely and
+// IS done — see renderBodyVitals() above. Display carries the date with it;
+// storage would not.
+//
+// Height and age are the one exception, and only because they are PROFILE STATE
+// rather than dated measurements: their inputs are prefilled from what is stored
+// (renderHealth) so they need no re-entry, and they are still only written when
+// actually present.
+// ---------------------------------------------------------------------------
+
+// A one-line receipt naming what was and was not recorded, held in module state
+// and rendered into the card. Never stored.
+let measureMsg=null;      // {text, kind:'info'|'err'|'success'}
+
+function renderMeasureMsg(){
+  const el=document.getElementById('measure-receipt');
+  if(!el)return;
+  if(!measureMsg){el.innerHTML='';return;}
+  const cls=measureMsg.kind==='success'?'success':measureMsg.kind==='err'?'err':'info';
+  el.innerHTML=`<div class="alert ${cls}">${esc(measureMsg.text)}</div>`;
+}
+
+// Receipt names read MID-SENTENCE, so they are lower case except where the
+// capital is part of the term itself. VITAL_RANGES' labels head their own cards
+// and are capitalised for that; reusing them here produced "and Pulse".
+const RECEIPT_NAMES={systolic:'systolic',diastolic:'diastolic',spo2:'SpO₂',pulse:'pulse'};
+
+// "SpO₂ 97%", "pulse 62 bpm".
+function vitalPhrase(k,v){
+  const m=VITAL_RANGES[k];
+  return RECEIPT_NAMES[k]+' '+v+(m.unit==='%'?'%':' '+m.unit);
 }
 
 export function logBodyMeasurement(){
-  const w=document.getElementById('health-weight').value;
-  const wa=document.getElementById('health-waist').value;
+  const val=id=>{const el=document.getElementById(id);return ((el&&el.value)||'').trim();};
+  const w=val('health-weight');
+  const wa=val('health-waist');
 
-  // Read and validate the four new fields BEFORE writing anything, so a typo in
-  // the pulse box cannot leave a bodyweight half-saved. Same all-or-nothing
-  // shape the library writes on the Meal Tracker use (§1.7).
+  // Read and validate the four vitals BEFORE writing anything, so a typo in the
+  // pulse box cannot leave a bodyweight half-saved. Same all-or-nothing shape
+  // the library writes on the Meal Tracker use (§1.7).
   const vitals={};
   for(const k of VITAL_KEYS){
-    const el=document.getElementById('health-'+k);
-    const raw=((el&&el.value)||'').trim();
+    const raw=val('health-'+k);
     if(raw==='')continue;                       // absent, not zero — omitted below
     const num=Number(raw);
     const m=VITAL_RANGES[k];
     if(!isFinite(num)){
-      alert(m.label+' must be a number.');return;
+      measureMsg={text:m.label+' must be a number. Nothing was saved.',kind:'err'};
+      renderHealth();return;
     }
     if(num<m.min||num>m.max){
       // SAY WHAT WAS EXPECTED AND SAY NOTHING WAS SAVED. A value this far out is
       // a typo; storing it would corrupt the history silently.
-      alert(m.label+' of '+raw+' '+m.unit+' is outside the plausible range ('+
-            m.min+'–'+m.max+' '+m.unit+'). Nothing was saved — check the number.');
-      return;
+      measureMsg={text:m.label+' of '+raw+' '+m.unit+' is outside the plausible range ('+
+            m.min+'–'+m.max+' '+m.unit+'). Nothing was saved — check the number.',kind:'err'};
+      renderHealth();return;
     }
     vitals[k]=num;
   }
   const anyVital=VITAL_KEYS.some(k=>k in vitals);
 
-  if(!w&&!wa&&!anyVital){alert('Enter a bodyweight, a waist measurement, or a blood pressure / SpO₂ / pulse reading');return;}
-
   const d=db();
   d.body=d.body||{};d.body.weights=d.body.weights||[];d.body.waists=d.body.waists||[];
-  const date=document.getElementById('health-measure-date').value||today();
-  // UNCHANGED. Weights and waists still append exactly as before.
+  const date=val('health-measure-date')||today();
+
+  // ############ HALF A BLOOD PRESSURE IS NOT A BLOOD PRESSURE ############
+  //
+  // A lone systolic means nothing clinically and nothing to Ryan reading it back
+  // in six months. The test is on the RECORD THAT WOULD RESULT, not on the form
+  // alone, so correcting one half of a reading already stored for that date
+  // still works — the merge below supplies the other half.
+  if(!Array.isArray(d.body.vitals))d.body.vitals=[];
+  const existingIdx=d.body.vitals.findIndex(r=>r&&r.date===date);
+  const existing=(existingIdx>=0)?d.body.vitals[existingIdx]:{};
+  const wouldHave=k=>{
+    const v=(k in vitals)?vitals[k]:existing[k];
+    return v!==null&&v!==undefined&&v!=='';
+  };
+  if(anyVital&&(wouldHave('systolic')!==wouldHave('diastolic'))){
+    const missing=wouldHave('systolic')?'diastolic':'systolic';
+    measureMsg={text:'A blood pressure needs both numbers to mean anything — the '+missing+
+                     ' is missing. Nothing was saved; enter both, or leave both blank and save the '+
+                     'other readings on their own.',kind:'err'};
+    renderHealth();return;
+  }
+
+  // Height and age: profile state, written only when present. Their own onchange
+  // handlers already save them; this makes the Save button agree rather than
+  // silently ignoring a box Ryan just typed in.
+  const h=val('health-height'), ag=val('health-age');
+  const heightChanged=(h!==''&&String(d.body.height==null?'':d.body.height)!==h);
+  const ageChanged=(ag!==''&&String(d.body.age==null?'':d.body.age)!==ag);
+
+  if(!w&&!wa&&!anyVital&&!heightChanged&&!ageChanged){
+    // NOTHING FILLED WRITES NOTHING, AND SAYS SO. Silence here would look
+    // identical to a successful save.
+    measureMsg={text:'Nothing was filled in, so nothing was saved. Enter any one field — '+
+                     'a bodyweight, a waist, a blood pressure, an SpO₂ or a pulse — and save that on its own.',kind:'info'};
+    renderHealth();return;
+  }
+
+  if(heightChanged)d.body.height=h;
+  if(ageChanged)d.body.age=ag;
+  // UNCHANGED. Weights and waists still APPEND, per §10.2 — two weigh-ins in one
+  // day are two real readings, unlike the point-in-time vitals below.
   if(w)d.body.weights.push({date,lbs:w});
   if(wa)d.body.waists.push({date,inches:wa});
 
   if(anyVital){
-    if(!Array.isArray(d.body.vitals))d.body.vitals=[];
-    // ONE RECORD PER DATE — replace in place if this date already has one.
-    // Only the fields actually entered are written; the rest are simply not
-    // keys on the record (§1.4).
-    const rec={date,...vitals};
-    const i=d.body.vitals.findIndex(r=>r&&r.date===date);
-    if(i>=0)d.body.vitals[i]=rec;else d.body.vitals.push(rec);
+    // ONE RECORD PER DATE, AND SAVES INTO IT **MERGE** (changed 2026-08-15).
+    // It used to REPLACE, which quietly destroyed the whole point of independent
+    // saves: logging SpO2 in the afternoon and pulse in the evening left a record
+    // holding only the pulse. Only the fields actually entered are written; every
+    // other key on the record is left exactly as it was, and a field never
+    // entered is simply not a key (§1.4).
+    const rec={...existing,date,...vitals};
+    if(existingIdx>=0)d.body.vitals[existingIdx]=rec;else d.body.vitals.push(rec);
   }
 
   save(d);
+
+  // ############ THE RECEIPT NAMES THE GAP AT THE MOMENT IT IS CREATED ############
+  //
+  // Both lists are DERIVED from what was actually written. A known gap said out
+  // loud today is worth far more than a mystery hole in a chart in three weeks.
+  const saved=[],skipped=[];
+  (w?saved:skipped).push(w?'bodyweight '+w+' lbs':'bodyweight');
+  (wa?saved:skipped).push(wa?'waist '+wa+' in':'waist');
+  if('systolic' in vitals||'diastolic' in vitals){
+    const s=('systolic' in vitals)?vitals.systolic:existing.systolic;
+    const dia=('diastolic' in vitals)?vitals.diastolic:existing.diastolic;
+    saved.push('blood pressure '+s+'/'+dia);
+  }else skipped.push('blood pressure');
+  ['spo2','pulse'].forEach(k=>{
+    if(k in vitals)saved.push(vitalPhrase(k,vitals[k]));
+    else skipped.push(RECEIPT_NAMES[k]);
+  });
+  let text='Saved'+(date===today()?'':' for '+date)+': '+(saved.length?saved.join(', '):'nothing')+'.';
+  if(skipped.length)text+=' Not recorded: '+skipped.join(', ')+'.';
+  if(heightChanged)text+=' Height updated to '+h+' in.';
+  if(ageChanged)text+=' Age updated to '+ag+'.';
+  if(skipped.length)text+=' Blank fields stay blank — nothing was carried over from an earlier reading.';
+  measureMsg={text,kind:'success'};
+
   document.getElementById('health-weight').value='';
   document.getElementById('health-waist').value='';
   VITAL_KEYS.forEach(k=>{const el=document.getElementById('health-'+k);if(el)el.value='';});
-  alert('Measurement saved!');
   renderHealth();
 }
 
 export function renderHealth(){
-  renderBodySummary();renderBodyVitals();renderTargets();
+  renderBodySummary();renderBodyVitals();renderMeasureMsg();renderTargets();
   // Paint the panel from what is already known, then ask the server for a
   // fresher answer — same placeholder-then-update pattern the vitals header
   // uses (§9.3), never a number before there is a source for it.
