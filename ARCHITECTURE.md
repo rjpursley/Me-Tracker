@@ -112,9 +112,14 @@ design needs a color that isn't there, that is a conversation with Ryan, not a
 hex literal.
 
 ### 1.7 Estimates are labeled as estimates
-Vision-derived macros and hormone indices are guesses. They render visually
-distinct from measured data. The app never presents an estimate with the same
-confidence as a barcode lookup or a scale reading.
+Vision-derived macros are guesses. They render visually distinct from measured
+data. The app never presents an estimate with the same confidence as a barcode
+lookup or a scale reading.
+
+The hormone indices used to be the other example here. They were **deleted**
+rather than relabelled (§10.0): when an estimate has no criterion variable at
+all — nothing it could ever be checked against — a label is not enough, and the
+honest move is to not show the number.
 
 ---
 
@@ -2115,29 +2120,135 @@ fasting control.
 
 ## 10. Health Status
 
-- **Manual:** height, bodyweight, waist circumference, tested 1RMs (§10.1).
-- **Auto from API:** body fat %, VO2 max, HRV.
-- **Derived:** 7-day rolling bodyweight trend, Training Max (§10.1), relative
-  strength (each Training Max ÷ bodyweight).
+- **Manual:** height, age, bodyweight, waist circumference, blood pressure /
+  SpO₂ / pulse (§10.2), tested 1RMs (§10.1), dated targets (§14).
+- **Auto from API:** HRV.
+- **Derived:** 7-day rolling bodyweight trend, Training Max (§10.1).
 
-**VO2 max is available from the Versa 2.** Fitbit calls it **Cardio Fitness
-Score**, which is why a search for "VO2 max" in their docs comes up empty — the
-metric is there under a marketing name.
-
-**BUILT (§6).** Body fat %, VO2 max and HRV render from
-`getCachedVitals(today()).bodyFatPct/.vo2Max/.hrv` (Health Status page,
-`renderAwaiting()` in `js/pages/health.js`). Any of the three the API hasn't
-supplied a value for yet still renders as an em-dash under "Awaiting Sync" —
-never a zero, which would read as a measurement of zero (§1.7).
+**BUILT (§6).** HRV renders from `getCachedVitals(today()).hrv` as the fourth
+cell of the Body summary (`renderBodySummary()` in `js/pages/health.js`). With
+no value it is an em-dash labelled "no reading" — never a zero, which would read
+as a measurement of zero (§1.7). A Versa 2 frequently produces no HRV figure for
+a night; that is a gap, not a measurement.
 
 **Bodyweight displays as the 7-day rolling average, not the daily value.** Daily
 weight is mostly water and produces misleading noise.
 
-Hormone indices (HGH, Testosterone, Cortisol Pressure) are **behavioral
-correlations, not medical claims**, and must always be labeled as such. Never
-present a clinical value.
+### 10.0 Removed 2026-08-14 — Hormone Indices, and Awaiting Sync
+
+#### Hormone Indices (HGH, Testosterone, Cortisol Pressure) — DELETED
+
+`calcHGH()`, `calcTest()` and `calcCortisol()` are gone from `js/derive.js`, and
+the three cards, the "Estimates from behavioral data only" banner and the
+`cortisol-warning` block are gone from `index.html`.
+
+**Why: there was no criterion variable.** Each function ran sleep, fasting,
+workout type and sugar through a hand-tuned ladder of magic numbers and printed
+the result as `HGH 72/100` beside a progress bar. **Not one blood test has ever
+been taken against which any of the three outputs could be checked.** Nothing
+about them was validated, falsifiable, or even wrong in a way anyone could
+notice. Labelling them "behavioral correlations" underneath did not fix that —
+a number with a hormone's name, a /100 scale and a bar reads as a measurement
+however the caption is worded, and §1.7 does not allow an estimate to wear the
+same clothes as a measurement.
+
+**A phantom modifier went with them, and it is recorded so it is not rebuilt.**
+`renderHealth()` contained:
+
+```js
+if(cort>60){ hghD=hgh-10; testD=test-10; modText='−10 cortisol drag'; }
+else if(cort>30) modText='−5 cortisol drag';
+```
+
+The second branch **set the label and never subtracted anything.** For every
+cortisol score between 31 and 60 the page displayed "−5 cortisol drag" under an
+unmodified number. The label described a calculation that did not exist.
+
+**DO NOT REINTRODUCE THESE WITHOUT REAL LAB DATA to fit against.** A behavioural
+proxy is a legitimate thing to build once there is a measurement to regress it
+on. Until then it is invention with a clinical name attached.
+
+**The Driving Factors card survived** and is now the section's own content. It
+was always the honest half — five plainly-labelled behavioural facts with a
+good/bad dot each and no arithmetic pretending to be a measurement. The Cortisol
+row was dropped with the indices (it was the one row whose value came from a
+computation rather than a logged fact); the other five thresholds are unchanged.
+Its container id is still `hgh-factors` — legacy, **deliberately not renamed**,
+since §1.4's additive rule applies to DOM ids other code references.
+
+#### Awaiting Sync — DELETED
+
+The panel held body fat %, VO2 max and HRV. **Body fat and VO2 max have no
+source device.** Ryan wears a Versa 2 and owns no smart scale, so both were
+permanently `null` and the panel could only ever render two em-dashes under a
+heading promising they were on their way. A section that can never populate is
+not honest reporting, it is furniture.
+
+HRV moved up into the Body summary, which is now 2×2 rather than three across —
+four cells on a 393pt screen leaves ~85px each, which crushes the value onto a
+separate line from its unit (§1.5).
+
+**If a smart scale is ever added, body fat returns as a real field.** VO2 max is
+available from the Versa 2 in principle — Fitbit calls it **Cardio Fitness
+Score**, which is why searching their docs for "VO2 max" comes up empty — but
+nothing in the current sync populates it.
+
+### 10.2 Blood pressure, SpO₂ and pulse — `d.body.vitals`
+
+Dated readings Ryan takes in the evening with a cuff and an oximeter. Stored
+additively beside `weights` and `waists`:
+
+```js
+d.body.vitals = [
+  { date: '2026-08-14', systolic: 128, diastolic: 82, spo2: 97, pulse: 64 }
+]
+```
+
+#### THE APP DOES NOT INTERPRET THESE
+
+**No hypertension staging. No normal/elevated/high label. No colour coding by
+threshold. No scoring — §11 is untouched by this feature.** Blood pressure
+staging is a clinical judgement that depends on context this app does not have:
+posture, cuff size, time of day, medication, what last month looked like.
+Printing "Stage 1 Hypertension" under a number would be exactly the overclaim
+§10.0 deleted the hormone indices for. **Store the numbers, show the numbers.**
+
+#### Every field is independently nullable
+
+Ryan may take blood pressure without the oximeter or the other way round. **An
+absent field is omitted from the record** — not written as `null`, not written
+as `0` (§1.4, §1.7). A record with no non-null field is not saved at all. The
+Latest Readings card renders a missing field as an em-dash labelled "not taken",
+and never borrows a value from an older record.
+
+#### One record per date
+
+Re-saving the same date **replaces** that record — unlike `weights`/`waists`,
+which append by design. These are point-in-time readings taken once in the
+evening, and two rows for one date would make "the latest reading" ambiguous.
+
+#### Ranges are typo guards, not medical judgements
+
+| Field | Accepted |
+|---|---|
+| `systolic` | 60–260 mmHg |
+| `diastolic` | 30–160 mmHg |
+| `spo2` | 50–100 % |
+| `pulse` | 25–220 bpm |
+
+A value outside these is **rejected with a visible message and nothing is
+written** — not the vitals record, and not the bodyweight or waist entered in
+the same submission. A mistyped `1280/82` that got stored would sit in the
+history forever looking like something that happened.
 
 ### 10.1 1RM, Training Max, and the Personal Records page
+
+**Relative Strength moved to this page 2026-08-14**, out of Health Status. Every
+number in it is a **derived** Training Max ÷ the rolling bodyweight, so it reads
+the lifts this page already owns; on Health Status it sat among body
+measurements with no lift context anywhere near it. `relativeStrength()` in
+`derive.js` is unchanged by the move and still reads the **derived** TM, never a
+stored one. `renderPRs()` renders it after the PR cards.
 
 #### The number Ryan enters is a 1RM. The number the program runs on is a TM.
 
@@ -3318,3 +3429,128 @@ with no library item behind it.
 **"Add to Library" is unchanged.** One-time is an addition beside it, not a
 replacement, and deliberately not the primary button: the library is still the
 normal answer.
+
+## 14. Dated targets — `d.targetHistory`
+
+### The bug this fixes
+
+`calcScore(ds)` read **`d.targets` — one undated object** — for every date it
+was ever asked about. So **every historical day was graded against whatever the
+goals happen to be right now.** Raise the protein target tonight and every past
+day silently re-grades: a day that scored 92 in June becomes an 82, with no
+record that anything changed and no way to recover the old number.
+
+**This is precisely the failure the food-macro snapshot rule exists to prevent
+(§13, §8.0):** a past day's numbers must be computed from what was true *then*,
+never from a lookup in present-day state. The food library learned that lesson
+in §13; the targets had not, and it was live until 2026-08-14.
+
+### The rule: a change takes effect the NEXT day
+
+`effectiveFrom` is **always the day after the save.** Ryan logs his measurements
+in the evening; a target changed at 8pm must not retroactively re-grade the day
+he has just finished living. **The day of the change is scored against the
+targets that were already in force while he lived it.**
+
+### Shape
+
+```js
+d.targetHistory = [
+  { effectiveFrom:'2026-08-15', mode:'cut', calories:2250,
+    protein:{min:175,max:190}, fat:{min:70,max:85}, carbs:{min:180,max:220},
+    sugarMax:35, fiber:{min:30,max:35}, sodiumMax:2300,
+    potassium:3400, calcium:1000, iron:8, magnesium:420, zinc:11,
+    caffeineMax:400, savedAt:'<UTC ISO>' }
+]
+```
+
+Sorted ascending by `effectiveFrom`. **Append-only: entries are never edited and
+never deleted.** Editing one would re-grade the days it governed, which is the
+bug above wearing a different hat. Two entries may legitimately share an
+`effectiveFrom` (two saves the same day); `Array.sort` is stable, so the
+**last-appended wins**, and both the resolver and the editor apply that same
+rule.
+
+`mode` is fixed to `'cut'`. There is deliberately **no maintain/cut toggle** —
+one mode was asked for, and building the switch would be inventing a feature.
+
+### `targetsFor(ds)` — `js/derive.js`
+
+Returns the last entry whose `effectiveFrom <= ds`, or **`null` when `ds`
+predates the first entry.**
+
+**`null` is correct and callers must handle it.** It means *this day was never
+governed by a target set* — **it does not mean the targets were zero.**
+`calcScore()` falls back to the legacy `d.targets`, which is exactly what those
+days were scored against when they were lived, so **no history moved when this
+shipped** (§1.4).
+
+### `d.targets` is not migrated, not deleted, not written
+
+The legacy flat object stays exactly as it is. It still serves the Log page's
+existing fields, and it is still the fallback above. **The Targets panel never
+writes to it.** The boot-time schema guard backfills `d.targetHistory` as an
+**empty array, never seeded from `d.targets`** — stamping today's goals onto
+history as though they had always applied is the bug, not the fix.
+
+### Scoring reads exactly what it read before
+
+**The Dietary formula is unchanged.** It still reads **sugar and protein only**,
+and the sugar thresholds are still the hardcoded 10/25 they have always been.
+The single change is *where the protein goal comes from*: the dated set's
+`protein.min` when the day was governed by one, the legacy flat target
+otherwise.
+
+**Sleep is not in the dated set.** `d.targetHistory` carries the thirteen
+nutrition fields and no sleep goal, so the Sleep pillar still reads
+`d.targets.sleep`. Inventing a dated sleep field would be building a schema that
+was not asked for.
+
+#### Whether the Dietary score should read MORE than sugar and protein is an OPEN DECISION FOR RYAN
+
+Eleven of the thirteen stored targets currently feed **nothing**. That is
+deliberate: they are captured and displayed now, and what the score does with
+them is a scoring change, which §11 protects. **A future session must not expand
+the Dietary formula on its own judgement.**
+
+### The Targets panel — Health Status
+
+Thirteen editable rows, Target beside Today, in the schema's order. Today's
+actuals come from `dayMacros(today())` for the seven macros and from
+`foodCountExtras(today())` for the six micronutrients.
+
+**A micronutrient with no data renders `—`, never `0` and never a 0% bar**
+(§1.7). Coverage of these six is poor — most Open Food Facts items carry none of
+them — so a total is usually a **partial sum**, and each row says so:
+`450 mg · 3 of 4 items`. `foodCountExtras()` gained an additive `coverage` key
+for this; nothing existing changed.
+
+**Seeding shows, it does not write.** On first render with an empty history the
+form is prefilled with the starting values, but **nothing is stored until Save**
+— until then `targetsFor()` still returns `null` and every day still falls back
+to the legacy object.
+
+#### Save is gated by a change preview, then a keypad
+
+On Save the panel lists **every field that differs from the latest saved set**,
+as `Protein 175–190 g → 180–195 g`, followed by:
+
+> Takes effect 2026-08-15. Today is scored against your current targets.
+
+Confirming requires typing a **one-digit challenge** on the same
+`.pause-card`/`.keypad-*` gate the training pause uses (§9.2) — **not
+`confirm()`**, for the reason §9.2 already records. Cancel and a wrong digit
+both write nothing and leave the challenge in place.
+
+**If no field changed, nothing is written and the panel says so** — an
+append-only list that gained an identical row on every Save press would make
+"when did this change" unanswerable.
+
+**The editor diffs against the latest SAVED set, including one still pending.**
+It deliberately does not use `targetsFor(today())`: because a save is always
+effective tomorrow, a form rebuilt from what is *in force* would snap back to
+the old numbers the instant Ryan saved — looking exactly as though the save had
+been discarded — and the duplicate guard would then happily append a second
+entry for the same `effectiveFrom`. Scoring is unaffected: `calcScore()` still
+goes through `targetsFor()`, which still ignores anything dated later than the
+day being scored. A pending set is labelled as not yet in force.
