@@ -34,7 +34,7 @@ import { today, dateStr, addDays, esc } from '../util.js';
 // does not resolve it. Only calcScore() and dietaryDetail() resolve a day.
 import { getSleepForDate, calcFastHrs, getWorkoutForDate, getPhase,
          rollingBodyweight, latestWaist, BODYWEIGHT_WINDOW_DAYS,
-         dayMacros, foodCountExtras, dietaryDetail,
+         dayMacros, foodCountExtras, dietaryDetail, dietTargetRows,
          SATURATED_FAT_MAX_DEFAULT } from '../derive.js';
 import { getCachedVitals, triggerSync, fetchSyncStatus, primeRecentVitals } from '../api.js';
 import { renderVitalsHeader } from '../components/vitals-header.js';
@@ -324,9 +324,13 @@ function bandSummary(det){
 
 // The donut. Plain inline SVG: one neutral track circle and one arc whose
 // dash offset is the score. Rotated -90deg so it fills from the top.
-function ringHtml(score){
+// `showAs` overrides the centre number. It exists for the preview state (below),
+// where the ring must be an EMPTY TRACK with an em-dash: today is not being
+// graded against these bands, and a 0 in the middle would be a score — the worst
+// possible one — rather than the absence of one (§1.7).
+function ringHtml(score,showAs){
   const s=(score==null)?0:Math.max(0,Math.min(100,score));
-  const shown=Math.round(s);
+  const shown=(showAs!==undefined)?showAs:Math.round(s);
   const r=44, C=2*Math.PI*r;
   const off=C*(1-s/100);
   const col=bandColor(score);
@@ -385,14 +389,64 @@ function bandRowHtml(r){
   '</div>';
 }
 
+// The pending entry that takes effect FIRST. That is the set whose bands are
+// about to govern, so it is the one worth previewing and its date is the date
+// the preview quotes. Entries sharing an effectiveFrom resolve LAST-APPENDED
+// WINS — the same rule targetsFor() and the editor both apply, stated once more
+// here rather than assumed.
+//
+// Returns null when nothing is pending, which includes an empty history.
+function firstPendingSet(){
+  const list=db().targetHistory;
+  if(!Array.isArray(list)||!list.length)return null;
+  const t=today();
+  const pending=list
+    .filter(e=>e&&typeof e.effectiveFrom==='string'&&e.effectiveFrom>t)
+    .sort((a,b)=>a.effectiveFrom<b.effectiveFrom?-1:a.effectiveFrom>b.effectiveFrom?1:0);
+  if(!pending.length)return null;
+  const first=pending[0].effectiveFrom;
+  const sameDay=pending.filter(e=>e.effectiveFrom===first);
+  return sameDay[sameDay.length-1];
+}
+
+// ############ THE PREVIEW STATE — WHY IT DRAWS ZONES BUT NO MARKERS ############
+//
+// A first save is ALWAYS effective tomorrow (§14), so on the day Ryan first sets
+// targets — and on the day this shipped — targetsFor(today()) is null and the
+// visual had nothing to draw. The band visual was therefore invisible on the one
+// day he was most likely to go looking for it.
+//
+// So the bands are drawn from the pending set: this is what you are aiming at,
+// starting tomorrow. THE MARKERS AND THE SCORE ARE NOT DRAWN, and that is the
+// load-bearing half. Today is NOT graded against these numbers — it is still on
+// the previous targets — and a marker sitting in or out of a green band would
+// say it was. The ring is an empty track with an em-dash for the same reason.
+//
+// A day with NO pending entry at all keeps the plain text block. There are no
+// bands to preview and nothing to draw them from.
 function dietBandsHtml(){
   const det=dietaryDetail(today());
   if(!det){
-    // A day predating the first target set has no v2 bands to draw, and drawing
-    // them against targets that did not govern it would be the retro-grading
-    // §14 forbids. Say so plainly instead.
-    return '<div class="card"><div class="form-note">No dated target set governs today yet. '+
-           'Save your targets below and this day starts scoring against them tomorrow.</div></div>';
+    const pending=firstPendingSet();
+    if(!pending){
+      // A day predating the first target set has no v2 bands to draw, and drawing
+      // them against targets that did not govern it would be the retro-grading
+      // §14 forbids. Say so plainly instead.
+      return '<div class="card"><div class="form-note">No dated target set governs today yet. '+
+             'Save your targets below and this day starts scoring against them tomorrow.</div></div>';
+    }
+    // THE DATE COMES FROM THE ENTRY, never from tomorrowStr() and never a
+    // literal — a set saved days ago is still pending until its own date, and
+    // quoting "tomorrow" then would be wrong.
+    return '<div class="card db-card">'+
+      ringHtml(null,'—')+
+      `<div class="db-summary">Not in force until ${esc(pending.effectiveFrom)}. `+
+      'Today is scored on your previous targets.</div>'+
+      dietTargetRows(pending).map(bandRowHtml).join('')+
+      '<div class="form-note">Green band is the target range. No bar is drawn on any row '+
+      'and the ring has no score, because today is not measured against these targets — '+
+      'they start on '+esc(pending.effectiveFrom)+'. Total fat and carbs are shown but never scored.</div>'+
+    '</div>';
   }
   return '<div class="card db-card">'+
     ringHtml(det.score)+

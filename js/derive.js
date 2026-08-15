@@ -1061,6 +1061,33 @@ function dietAxisMax(row,b){
 }
 
 // ---------------------------------------------------------------------------
+// The eight rows for a TARGET SET, with no day attached — the zones and axes
+// only. Added 2026-08-15 for §14.2's preview state, where the visual has to draw
+// the bands of a set that does not govern today yet.
+//
+// ############ THIS IS NOT A SCORING PATH ############
+//
+// It answers "what do these targets look like", never "how did this day do".
+// Every row comes back value:null, known:false, score:null, which is what makes
+// bandRowHtml() draw a zone and NO MARKER — the same null handling it already
+// applies to a nutrient with no reading. A caller must never treat these rows as
+// a result: a day nothing was graded against has no score, and inventing a zero
+// for it would be the §1.7 mistake in a new place.
+//
+// It exists so the zone geometry lives in ONE place (§6.9). health.js drawing
+// its own bands from dietBounds()'s rules would be a second read path for the
+// same fact, which is the exact family of bug §6.9 records.
+// ---------------------------------------------------------------------------
+export function dietTargetRows(t){
+  const b=dietBounds(t);
+  return DIET_V2_ROWS.map(r=>{
+    const bounds=b[r.key]||{lo:null,hi:null};
+    return {...r, lo:bounds.lo, hi:bounds.hi, value:null, known:false, score:null,
+            axisMax:dietAxisMax(r,bounds), clamped:false};
+  });
+}
+
+// ---------------------------------------------------------------------------
 // The whole Dietary picture for a day: the score AND the eight rows behind it.
 //
 // ONE READ PATH (§6.9). calcScore() and the Health page's band visual both come
