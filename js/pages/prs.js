@@ -24,11 +24,40 @@
 
 import { db, save } from '../store.js';
 import { today } from '../util.js';
-import { mainLiftStatus, MAIN_LIFTS, TM_PERCENT_OF_1RM } from '../derive.js';
+import { mainLiftStatus, MAIN_LIFTS, TM_PERCENT_OF_1RM,
+         relativeStrength, rollingBodyweight } from '../derive.js';
 
 // Round a derived TM for display only. The unrounded value is what the
 // percentage math uses — see derive.js.
 function showTM(tm){return Math.round(tm*10)/10;}
+
+// ---------------------------------------------------------------------------
+// Relative strength — MOVED HERE FROM pages/health.js, 2026-08-14 (§10.1).
+//
+// It belongs on this page: every number in it is a derived Training Max divided
+// by the rolling bodyweight, so it reads the same lifts this page already owns
+// and answers the question this page exists to answer. On Health Status it sat
+// among body measurements with no lift context anywhere near it.
+//
+// Nothing about the calculation changed in the move — relativeStrength() in
+// derive.js is untouched, and it still reads the DERIVED TM, never a stored one.
+// ---------------------------------------------------------------------------
+function renderRelativeStrength(){
+  const el=document.getElementById('relative-strength');
+  if(!el)return;
+  const rows=relativeStrength();
+  const bw=rollingBodyweight().avg;
+  let html='';
+  if(bw==null) html+='<div class="stat-sub" style="margin-bottom:10px">Log a bodyweight to see relative strength.</div>';
+  html+=rows.map(r=>{
+    let val;
+    if(r.ratio!=null) val=`<span style="color:var(--accent)">${r.ratio.toFixed(2)}×</span>`;
+    else if(!r.tm) val='<span class="score-row-pending">set TM</span>';
+    else val='<span class="score-row-pending">set bodyweight</span>';
+    return `<div class="target-row"><span class="target-label">${r.name}${r.tm?' · '+r.tm+' lb':''}</span><span class="target-val">${val}</span></div>`;
+  }).join('');
+  el.innerHTML=html;
+}
 
 export function renderPRs(){
   const el=document.getElementById('pr-container');
@@ -71,6 +100,9 @@ export function renderPRs(){
   });
 
   el.innerHTML=html;
+  // Rendered after the PR cards because it reads the same derived TMs they
+  // show — the ratios and the maxes they come from stay on one screen.
+  renderRelativeStrength();
 }
 
 // Append a tested 1RM. Never overwrites — §10.1 keeps the whole history.

@@ -33,7 +33,7 @@ import { db, save } from '../store.js';
 // was the 7-day workout window calcTest()/calcCortisol() consumed.
 import { today, esc } from '../util.js';
 import { getSleepForDate, calcFastHrs, getWorkoutForDate, getPhase,
-         rollingBodyweight, latestWaist, relativeStrength, BODYWEIGHT_WINDOW_DAYS } from '../derive.js';
+         rollingBodyweight, latestWaist, BODYWEIGHT_WINDOW_DAYS } from '../derive.js';
 import { getCachedVitals, triggerSync, fetchSyncStatus, primeRecentVitals } from '../api.js';
 import { renderVitalsHeader } from '../components/vitals-header.js';
 import { renderHome } from './home.js';
@@ -194,20 +194,9 @@ export async function runSync(){
   renderHealth();
 }
 
-function renderRelativeStrength(){
-  const rows=relativeStrength();
-  const bw=rollingBodyweight().avg;
-  let html='';
-  if(bw==null) html+='<div class="stat-sub" style="margin-bottom:10px">Log a bodyweight to see relative strength.</div>';
-  html+=rows.map(r=>{
-    let val;
-    if(r.ratio!=null) val=`<span style="color:var(--accent)">${r.ratio.toFixed(2)}×</span>`;
-    else if(!r.tm) val='<span class="score-row-pending">set TM</span>';
-    else val='<span class="score-row-pending">set bodyweight</span>';
-    return `<div class="target-row"><span class="target-label">${r.name}${r.tm?' · '+r.tm+' lb':''}</span><span class="target-val">${val}</span></div>`;
-  }).join('');
-  document.getElementById('relative-strength').innerHTML=html;
-}
+// renderRelativeStrength() MOVED TO pages/prs.js, 2026-08-14 — it reads derived
+// Training Maxes, which is that page's subject, not this one's (§10.1).
+// rollingBodyweight() is still imported here: renderBodySummary() uses it.
 
 export function saveBodyHeight(){
   const d=db();d.body=d.body||{};
@@ -244,7 +233,7 @@ export function logBodyMeasurement(){
 }
 
 export function renderHealth(){
-  renderBodySummary();renderRelativeStrength();
+  renderBodySummary();
   // Paint the panel from what is already known, then ask the server for a
   // fresher answer — same placeholder-then-update pattern the vitals header
   // uses (§9.3), never a number before there is a source for it.

@@ -107,6 +107,11 @@
   <button class="back-btn" onclick="showPage('training','Training')"><span class="back-chev">‹</span>Training</button>
   <div class="section-title">Personal Records — Main Lifts</div>
   <div id="pr-container"></div>
+  <!-- Moved here from #page-health 2026-08-14. Filled by renderPRs() in
+       js/pages/prs.js, which renders it after the PR cards so the ratios sit
+       beside the Training Maxes they are derived from (§10.1). -->
+  <div class="section-title">Relative Strength</div>
+  <div class="card" id="relative-strength"></div>
 </div>
 
 <div class="page" id="page-fasting">
@@ -151,8 +156,8 @@
   <div class="section-title">Data Sync</div>
   <div id="sync-panel"></div>
 
-  <div class="section-title">Relative Strength</div>
-  <div class="card" id="relative-strength"></div>
+  <!-- Relative Strength moved to #page-prs 2026-08-14 — it is derived Training
+       Max ÷ bodyweight, which belongs beside the lifts it reads (§10.1). -->
 
   <div class="section-title">Log Measurements</div>
   <div class="card">
