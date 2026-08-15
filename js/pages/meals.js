@@ -122,15 +122,19 @@ import { renderHome } from './home.js';
 // that is where it appears on a nutrition panel, and reading the two together
 // is how Ryan will type them. Nullable like every other macro — blank means the
 // label did not print it, NOT zero, and it is never derived from total fat.
+// `scored` now follows §14.1's v2 weights, not the pre-v2 four. Calories,
+// protein, sodium, sugar, fiber and saturated fat carry weight; TOTAL FAT AND
+// CARBS ARE DISPLAY-ONLY — carbs are the arithmetic residual of calories,
+// protein and fat, so scoring them would count one decision twice.
 const MACRO_META=[
   {key:'protein',     label:'Protein',       unit:'g',  scored:true},
-  {key:'fat',         label:'Fat',           unit:'g',  scored:true},
-  {key:'saturatedFat',label:'Saturated fat', unit:'g',  scored:false},
-  {key:'carbs',       label:'Carbs',         unit:'g',  scored:true},
+  {key:'fat',         label:'Fat',           unit:'g',  scored:false},
+  {key:'saturatedFat',label:'Saturated fat', unit:'g',  scored:true},
+  {key:'carbs',       label:'Carbs',         unit:'g',  scored:false},
   {key:'sugar',       label:'Sugar',         unit:'g',  scored:true},
-  {key:'calories',    label:'Calories',      unit:'',   scored:false},
-  {key:'fiber',       label:'Fiber',         unit:'g',  scored:false},
-  {key:'sodium',      label:'Sodium',        unit:'mg', scored:false}
+  {key:'calories',    label:'Calories',      unit:'',   scored:true},
+  {key:'fiber',       label:'Fiber',         unit:'g',  scored:true},
+  {key:'sodium',      label:'Sodium',        unit:'mg', scored:true}
 ];
 
 // §13.8's six extras. All milligrams, all optional, NONE scored. Auto-filled by
@@ -1213,7 +1217,7 @@ function counterHtml(){
         `</div>`;
   html+=`<div class="form-note">From ${fc.servings} serving${fc.servings===1?'':'s'} counted today. `+
         `A dash means no item counted today stated that figure — it is not a zero. `+
-        `Saturated fat, calories, fiber and sodium are recorded and shown but are not scored. `+
+        `Total fat and carbs are recorded and shown but are not scored (§14.1). `+
         `These add to anything logged with Log Meal — the Dietary page shows the combined total `+
         `(protein ${Math.round(dm.protein)}g · fat ${Math.round(dm.fat)}g · carbs ${Math.round(dm.carbs)}g · sugar ${Math.round(dm.sugar)}g).</div>`;
   html+='</div>';

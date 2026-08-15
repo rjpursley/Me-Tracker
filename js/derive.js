@@ -934,6 +934,179 @@ export function targetsFor(ds){
   return applicable.length?applicable[applicable.length-1]:null;
 }
 
+// ---------------------------------------------------------------------------
+// DIETARY SCORING v2 — ARCHITECTURE.md §14.1.
+//
+// The pillar used to read sugar and protein only. It now grades six nutrients
+// against the target set that governed that day, resolved through targetsFor().
+//
+// ############ §11 IS NOT TOUCHED ############
+//
+// The four PILLAR weights stay at 25% each. Everything below is internal to the
+// Dietary pillar — it changes what that one quarter reads, not how the four are
+// combined. Do not let the two weightings be confused for one another.
+// ---------------------------------------------------------------------------
+
+// 100 inside the target, falling linearly to 0 at the outer bound. One function,
+// three shapes, decided by which bounds are present:
+//
+//   band     lo and hi both set. 0 at lo x 0.5 below, 0 at hi x 1.5 above.
+//   floor    hi absent.  100 at or above lo, 0 at lo x 0.5. NO UPPER PENALTY —
+//            250 g of protein against a 175 g floor is 100, not a mark against.
+//   ceiling  lo absent.  100 at or below hi, 0 at hi x 1.5.
+//
+// RETURNS null FOR A VALUE THAT IS NOT A NUMBER. Not 0 — a nutrient nobody
+// measured has no score, and the caller drops it from the weighted mean rather
+// than grading it (§1.7). NOT ROUNDED: rounding happens at display only, so a
+// weighted mean is never built out of pre-rounded parts.
+export function gradeNutrient(value,{lo,hi}){
+  const v=+value;
+  if(value===null||value===undefined||value===''||!isFinite(v))return null;
+  const hasLo=(lo!==null&&lo!==undefined&&+lo>0);
+  const hasHi=(hi!==null&&hi!==undefined&&+hi>0);
+  if(!hasLo&&!hasHi)return null;          // no target to grade against
+  let s=100;
+  if(hasLo&&v<+lo){
+    const zero=+lo*0.5;
+    s=Math.min(s, v<=zero?0:((v-zero)/(+lo-zero))*100);
+  }
+  if(hasHi&&v>+hi){
+    const zero=+hi*1.5;
+    s=Math.min(s, v>=zero?0:((zero-v)/(zero-+hi))*100);
+  }
+  return Math.max(0,Math.min(100,s));
+}
+
+// The eight rows, in the order §14.1's table gives them. WEIGHTS SUM TO EXACTLY
+// 100 across the six scored rows: 25+25+15+15+10+10.
+//
+// ############ carbs AND fat ARE WEIGHT 0 ON PURPOSE ############
+//
+// CARBS ARE THE ARITHMETIC RESIDUAL of calories, protein and fat — scoring them
+// would count the same decision twice, once directly and once through the
+// calories band. Total fat is display-only for the same reason, with saturated
+// fat carrying the part of it that is actually a health question. Both are
+// still CAPTURED and still DISPLAYED. Do not add either to the weighted sum
+// without a reason recorded in §14.1, and do not drop their capture.
+export const DIET_V2_ROWS=[
+  {key:'calories',    label:'Calories',      unit:'',   weight:25, shape:'band'},
+  {key:'protein',     label:'Protein',       unit:'g',  weight:25, shape:'floor'},
+  {key:'sodium',      label:'Sodium',        unit:'mg', weight:15, shape:'ceiling'},
+  {key:'sugar',       label:'Sugar',         unit:'g',  weight:15, shape:'ceiling'},
+  {key:'fiber',       label:'Fiber',         unit:'g',  weight:10, shape:'band'},
+  {key:'saturatedFat',label:'Saturated fat', unit:'g',  weight:10, shape:'ceiling'},
+  {key:'fat',         label:'Total fat',     unit:'g',  weight:0,  shape:'band'},
+  {key:'carbs',       label:'Carbs',         unit:'g',  weight:0,  shape:'band'}
+];
+
+// The calories band is derived from the set's single stored figure, +/-10%:
+// 2250 -> 2025-2475. The target schema (§14) stores one number, not a pair.
+const CALORIE_BAND_PCT=0.10;
+
+// SATURATED FAT HAS NO FIELD IN THE §14 TARGET SCHEMA — that schema's thirteen
+// fields predate this nutrient existing. Until Ryan adds one, the ceiling is
+// this constant rather than a per-day editable target. Adding `saturatedFatMax`
+// to the target set is the natural follow-up; it would make the Targets panel
+// fourteen rows and is deliberately NOT done here.
+const SATURATED_FAT_MAX_DEFAULT=22;
+
+// {lo, hi} per nutrient for one target set. READ FROM THE SET wherever the set
+// carries the field, so a dated target change moves the grading with it.
+function dietBounds(t){
+  const cal=+((t&&t.calories));
+  const band=(r,fallback)=>{
+    const mn=+((r&&r.min)), mx=+((r&&r.max));
+    return {lo:isFinite(mn)&&mn>0?mn:(fallback?fallback.lo:null),
+            hi:isFinite(mx)&&mx>0?mx:(fallback?fallback.hi:null)};
+  };
+  const ceil=v=>({lo:null, hi:(isFinite(+v)&&+v>0)?+v:null});
+  return {
+    calories: isFinite(cal)&&cal>0
+      ? {lo:Math.round(cal*(1-CALORIE_BAND_PCT)), hi:Math.round(cal*(1+CALORIE_BAND_PCT))}
+      : {lo:null,hi:null},
+    // FLOOR: the set's max is the display band's upper edge, NOT a penalty
+    // bound. hi is deliberately null so gradeNutrient() applies no upper limit.
+    protein: {lo:(t&&t.protein&&+t.protein.min>0)?+t.protein.min:null, hi:null},
+    sodium:  ceil(t&&t.sodiumMax),
+    sugar:   ceil(t&&t.sugarMax),
+    fiber:   band(t&&t.fiber),
+    saturatedFat: ceil(SATURATED_FAT_MAX_DEFAULT),
+    fat:     band(t&&t.fat),
+    carbs:   band(t&&t.carbs)
+  };
+}
+
+// Per-row axis maximum for §14.2's track: hi x 1.5 for ceilings and bands (the
+// point the score reaches 0), lo x 2 for floors (which have no upper bound, so
+// the axis is chosen to put the target at the halfway mark).
+function dietAxisMax(row,b){
+  if(row.shape==='floor')return (b.lo>0)?b.lo*2:null;
+  return (b.hi>0)?b.hi*1.5:null;
+}
+
+// ---------------------------------------------------------------------------
+// The whole Dietary picture for a day: the score AND the eight rows behind it.
+//
+// ONE READ PATH (§6.9). calcScore() and the Health page's band visual both come
+// through here, so the ring and the pillar can never disagree about the number.
+//
+// Returns null when the day predates d.targetHistory — the caller then uses the
+// pre-v2 formula, because those days were lived against different goals under a
+// different rule and must not be retro-graded (§14).
+// ---------------------------------------------------------------------------
+export function dietaryDetail(ds){
+  const day=ds||today();
+  const t=targetsFor(day);
+  if(!t)return null;                       // historical: caller keeps the old method
+  const dm=dayMacros(day);
+  const b=dietBounds(t);
+
+  // ############ AN EMPTY DAY SCORES 0, IT DOES NOT SCORE null ############
+  //
+  // A day with nothing logged is a missed behaviour, not missing information —
+  // the same rule training uses (§9.5): empty means it never happened. Without
+  // it every ceiling would read 100 and eating nothing would grade as a perfect
+  // diet.
+  //
+  // "Nothing logged" means no counted servings AND no legacy Log Meal entry. A
+  // day that has legacy meals but no ADDs is NOT empty: it has real protein and
+  // sugar figures, its unknown nutrients drop out below, and it scores on what
+  // it actually knows. Zeroing it would be punishing Ryan for using the older
+  // form, which is still live on the Dietary page.
+  const unlogged=!(dm.servings>0)&&!(dm.mealCount>0);
+
+  const rows=DIET_V2_ROWS.map(r=>{
+    const bounds=b[r.key]||{lo:null,hi:null};
+    const known=!!(dm.known&&dm.known[r.key]);
+    const value=known?+dm[r.key]:null;
+    const axisMax=dietAxisMax(r,bounds);
+    // A weight-0 row is never graded — it is information, not a target met or
+    // missed, and giving it a score would invite it into the sum later.
+    const score=(r.weight>0&&known&&!unlogged)?gradeNutrient(value,bounds):null;
+    return {...r, lo:bounds.lo, hi:bounds.hi, value, known, score, axisMax,
+            clamped:(value!=null&&axisMax!=null&&value>axisMax)};
+  });
+
+  if(unlogged){
+    return {score:0, rows, unlogged:true,
+            usedWeight:0, totalWeight:DIET_V2_ROWS.reduce((a,r)=>a+r.weight,0)};
+  }
+
+  // ############ A NULL NUTRIENT IS DROPPED, NOT ZEROED ############
+  //
+  // It leaves BOTH the numerator and the denominator, so the remaining weights
+  // renormalise to 100. A label that does not print sodium is missing
+  // information; grading it 0 would invent a failure out of a gap (§1.7).
+  //
+  // THIS IS THE OPPOSITE OF THE unlogged RULE ABOVE and the difference is the
+  // part most likely to be misread later: a missing FIELD is missing
+  // information, a missing DAY is a missed behaviour.
+  let num=0,den=0;
+  rows.forEach(r=>{ if(r.weight>0&&r.score!=null){num+=r.score*r.weight;den+=r.weight;} });
+  const total=DIET_V2_ROWS.reduce((a,r)=>a+r.weight,0);
+  return {score: den>0?(num/den):null, rows, unlogged:false, usedWeight:den, totalWeight:total};
+}
+
 export function calcScore(ds){
   ds=ds||today();const d=db();const tgts=d.targets||{};
   // THE DATED SET FOR THIS DAY, or null when the day predates the first entry
@@ -978,14 +1151,29 @@ export function calcScore(ds){
   // readers of the same fact, which is precisely how §6.9's bug happened.
   // dayMacros() is now the single source for the score, the Dietary page's
   // four cards and the 30-day chart, so they cannot disagree.
-  // THE FORMULA IS UNCHANGED (§14). It still reads sugar and protein only, and
-  // the sugar thresholds are still the hardcoded 10/25 they have always been.
-  // THE ONLY CHANGE IS WHERE protGoal COMES FROM: the dated set's protein floor
-  // when this day was governed by one, the legacy flat target otherwise.
-  // Whether the Dietary score should read more than these two is an open
-  // decision for Ryan and is deliberately not made here.
-  const dm=dayMacros(ds);const ts=dm.sugar;const tp=dm.protein;
-  const protGoal=histTarget(h=>h.protein&&h.protein.min,'protein',180);let dietScore=100;if(ts>0&&ts<=10)dietScore=Math.max(70,100-(ts/10)*30);else if(ts>10&&ts<=25)dietScore=Math.max(40,70-((ts-10)/15)*30);else if(ts>25)dietScore=10;if(tp>=protGoal)dietScore=Math.min(100,dietScore+10);dietScore=Math.round(dietScore);
+  // ############ TWO DIETARY METHODS, SPLIT BY WHETHER THE DAY WAS GOVERNED ############
+  //
+  // A day with a dated target set is graded by v2 (§14.1): six weighted
+  // nutrients against that day's own bands. A day that PREDATES the first
+  // target-history entry keeps the ORIGINAL sugar-and-protein formula, reading
+  // the legacy flat d.targets.
+  //
+  // DO NOT RETRO-APPLY v2. Those days were lived against different goals and a
+  // different rule, and re-grading them is the exact failure §14 exists to stop.
+  // `targetsFor(ds) === null` is the signal, and dietaryDetail() returns null on
+  // precisely the same condition.
+  const detail=dietaryDetail(ds);
+  let dietScore;
+  if(detail){
+    // A governed day with nothing measurable at all scores 0 rather than null —
+    // dietaryDetail() has already applied the unlogged rule, and a null here
+    // could only mean "logged, but not one scored nutrient was known", which is
+    // still a day with no evidence of what was eaten.
+    dietScore=Math.round(detail.score==null?0:detail.score);
+  }else{
+    const dm=dayMacros(ds);const ts=dm.sugar;const tp=dm.protein;
+    const protGoal=histTarget(h=>h.protein&&h.protein.min,'protein',180);dietScore=100;if(ts>0&&ts<=10)dietScore=Math.max(70,100-(ts/10)*30);else if(ts>10&&ts<=25)dietScore=Math.max(40,70-((ts-10)/15)*30);else if(ts>25)dietScore=10;if(tp>=protGoal)dietScore=Math.min(100,dietScore+10);dietScore=Math.round(dietScore);
+  }
   return{total:Math.round(fastScore*.25+sleepScore*.25+trainingScore*.25+dietScore*.25),fast:fastScore,sleep:sleepScore,training:trainingScore,diet:dietScore};
 }
 
