@@ -118,14 +118,19 @@ import { renderHome } from './home.js';
 
 // Label and unit per stored macro field. The first four are scored; the last
 // three are displayed only and are labelled as such on the page (§13.2).
+// saturatedFat added 2026-08-14 (§14.1). It sits directly under Fat because
+// that is where it appears on a nutrition panel, and reading the two together
+// is how Ryan will type them. Nullable like every other macro — blank means the
+// label did not print it, NOT zero, and it is never derived from total fat.
 const MACRO_META=[
-  {key:'protein', label:'Protein',  unit:'g',  scored:true},
-  {key:'fat',     label:'Fat',      unit:'g',  scored:true},
-  {key:'carbs',   label:'Carbs',    unit:'g',  scored:true},
-  {key:'sugar',   label:'Sugar',    unit:'g',  scored:true},
-  {key:'calories',label:'Calories', unit:'',   scored:false},
-  {key:'fiber',   label:'Fiber',    unit:'g',  scored:false},
-  {key:'sodium',  label:'Sodium',   unit:'mg', scored:false}
+  {key:'protein',     label:'Protein',       unit:'g',  scored:true},
+  {key:'fat',         label:'Fat',           unit:'g',  scored:true},
+  {key:'saturatedFat',label:'Saturated fat', unit:'g',  scored:false},
+  {key:'carbs',       label:'Carbs',         unit:'g',  scored:true},
+  {key:'sugar',       label:'Sugar',         unit:'g',  scored:true},
+  {key:'calories',    label:'Calories',      unit:'',   scored:false},
+  {key:'fiber',       label:'Fiber',         unit:'g',  scored:false},
+  {key:'sodium',      label:'Sodium',        unit:'mg', scored:false}
 ];
 
 // §13.8's six extras. All milligrams, all optional, NONE scored. Auto-filled by
@@ -1190,16 +1195,25 @@ function counterHtml(){
   const fc=foodCountMacros(today());
   const dm=dayMacros(today());
 
+  // A TOTAL NOBODY MEASURED IS '—', NOT 0 (§1.7). foodCountMacros() returns 0
+  // for a field no counted item carried a figure for, which is indistinguishable
+  // from a real zero in the number alone — so the cell reads `known` and shows
+  // an em-dash instead. This matters most for saturatedFat, which every snapshot
+  // written before §14.1 lacks entirely, but the same gap existed for fiber and
+  // sodium on any item whose label omitted them and it is fixed for all of them
+  // together rather than leaving one macro honest and six not.
+  const cell=m=>macroCell(m.label,fc.known[m.key]?fc[m.key]:null,m.unit,m.scored);
   let html='<div class="card">';
   html+=`<div class="card-title">Today · ${today()}</div>`;
   html+=`<div class="mt-totals">`+
-        MACRO_META.filter(m=>m.scored).map(m=>macroCell(m.label,fc[m.key],m.unit,true)).join('')+
+        MACRO_META.filter(m=>m.scored).map(cell).join('')+
         `</div>`;
   html+=`<div class="mt-totals mt-totals-sub">`+
-        MACRO_META.filter(m=>!m.scored).map(m=>macroCell(m.label,fc[m.key],m.unit,false)).join('')+
+        MACRO_META.filter(m=>!m.scored).map(cell).join('')+
         `</div>`;
   html+=`<div class="form-note">From ${fc.servings} serving${fc.servings===1?'':'s'} counted today. `+
-        `Calories, fiber and sodium are recorded and shown but are not scored. `+
+        `A dash means no item counted today stated that figure — it is not a zero. `+
+        `Saturated fat, calories, fiber and sodium are recorded and shown but are not scored. `+
         `These add to anything logged with Log Meal — the Dietary page shows the combined total `+
         `(protein ${Math.round(dm.protein)}g · fat ${Math.round(dm.fat)}g · carbs ${Math.round(dm.carbs)}g · sugar ${Math.round(dm.sugar)}g).</div>`;
   html+='</div>';

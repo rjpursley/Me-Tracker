@@ -65,7 +65,14 @@ FOOD_PURGE_DAYS = 120
 
 # The seven fields stored per item. The first four are what the client's
 # Dietary score reads; the last three are stored and displayed only.
-MACRO_FIELDS = ("protein", "fat", "carbs", "sugar", "calories", "fiber", "sodium")
+#
+# saturatedFat joined the list 2026-08-14 (§14.1). It is a macro like any other
+# here: nullable, per serving, and NEVER inferred as a fraction of total fat.
+# Note the normalisation below materialises every macro key as null when absent
+# — that is this group's long-standing convention (null = "not on the label")
+# and is not the same thing as a backfill of a value.
+MACRO_FIELDS = ("protein", "fat", "saturatedFat", "carbs", "sugar",
+                "calories", "fiber", "sodium")
 SCORED_MACRO_FIELDS = ("protein", "fat", "carbs", "sugar")
 
 # §8's confidence tiers. 'exact' USED TO BE REJECTED HERE — §13.2 reserved it

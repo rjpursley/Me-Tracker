@@ -671,17 +671,34 @@ export function fastBroken(ds){
 // d.meals is NOT replaced and still works exactly as before. The two are
 // added together.
 // ---------------------------------------------------------------------------
-export const FOOD_MACRO_FIELDS=['protein','fat','carbs','sugar','calories','fiber','sodium'];
+// saturatedFat joined this list 2026-08-14 (§14.1). It sits beside `fat`, is
+// nullable exactly like every other macro, and IS NEVER INFERRED AS A FRACTION
+// OF TOTAL FAT — a label that does not print it has not told us, and a guess
+// derived from total fat would be a fabricated measurement (§1.7).
+//
+// SNAPSHOTS WRITTEN BEFORE THIS SHIPPED SIMPLY HAVE NO saturatedFat KEY, and
+// NOTHING BACKFILLS THEM. They read as "not known for that day", which is the
+// truth, and `known` below is what lets a caller tell that apart from a
+// measured zero.
+export const FOOD_MACRO_FIELDS=['protein','fat','saturatedFat','carbs','sugar','calories','fiber','sodium'];
 
-// Only these four feed the Dietary score. calories, fiber and sodium are
-// stored and displayed but never scored — §11 protects the weights.
+// Which macros feed the Dietary score is decided by the target set (§14.1),
+// not by this constant. It is kept for the pre-v2 path and for callers that
+// still ask "which four did the old formula read".
 export const SCORED_MACRO_FIELDS=['protein','fat','carbs','sugar'];
 
 // Totals contributed by d.foodCounts[ds] alone: count x snapshot macro.
+//
+// `known` is ADDITIVE (2026-08-14) and works exactly like foodCountExtras()'s:
+// true for a field only when at least one counted item actually carried a
+// number for it. THE TOTAL ALONE CANNOT ANSWER "IS THIS A ZERO OR A GAP" —
+// out[k] is 0 both when nothing was eaten and when nothing knew the value, and
+// §14.1's scoring has to drop the second case from the weighted sum rather than
+// grade it. A GENUINE MEASURED 0 COUNTS AS KNOWN, which is the whole point.
 export function foodCountMacros(ds){
   const d=db();
   const day=(d.foodCounts&&d.foodCounts[ds]);
-  const out={};FOOD_MACRO_FIELDS.forEach(k=>{out[k]=0;});
+  const out={known:{}};FOOD_MACRO_FIELDS.forEach(k=>{out[k]=0;out.known[k]=false;});
   out.servings=0;out.items=0;
   if(!day||typeof day!=='object'||Array.isArray(day))return out;
   Object.keys(day).forEach(id=>{
@@ -692,10 +709,10 @@ export function foodCountMacros(ds){
     FOOD_MACRO_FIELDS.forEach(k=>{
       const v=m[k];
       // null / undefined / '' all mean NOT ON THE LABEL — skipped, never
-      // added as a zero.
+      // added as a zero. An old snapshot with no saturatedFat key lands here.
       if(v===null||v===undefined||v==='')return;
       const num=+v;if(!isFinite(num))return;
-      out[k]+=num*n;
+      out[k]+=num*n;out.known[k]=true;
     });
   });
   return out;
@@ -845,14 +862,26 @@ export function dayMacros(ds){
   const meals=(d.meals||[]).filter(m=>m&&m.date===ds);
   const fc=foodCountMacros(ds);
   const sum=k=>meals.reduce((a,m)=>a+(+m[k]||0),0);
+  // The four the legacy Log Meal form has always carried. A logged meal makes
+  // these four KNOWN for the day even if the typed figure was 0 — Ryan entered
+  // it, so it is a measurement. It says nothing about the other four.
+  const LEGACY_MEAL_FIELDS=['protein','fat','carbs','sugar'];
+  const known={};
+  FOOD_MACRO_FIELDS.forEach(k=>{
+    known[k]=!!(fc.known&&fc.known[k])||(meals.length>0&&LEGACY_MEAL_FIELDS.indexOf(k)>=0);
+  });
   return{
     protein:sum('protein')+fc.protein,
     fat:sum('fat')+fc.fat,
     carbs:sum('carbs')+fc.carbs,
     sugar:sum('sugar')+fc.sugar,
-    // d.meals has never carried these three, so they come from counted
-    // servings only. Displayed, never scored.
-    calories:fc.calories,fiber:fc.fiber,sodium:fc.sodium,
+    // d.meals has never carried these four, so they come from counted servings
+    // only. saturatedFat joins them for exactly the same reason (§14.1) — the
+    // legacy form has no field for it and none is being added.
+    calories:fc.calories,fiber:fc.fiber,sodium:fc.sodium,saturatedFat:fc.saturatedFat,
+    // Per-nutrient "was this actually measured today" (§14.1). Absent from a
+    // day means the weighted score drops that nutrient rather than grading it 0.
+    known,
     mealCount:meals.length,servings:fc.servings,countedItems:fc.items,
     hasData:meals.length>0||fc.servings>0
   };

@@ -93,6 +93,12 @@ OFF_TAXONOMY_URL = "https://world.openfoodfacts.org/api/v2/taxonomy"
 NUTRIMENT_KEYS = {
     "protein": "proteins",
     "fat": "fat",
+    # OFF spells it with a hyphen, so the read key is `saturated-fat_100g` /
+    # `saturated-fat_serving`. Added 2026-08-14 (§14.1). It goes through
+    # _macros() with every other macro and is therefore scaled by the SAME
+    # `factor` §13.6's four cases already compute — there is deliberately no
+    # second conversion path for it.
+    "saturatedFat": "saturated-fat",
     "carbs": "carbohydrates",
     "sugar": "sugars",
     "fiber": "fiber",
@@ -101,7 +107,8 @@ NUTRIMENT_KEYS = {
 
 # Sodium is handled separately — see _sodium_mg(). Every macro this module
 # returns, in the order the client shows them.
-MACRO_FIELDS = ("protein", "fat", "carbs", "sugar", "calories", "fiber", "sodium")
+MACRO_FIELDS = ("protein", "fat", "saturatedFat", "carbs", "sugar",
+                "calories", "fiber", "sodium")
 
 # Grams of salt per gram of sodium. Salt is sodium chloride; the standard
 # label conversion is salt = sodium * 2.5, so sodium = salt / 2.5.
