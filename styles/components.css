@@ -101,9 +101,9 @@
 .phase-seg.active{background:var(--accent)}
 .phase-label{font-size:10px;font-family:var(--font-mono);color:var(--muted);text-align:center;margin-top:4px}
 
-/* Hormone bars + factors */
-.hgh-bar{height:10px;border-radius:5px;background:var(--surface3);overflow:hidden;margin:6px 0}
-.hgh-fill{height:100%;border-radius:5px;background:linear-gradient(90deg,var(--accent2),var(--accent))}
+/* Driving Factors rows. (.hgh-bar / .hgh-fill were deleted 2026-08-14 with the
+   Hormone Indices — they styled the HGH and Test progress bars and nothing
+   else; grepped repo-wide before removal.) */
 .factor-row{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13px;font-family:var(--font-mono)}
 .factor-icon{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 .factor-icon.good{background:var(--accent5)}
@@ -426,14 +426,10 @@
 .pillar-bar-wrap{flex:1}
 .pillar-label{font-size:11px;font-family:var(--font-mono);color:var(--muted);margin-bottom:4px}
 
-/* Hormone indices */
-.hormone-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:4px}
-.hormone-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px;text-align:center}
-.hormone-label{font-size:10px;font-family:var(--font-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
-.hormone-val{font-size:22px;font-weight:800;line-height:1}
-.hormone-sub{font-size:10px;font-family:var(--font-mono);color:var(--muted);margin-top:3px}
-.cortisol-bar{height:8px;border-radius:4px;background:linear-gradient(90deg,var(--accent5),var(--warn),var(--danger));position:relative;overflow:hidden;margin-top:8px}
-.cortisol-indicator{position:absolute;top:0;bottom:0;width:3px;background:#fff;border-radius:2px;transition:left .5s}
+/* (Hormone indices CSS deleted 2026-08-14 with the section itself:
+   .hormone-grid/-card/-label/-val/-sub, .cortisol-bar, .cortisol-indicator.
+   Grepped repo-wide first — every one was used only by the three cards in
+   index.html. Do not re-add; see §10.) */
 
 /* Sugar damage banner */
 .sugar-damage{border-radius:14px;padding:14px 16px;font-size:14px;font-family:var(--font-mono);font-weight:500;margin:10px 0;display:flex;align-items:center;gap:10px}

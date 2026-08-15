@@ -867,13 +867,29 @@ export function calcScore(ds){
   return{total:Math.round(fastScore*.25+sleepScore*.25+trainingScore*.25+dietScore*.25),fast:fastScore,sleep:sleepScore,training:trainingScore,diet:dietScore};
 }
 
-// ARCHITECTURE.md §10: these are behavioural correlations, NOT medical claims.
-// They must always be labelled as such in the UI.
-export function calcHGH(sl,fastHrs,w,s){let h=0;const deep=+(sl&&sl.deep)||0,tot=+(sl&&sl.hours)||0;if(deep>=1.5)h+=30;else if(deep>=1)h+=20;else if(deep>0)h+=10;if(tot>=8)h+=20;else if(tot>=7)h+=15;else if(tot>=6)h+=8;if(fastHrs>=24)h+=25;else if(fastHrs>=16)h+=20;else if(fastHrs>=12)h+=10;if(w){const t=w.type;if(t==='Resistance'||t==='HIIT')h+=15;else if(t==='Zone 2'||t==='Bodyweight')h+=10;else if(t==='Active Rest')h+=5;}if(s===0)h+=10;else if(s<=10)h+=5;if(s>=25)h-=30;else if(s>=10)h-=15;if(tot<6)h-=20;if(fastHrs===0)h-=10;return Math.max(0,Math.min(100,Math.round(h)));}
-
-export function calcTest(sl,fastHrs,w,s,l7){let t=0;const tot=+(sl&&sl.hours)||0;if(w){const wt=w.type;if(wt==='Resistance')t+=30;else if(wt==='HIIT')t+=20;else if(wt==='Zone 2'||wt==='Bodyweight')t+=10;else if(wt==='Wtd Walk')t+=8;}if(tot>=7.5)t+=25;else if(tot>=6)t+=15;else if(tot>0)t+=5;if(fastHrs>=16)t+=15;else if(fastHrs>=12)t+=8;if(l7.filter(x=>x.type==='Resistance'||x.type==='HIIT').length>=3)t+=10;if(s>=25)t-=25;else if(s>=10)t-=15;if(tot<6)t-=15;const l4=l7.slice(-4);if(l4.length>=4&&l4.every(x=>x.type==='Resistance'||x.type==='HIIT'))t-=10;return Math.max(0,Math.min(100,Math.round(t)));}
-
-export function calcCortisol(sl,s,w,l7,fastHrs){let c=20;const tot=+(sl&&sl.hours)||0;if(s>=25)c+=30;else if(s>=10)c+=15;if(tot<6)c+=25;else if(tot<7)c+=10;if(!sl||sl._default)c+=5;const l4=l7.slice(-4);if(l4.length>=4&&l4.every(x=>x.type==='Resistance'||x.type==='HIIT'))c+=15;if(fastHrs>=36&&(!w||w.type==='Active Rest'))c+=10;if(tot>=8)c-=10;if(w&&w.type==='Active Rest')c-=5;if(s===0)c-=5;if(fastHrs>=16&&fastHrs<24)c-=5;return Math.max(0,Math.min(100,Math.round(c)));}
+// ---------------------------------------------------------------------------
+// THE HORMONE INDICES WERE DELETED HERE (2026-08-14). DO NOT REINTRODUCE THEM.
+//
+// calcHGH(), calcTest() and calcCortisol() used to live at this spot. They took
+// sleep, fasting, workout type and sugar, ran them through a hand-tuned ladder
+// of magic numbers, and printed the result as "HGH 72/100" beside a bar.
+//
+// They were removed because THERE IS NO CRITERION VARIABLE. Not one blood test
+// has ever been taken against which any of the three outputs could be checked,
+// so nothing about them was ever validated, falsifiable, or even wrong in a way
+// that could be noticed. The weights were invented. Presenting that as a
+// hormone level — a thing with real units and a real clinical meaning — is the
+// single biggest overclaim this app has ever made, and no banner underneath it
+// fixed that.
+//
+// They also carried a live lie: the `else if(cort>30)` branch in health.js set
+// the label '−5 cortisol drag' and then never subtracted anything. The label
+// described a calculation that did not exist. See §10.
+//
+// DO NOT REBUILD THESE WITHOUT REAL LAB DATA to fit against. A behavioural
+// proxy is a legitimate thing to build once there is a measurement to regress
+// it on; until then it is a number with a hormone's name on it.
+// ---------------------------------------------------------------------------
 
 export function getPhase(hrs){if(hrs<12)return{name:'Glycogen Depletion',idx:0};if(hrs<16)return{name:'Ketosis Initiating',idx:1};if(hrs<24)return{name:'Autophagy Elevated',idx:2};return{name:'Peak Autophagy',idx:3};}
 

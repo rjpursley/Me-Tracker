@@ -170,29 +170,11 @@
     <button class="btn btn-primary" onclick="logBodyMeasurement()">Save Measurement</button>
   </div>
 
-  <div class="section-title">Hormone Indices</div>
-  <div class="alert info" style="margin-top:4px;font-size:13px">Estimates from behavioral data only — not a medical measurement.</div>
-  <div id="cortisol-warning"></div>
-  <div class="hormone-grid">
-    <div class="hormone-card" style="border-color:rgba(79,216,196,.3);background:rgba(79,216,196,.04)">
-      <div class="hormone-label">HGH</div>
-      <div class="hormone-val" id="hgh-val" style="color:var(--accent2)">—</div>
-      <div class="hormone-sub" id="hgh-modifier"></div>
-      <div class="hgh-bar" style="margin-top:8px"><div class="hgh-fill" id="hgh-bar" style="width:0%"></div></div>
-    </div>
-    <div class="hormone-card" style="border-color:rgba(247,164,106,.3);background:rgba(247,164,106,.04)">
-      <div class="hormone-label">Test</div>
-      <div class="hormone-val" id="test-val" style="color:var(--accent3)">—</div>
-      <div class="hormone-sub" id="test-modifier"></div>
-      <div class="hgh-bar" style="margin-top:8px"><div class="hgh-fill" id="test-bar" style="width:0%;background:linear-gradient(90deg,var(--accent3),var(--accent4))"></div></div>
-    </div>
-    <div class="hormone-card" style="border-color:rgba(247,196,106,.3);background:rgba(247,196,106,.04)">
-      <div class="hormone-label">Cortisol</div>
-      <div class="hormone-val" id="cort-val" style="color:var(--warn)">—</div>
-      <div class="hormone-sub" id="cort-label-text">—</div>
-      <div class="cortisol-bar"><div class="cortisol-indicator" id="cort-indicator" style="left:0%"></div></div>
-    </div>
-  </div>
+  <!-- Hormone Indices (HGH / Test / Cortisol) were deleted here 2026-08-14.
+       Unvalidated behavioural heuristics presented as hormone measurements,
+       with no lab value anywhere to check them against. See §10 and the block
+       comment in js/derive.js. DO NOT REINTRODUCE WITHOUT REAL LAB DATA.
+       Driving Factors below survived and is now the section's own content. -->
   <div class="section-title">Driving Factors</div>
   <div class="card" id="hgh-factors"><div style="text-align:center;color:var(--muted);font-size:13px;padding:10px 0;font-family:var(--font-mono)">Log sleep, fasting, and workouts to see factors</div></div>
   <div class="section-title">Autophagy Phase</div>
