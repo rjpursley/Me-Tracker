@@ -266,12 +266,24 @@
     </div>
   </div>
   <div class="section-title">Macro Targets</div>
+  <!-- RETIRED 2026-08-15: four flat nutrition inputs lived here — target-protein,
+       target-fat, target-carbs, target-sugar — each wired to saveTargets(), plus
+       the four §8.2 suggestion lines that sat under them and the note explaining
+       what they were derived from.
+       WHY THEY WENT: they wrote the UNDATED d.targets and nothing else. Nothing
+       they wrote reached d.targetHistory, so nothing they wrote moved the v2
+       Dietary score (§14.1) — editing one changed a number on screen and changed
+       no score, which is worse than having no field at all (§1.7). There were
+       two editors for one setting and only one of them worked. target-carbs was
+       worse still: saveTargets() never had a carbs branch, so that input never
+       persisted anything at any point in its life.
+       d.targets IS RETAINED AND MUST NOT BE RE-EXPOSED AS AN EDITING SURFACE.
+       §1.4 forbids deleting the key, and days predating
+       d.targetHistory[0].effectiveFrom still score from it through the pre-v2
+       path — it is a HISTORICAL READ PATH now, not a setting.
+       The Health Status Targets panel is the only editor that governs scoring. -->
   <div class="card">
-    <div class="form-row"><div class="form-label">Daily protein target (g)</div><input type="number" id="target-protein" placeholder="e.g. 180" onchange="saveTargets()"><div class="macro-suggest" id="suggest-protein"></div></div>
-    <div class="form-row"><div class="form-label">Daily fat target (g)</div><input type="number" id="target-fat" placeholder="e.g. 80" onchange="saveTargets()"><div class="macro-suggest" id="suggest-fat"></div></div>
-    <div class="form-row"><div class="form-label">Daily carb target (g)</div><input type="number" id="target-carbs" placeholder="e.g. 200" onchange="saveTargets()"><div class="macro-suggest" id="suggest-carbs"></div></div>
-    <div class="form-row"><div class="form-label">Max sugar per day (g)</div><input type="number" id="target-sugar" placeholder="e.g. 10" onchange="saveTargets()"><div class="macro-suggest" id="suggest-sugar"></div></div>
-    <div class="form-note" id="suggest-basis"></div>
+    <div class="form-note">Nutrition targets are set on Health Status → Targets. They are dated there: a change takes effect the next day, and earlier days keep the targets they were scored under.</div>
   </div>
   <div class="section-title">Macro Consistency</div>
   <div id="macro-chart-wrap">
@@ -403,7 +415,16 @@
       <div class="form-note">No longer scored. Fasting is pass/fail — silence means the fast held, and the Fasting Fail button marks a break. Kept only so the old value is not lost.</div>
     </div>
     <div class="form-row"><div class="form-label">Sleep goal (hours/night)</div><input type="number" id="ft-sleep" placeholder="e.g. 8" step="0.5" onchange="saveTargets()"></div>
-    <div class="form-row"><div class="form-label">Protein target (g)</div><input type="number" id="ft-protein" placeholder="e.g. 180" onchange="saveTargets()"></div>
+    <!-- RETIRED 2026-08-15: the "Protein target (g)" input (ft-protein) was here,
+         wired to saveTargets(). Same reason as the Diet page's four: it wrote the
+         undated d.targets, which no longer governs current scoring — protein is
+         graded from the day's own dated set (§14.1). Set it on Health Status →
+         Targets. The stored d.targets.protein is KEPT (§1.4) and is still read
+         for days predating the first dated entry.
+         THE SLEEP GOAL ABOVE IS A SEPARATE CONCERN AND IS STILL LIVE — sleep is
+         deliberately not in the dated set (§14), so d.targets.sleep is the real
+         current setting, not a legacy one. Same for the disabled fast goal. -->
+
     <!-- LEGACY (§10.1): Training Max is now DERIVED from a tested 1RM entered
          on the Records page — TM = 1RM x 0.85. These inputs are the old direct
          entry, kept because §1.4 forbids deleting targets.tm_*. A lift with a

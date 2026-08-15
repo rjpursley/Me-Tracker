@@ -59,11 +59,12 @@ export function renderDiet(){
   else{carbsBar.style.width='100%';carbsBar.classList.add('is-unset');}
   document.getElementById('sugar-bar').style.width=Math.min(100,(ts/sG)*100)+'%';
 
-  ['protein','fat','carbs','sugar'].forEach(k=>{
-    const el=document.getElementById('target-'+k);
-    if(el&&tgts[k])el.value=tgts[k];
-  });
-  renderMacroSuggestions();
+  // The four target-* inputs were loaded here and the §8.2 suggestion lines were
+  // rendered under them. Both were retired 2026-08-15 with the inputs themselves
+  // (see index.html) — they wrote the undated d.targets, which does not govern
+  // current scoring. d.targets is still READ above for the four progress bars,
+  // and macroSuggestions() is still used for the carbs bar's fallback; only the
+  // editing surface and its suggestion display went.
   renderSupplements();
 
   let sdClass,sdIcon,sdMsg;
@@ -78,29 +79,18 @@ export function renderDiet(){
 }
 
 // ---------------------------------------------------------------------------
-// Derived macro targets — ARCHITECTURE.md §8.2.
+// renderMacroSuggestions() STOOD HERE — ARCHITECTURE.md §8.2.
 //
-// SUGGESTIONS, NOT AUTOFILL. Nothing here writes to d.targets; Ryan's entered
-// value always wins. The formulas and the reasoning about what must NOT feed
-// them (resting HR, waist) live in macroSuggestions() in derive.js (§1.3).
+// It wrote a "Suggested: 200g" line into a .macro-suggest div under each of the
+// four flat target inputs. Those inputs were retired 2026-08-15 (see index.html
+// for why), and the suggestions had no host left: a suggestion is a suggestion
+// FOR a field, and there is no longer a field on this page to suggest into.
+//
+// macroSuggestions() in derive.js is NOT deleted and must not be — renderDiet()
+// above still uses its carbs figure as the fallback for the carbs progress bar
+// when Ryan never set a carb target. The formulas and the reasoning about what
+// must never feed them (resting HR, waist) stay recorded there.
 // ---------------------------------------------------------------------------
-function renderMacroSuggestions(){
-  const s=macroSuggestions();
-  const put=(k,val,unit)=>{
-    const el=document.getElementById('suggest-'+k);
-    if(!el)return;
-    el.textContent=val==null?'Suggested: —':'Suggested: '+val+unit;
-    el.classList.toggle('is-unknown',val==null);
-  };
-  put('protein',s.protein,'g');
-  put('fat',s.fat,'g');
-  put('carbs',s.carbs,'g');
-  put('sugar',s.sugar,'g max');
-  const basis=document.getElementById('suggest-basis');
-  if(basis)basis.textContent=s.bodyweight==null
-    ? 'Suggestions need a bodyweight. Log one on the Health page — nothing is assumed.'
-    : `From a ${s.bodyweight} lb 7-day rolling bodyweight and a ${s.calories} kcal maintenance baseline. Suggestions only — your entered target always wins.`;
-}
 
 // ---------------------------------------------------------------------------
 // Supplements — user-editable, stored additively in d.supplements (§8.1).

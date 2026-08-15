@@ -72,7 +72,12 @@ export function renderLegacyTMs(){
 // DO NOT rewire this into scoring. If a future session wants an hours target
 // again, that is a conversation with Ryan, not a reconnection of a dead wire.
 // ---------------------------------------------------------------------------
-export function initLogForms(){const d=db(),tgts=d.targets||{},ts=today();['fast-date','workout-date','sleep-date','meal-date','hr-date'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=ts;});if(tgts.daily)document.getElementById('ft-daily').value=tgts.daily;if(tgts.sleep)document.getElementById('ft-sleep').value=tgts.sleep;if(tgts.protein)document.getElementById('ft-protein').value=tgts.protein;
+export function initLogForms(){const d=db(),tgts=d.targets||{},ts=today();['fast-date','workout-date','sleep-date','meal-date','hr-date'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=ts;});if(tgts.daily)document.getElementById('ft-daily').value=tgts.daily;if(tgts.sleep)document.getElementById('ft-sleep').value=tgts.sleep;
+  // ft-protein WAS LOADED HERE. The input was retired 2026-08-15 (see the
+  // comment where it stood in index.html) — nutrition targets are dated now and
+  // live on Health Status. This line is gone rather than guarded because the
+  // element is gone for good; an unguarded getElementById on it would throw.
+  // d.targets.protein itself is untouched and still read by the pre-v2 path.
   // renderLegacyTMs() owns the four TM rows and their values now — it decides
   // per lift whether there is an input at all. Do not also set them here.
   renderLegacyTMs();

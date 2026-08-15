@@ -450,7 +450,11 @@ export function renderTargets(){
   html+=`<button class="btn btn-primary" onclick="saveTargetHistory()">Save targets</button>`;
   html+=`<div class="form-note">Mode: cut. A change takes effect ${esc(tomorrowStr())} — the day you change it is still scored against the targets you lived it under.</div>`;
   if(seeded){
-    html+=`<div class="form-note">These are starting values only. NOTHING IS SAVED until you press Save, and until then every day falls back to the targets on the Log page.</div>`;
+    // "the targets on the Log page" used to be the wording here. The flat
+    // nutrition inputs were retired 2026-08-15, so there is no page to point at
+    // any more — the fallback is the stored legacy object, which is now read
+    // only and never written.
+    html+=`<div class="form-note">These are starting values only. NOTHING IS SAVED until you press Save, and until then every day is scored the older way, against the flat targets stored before this panel existed.</div>`;
   }else if(pending){
     // SAY THAT IT IS NOT LIVE YET. Showing a saved-but-pending set without
     // saying so would let Ryan believe today is being graded against numbers
