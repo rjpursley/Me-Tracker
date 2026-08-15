@@ -216,24 +216,139 @@ export function saveBodyAge(){
   save(d);renderHealth();
 }
 
+// ---------------------------------------------------------------------------
+// Blood pressure, SpO2 and pulse — ARCHITECTURE.md §10.2.
+//
+// Stored additively under d.body.vitals, a new key beside weights/waists:
+//   d.body.vitals = [{date, systolic, diastolic, spo2, pulse}]
+//
+// ############ THE APP DOES NOT INTERPRET THESE ############
+//
+// No hypertension staging, no normal/elevated/high label, no colour by
+// threshold, and NOTHING HERE FEEDS A SCORE (§11 — the four pillar weights are
+// untouched by this whole feature). Blood pressure staging is a clinical
+// judgement that depends on context this app does not have — posture, cuff
+// size, time of day, medication, what the reading was last month. Printing
+// "Stage 1 Hypertension" under a number would be exactly the overclaim the
+// hormone indices were deleted for. Store the numbers; show the numbers.
+//
+// ############ EVERY FIELD IS INDEPENDENTLY NULLABLE ############
+//
+// Ryan may take BP without the oximeter or the other way round. An absent field
+// is OMITTED FROM THE RECORD — not written as null, not written as 0 (§1.4,
+// §1.7). A record with no non-null field is not saved at all.
+//
+// ONE RECORD PER DATE. Re-saving the same date REPLACES that record rather than
+// appending a second — unlike weights/waists, which append by design. These are
+// point-in-time readings Ryan takes once in the evening, and two rows for one
+// date would leave "the latest reading" ambiguous.
+// ---------------------------------------------------------------------------
+
+// A value is a typo, not a measurement, when it lands outside these. Rejected
+// loudly rather than stored — a mistyped 1280/82 that got saved would sit in
+// the history forever looking like something that happened.
+const VITAL_RANGES={
+  systolic: {min:60,  max:260, label:'Systolic',  unit:'mmHg'},
+  diastolic:{min:30,  max:160, label:'Diastolic', unit:'mmHg'},
+  spo2:     {min:50,  max:100, label:'SpO₂',      unit:'%'},
+  pulse:    {min:25,  max:220, label:'Pulse',     unit:'bpm'}
+};
+const VITAL_KEYS=Object.keys(VITAL_RANGES);
+
+// The most recent record by date, or null. Sorted here rather than assuming the
+// array is ordered — records are keyed by a date Ryan types, so they can be
+// entered out of order.
+function latestBodyVitals(){
+  const list=((db().body||{}).vitals)||[];
+  const clean=list.filter(r=>r&&r.date);
+  if(!clean.length)return null;
+  return clean.slice().sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0)[0];
+}
+
+function renderBodyVitals(){
+  const el=document.getElementById('body-vitals-latest');
+  if(!el)return;
+  const r=latestBodyVitals();
+  if(!r){
+    el.innerHTML='<div class="card"><div class="form-note">No blood pressure, SpO₂ or pulse logged yet. '+
+                 'Add one below — every field is optional.</div></div>';
+    return;
+  }
+  // A field the record does not carry renders '—'. NEVER 0, and never a
+  // borrowed value from an older record: this card reports one reading.
+  const cells=VITAL_KEYS.map(k=>{
+    const m=VITAL_RANGES[k];
+    const v=r[k];
+    const has=(v!==null&&v!==undefined&&v!=='');
+    return `<div class="card" style="text-align:center;padding:12px">`+
+      `<div class="card-title" style="margin-bottom:4px">${m.label}</div>`+
+      `<div class="stat-big" style="font-size:26px">${has?esc(String(v)):'—'}</div>`+
+      `<div class="stat-sub">${m.unit}</div>`+
+      `<div class="stat-sub" style="font-size:10px;margin-top:4px">${has?'logged':'not taken'}</div>`+
+    `</div>`;
+  }).join('');
+  el.innerHTML='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'+cells+'</div>'+
+    `<div class="form-note">Reading from ${esc(r.date)}. These are recorded and shown only — `+
+    `the app does not interpret them and they do not affect any score.</div>`;
+}
+
 export function logBodyMeasurement(){
   const w=document.getElementById('health-weight').value;
   const wa=document.getElementById('health-waist').value;
-  if(!w&&!wa){alert('Enter a bodyweight or a waist measurement');return;}
+
+  // Read and validate the four new fields BEFORE writing anything, so a typo in
+  // the pulse box cannot leave a bodyweight half-saved. Same all-or-nothing
+  // shape the library writes on the Meal Tracker use (§1.7).
+  const vitals={};
+  for(const k of VITAL_KEYS){
+    const el=document.getElementById('health-'+k);
+    const raw=((el&&el.value)||'').trim();
+    if(raw==='')continue;                       // absent, not zero — omitted below
+    const num=Number(raw);
+    const m=VITAL_RANGES[k];
+    if(!isFinite(num)){
+      alert(m.label+' must be a number.');return;
+    }
+    if(num<m.min||num>m.max){
+      // SAY WHAT WAS EXPECTED AND SAY NOTHING WAS SAVED. A value this far out is
+      // a typo; storing it would corrupt the history silently.
+      alert(m.label+' of '+raw+' '+m.unit+' is outside the plausible range ('+
+            m.min+'–'+m.max+' '+m.unit+'). Nothing was saved — check the number.');
+      return;
+    }
+    vitals[k]=num;
+  }
+  const anyVital=VITAL_KEYS.some(k=>k in vitals);
+
+  if(!w&&!wa&&!anyVital){alert('Enter a bodyweight, a waist measurement, or a blood pressure / SpO₂ / pulse reading');return;}
+
   const d=db();
   d.body=d.body||{};d.body.weights=d.body.weights||[];d.body.waists=d.body.waists||[];
   const date=document.getElementById('health-measure-date').value||today();
+  // UNCHANGED. Weights and waists still append exactly as before.
   if(w)d.body.weights.push({date,lbs:w});
   if(wa)d.body.waists.push({date,inches:wa});
+
+  if(anyVital){
+    if(!Array.isArray(d.body.vitals))d.body.vitals=[];
+    // ONE RECORD PER DATE — replace in place if this date already has one.
+    // Only the fields actually entered are written; the rest are simply not
+    // keys on the record (§1.4).
+    const rec={date,...vitals};
+    const i=d.body.vitals.findIndex(r=>r&&r.date===date);
+    if(i>=0)d.body.vitals[i]=rec;else d.body.vitals.push(rec);
+  }
+
   save(d);
   document.getElementById('health-weight').value='';
   document.getElementById('health-waist').value='';
+  VITAL_KEYS.forEach(k=>{const el=document.getElementById('health-'+k);if(el)el.value='';});
   alert('Measurement saved!');
   renderHealth();
 }
 
 export function renderHealth(){
-  renderBodySummary();
+  renderBodySummary();renderBodyVitals();
   // Paint the panel from what is already known, then ask the server for a
   // fresher answer — same placeholder-then-update pattern the vitals header
   // uses (§9.3), never a number before there is a source for it.

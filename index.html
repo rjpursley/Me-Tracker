@@ -146,6 +146,11 @@
   <div class="section-title">Body</div>
   <div id="body-summary"></div>
 
+  <!-- Most recent d.body.vitals record (§10.2). Numbers only — no staging, no
+       interpretation, no colour by threshold. -->
+  <div class="section-title">Latest Readings</div>
+  <div id="body-vitals-latest"></div>
+
   <!-- "Awaiting Sync" was deleted here 2026-08-14. It held body fat, VO2 max
        and HRV; the first two have NO SOURCE DEVICE (Versa 2, no smart scale)
        and were permanently blank. HRV moved up into the Body summary above.
@@ -171,6 +176,20 @@
     <div class="row" style="margin-top:8px">
       <div class="form-row" style="flex:1"><div class="form-label">Bodyweight (lbs)</div><input type="number" id="health-weight" placeholder="e.g. 205" step="0.1"></div>
       <div class="form-row" style="flex:1"><div class="form-label">Waist (inches)</div><input type="number" id="health-waist" placeholder="e.g. 34" step="0.25"></div>
+    </div>
+    <!-- Blood pressure, SpO2 and pulse (§10.2). Every field is INDEPENDENTLY
+         OPTIONAL — Ryan may take BP without the oximeter or the other way
+         round, and a blank field is written as absent, never as 0. The app
+         stores and shows these numbers and DOES NOT INTERPRET THEM: no
+         hypertension staging, no normal/elevated/high label, no colour by
+         threshold. Ryan reads them; the app does not diagnose. -->
+    <div class="row" style="margin-top:8px">
+      <div class="form-row" style="flex:1"><div class="form-label">Systolic (mmHg)</div><input type="number" id="health-systolic" placeholder="e.g. 120" step="1"></div>
+      <div class="form-row" style="flex:1"><div class="form-label">Diastolic (mmHg)</div><input type="number" id="health-diastolic" placeholder="e.g. 80" step="1"></div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <div class="form-row" style="flex:1"><div class="form-label">SpO₂ (%)</div><input type="number" id="health-spo2" placeholder="e.g. 98" step="1"></div>
+      <div class="form-row" style="flex:1"><div class="form-label">Pulse (bpm)</div><input type="number" id="health-pulse" placeholder="e.g. 62" step="1"></div>
     </div>
     <div class="form-row"><div class="form-label">Date</div><input type="text" id="health-measure-date" placeholder="YYYY-MM-DD"></div>
     <button class="btn btn-primary" onclick="logBodyMeasurement()">Save Measurement</button>
